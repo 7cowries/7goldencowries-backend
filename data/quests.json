@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "title": "Follow @7goldencowries",
+    "description": "Show your support by following us on Twitter.",
+    "xp": 50,
+    "link": "https://twitter.com/7goldencowries",
+    "requiresTwitter": true,
+    "requiredTier": "Free"
+  },
+  {
+    "id": 2,
+    "title": "Retweet our pinned post",
+    "description": "Spread the word about our mission.",
+    "xp": 40,
+    "link": "https://twitter.com/7goldencowries/status/YOUR_TWEET_ID",
+    "requiresTwitter": true,
+    "requiredTier": "Free"
+  },
+  {
+    "id": 3,
+    "title": "Subscribe to Tier 1 or higher",
+    "description": "Gain access to premium rewards and quests.",
+    "xp": 100,
+    "link": "/subscription",
+    "requiresTwitter": false,
+    "requiredTier": "Tier 1"
+  }
+]

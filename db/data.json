@@ -1,0 +1,50 @@
+{
+  "users": [
+    {
+      "wallet": "0:53da69775b457a8a0b02ff296afe6bf26f9c82436000c5280cb4ccb75295d5a9",
+      "twitterHandle": "7goldencowries",
+      "xp": 70,
+      "tier": "Free",
+      "level": 1
+    },
+    {
+      "wallet": "UQCLXQV1LRg_0FhVRq9vq3Vl6EUxIpDjnEVJDPINytMDAr3Q",
+      "xp": 80,
+      "tier": 0,
+      "completed": [
+        "q1",
+        "q2"
+      ],
+      "level": 1
+    },
+    {
+      "wallet": "0:8b5d05752d183fd0585546af6fab7565e845312290e39c45490cf20dcad30302",
+      "xp": 0,
+      "level": 1,
+      "tier": "Free"
+    }
+  ],
+  "quests": [
+    {
+      "id": "q1",
+      "title": "Join Telegram Channel",
+      "description": "Join our official 7goldencowries Telegram group.",
+      "xp": 50,
+      "link": "https://t.me/+a5Rm_QruLatjMjVk"
+    },
+    {
+      "id": "q2",
+      "title": "Follow us on X",
+      "description": "Follow @7goldencowries on Twitter.",
+      "xp": 30,
+      "link": "https://twitter.com/7goldencowries"
+    },
+    {
+      "id": "q3",
+      "title": "Connect Your Wallet",
+      "description": "Connect your TON wallet to start earning.",
+      "xp": 20,
+      "link": "http://localhost:3000"
+    }
+  ]
+}
