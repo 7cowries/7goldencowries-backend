@@ -1,9 +1,10 @@
 import express from "express";
 import db from "../db.js";
+import { getLevelInfo } from "../utils/levelUtils.js";
 
 const router = express.Router();
 
-// GET /users/:wallet
+// 📘 GET user by wallet — auto-create if missing
 router.get("/users/:wallet", (req, res) => {
   const wallet = req.params.wallet;
   if (!wallet) return res.status(400).json({ error: "Missing wallet address" });
@@ -12,7 +13,6 @@ router.get("/users/:wallet", (req, res) => {
     let user = db.prepare("SELECT * FROM users WHERE wallet = ?").get(wallet);
 
     if (!user) {
-      // 👇 If user doesn't exist, create with default values
       db.prepare(`
         INSERT INTO users (wallet, xp, tier, levelName, levelProgress)
         VALUES (?, ?, ?, ?, ?)
@@ -22,22 +22,19 @@ router.get("/users/:wallet", (req, res) => {
     }
 
     const { xp, tier, twitterHandle, levelName, levelProgress } = user;
-    const nextXP = 100 * Math.pow(
-      ["Shellborn","Wave Seeker","Tide Whisperer","Current Binder","Pearl Bearer","Isle Champion","Cowrie Ascendant"].indexOf(levelName) + 1,
-      2
-    );
+    const level = getLevelInfo(xp);
 
     res.json({
       xp,
       tier,
-      twitter: twitterHandle || null,
-      levelName,
-      levelSymbol: "🐚",
-      levelProgress: levelProgress || 0,
-      nextXP
+      twitterHandle: twitterHandle || null,
+      levelName: level.name,
+      levelSymbol: level.symbol,
+      levelProgress: level.progress,
+      nextXP: level.nextXP
     });
   } catch (err) {
-    console.error("Failed to fetch user:", err);
+    console.error("❌ Failed to fetch user:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });

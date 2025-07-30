@@ -1,9 +1,11 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
 
-const dbPath = path.resolve('database.db');
-console.log('🔍 Using database:', dbPath);  // Add this line to debug
+sqlite3.verbose();
 
-const db = new Database(dbPath);
+const db = await open({
+  filename: './database.db',
+  driver: sqlite3.Database
+});
+
 export default db;
-

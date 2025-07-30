@@ -12,7 +12,6 @@
   "description": "",
   "dependencies": {
     "axios": "^1.6.0",
-    "better-sqlite3": "^8.4.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
@@ -24,6 +23,7 @@
     "node-cron": "^4.2.1",
     "node-fetch": "^2.7.0",
     "passport": "^0.7.0",
-    "passport-twitter": "^1.0.4"
+    "passport-twitter": "^1.0.4",
+    "sqlite3": "^5.1.7"
   }
 }
