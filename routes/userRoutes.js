@@ -1,4 +1,4 @@
-import express from "express";
+  GNU nano 7.2                                                                                                  routes/userRoutes.js                                                                                                            import express from "express";
 import db from "../db.js";
 
 const router = express.Router();
@@ -41,3 +41,11 @@ router.get("/users/:wallet", async (req, res) => {
 });
 
 export default router;
+
+
+
+
+
+
+
+
