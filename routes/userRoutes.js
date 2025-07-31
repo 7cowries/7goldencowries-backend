@@ -1,40 +1,41 @@
 import express from "express";
 import db from "../db.js";
-import { getLevelInfo } from "../utils/levelUtils.js";
 
 const router = express.Router();
 
-// 📘 GET user by wallet — auto-create if missing
-router.get("/users/:wallet", (req, res) => {
+router.get("/users/:wallet", async (req, res) => {
   const wallet = req.params.wallet;
   if (!wallet) return res.status(400).json({ error: "Missing wallet address" });
 
   try {
-    let user = db.prepare("SELECT * FROM users WHERE wallet = ?").get(wallet);
+    let user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
 
     if (!user) {
-      db.prepare(`
-        INSERT INTO users (wallet, xp, tier, levelName, levelProgress)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(wallet, 0, "Free", "Shellborn", 0);
-
-      user = db.prepare("SELECT * FROM users WHERE wallet = ?").get(wallet);
+      await db.run(
+        `INSERT INTO users (wallet, xp, tier, levelName, levelProgress)
+         VALUES (?, ?, ?, ?, ?)`,
+        wallet, 0, "Free", "Shellborn", 0
+      );
+      user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
     }
 
     const { xp, tier, twitterHandle, levelName, levelProgress } = user;
-    const level = getLevelInfo(xp);
+    const levels = ["Shellborn", "Wave Seeker", "Tide Whisperer", "Current Binder", "Pearl Bearer", "Isle Champion", "Cowrie Ascendant"];
+    const nextXP = [10000, 30000, 60000, 100000, 170000, 250000];
+    const levelIndex = levels.indexOf(levelName);
+    const next = nextXP[levelIndex] || 100;
 
     res.json({
       xp,
       tier,
-      twitterHandle: twitterHandle || null,
-      levelName: level.name,
-      levelSymbol: level.symbol,
-      levelProgress: level.progress,
-      nextXP: level.nextXP
+      twitter: twitterHandle || null,
+      levelName,
+      levelSymbol: "🐚",
+      levelProgress: levelProgress || 0,
+      nextXP: next
     });
   } catch (err) {
-    console.error("❌ Failed to fetch user:", err);
+    console.error("Failed to fetch user:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
