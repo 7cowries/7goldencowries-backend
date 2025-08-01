@@ -1,4 +1,4 @@
-  GNU nano 7.2                                                                                                  routes/userRoutes.js                                                                                                            import express from "express";
+import express from "express";
 import db from "../db.js";
 
 const router = express.Router();
@@ -20,7 +20,10 @@ router.get("/users/:wallet", async (req, res) => {
     }
 
     const { xp, tier, twitterHandle, levelName, levelProgress } = user;
-    const levels = ["Shellborn", "Wave Seeker", "Tide Whisperer", "Current Binder", "Pearl Bearer", "Isle Champion", "Cowrie Ascendant"];
+    const levels = [
+      "Shellborn", "Wave Seeker", "Tide Whisperer", "Current Binder",
+      "Pearl Bearer", "Isle Champion", "Cowrie Ascendant"
+    ];
     const nextXP = [10000, 30000, 60000, 100000, 170000, 250000];
     const levelIndex = levels.indexOf(levelName);
     const next = nextXP[levelIndex] || 100;
@@ -41,11 +44,3 @@ router.get("/users/:wallet", async (req, res) => {
 });
 
 export default router;
-
-
-
-
-
-
-
-

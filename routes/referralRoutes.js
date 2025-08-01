@@ -12,9 +12,11 @@ const router = express.Router();
  */
 router.post('/claim-referral', (req, res) => {
   const { referrer, referred } = req.body;
+
   if (!referrer || !referred) {
     return res.status(400).json({ error: 'Missing referrer or referred' });
   }
+
   if (referrer === referred) {
     return res.status(400).json({ error: 'Cannot refer yourself' });
   }
@@ -26,14 +28,14 @@ router.post('/claim-referral', (req, res) => {
 
   const trx = db.transaction(() => {
     db.prepare(`INSERT INTO referrals (referrer, referred) VALUES (?, ?)`).run(referrer, referred);
-    db.prepare('UPDATE users SET xp = xp + ? WHERE wallet = ?').run(XP_BONUS, referrer);
-    db.prepare('UPDATE users SET xp = xp + ? WHERE wallet = ?').run(XP_BONUS, referred);
+    db.prepare(`UPDATE users SET xp = xp + ? WHERE wallet = ?`).run(XP_BONUS, referrer);
+    db.prepare(`UPDATE users SET xp = xp + ? WHERE wallet = ?`).run(XP_BONUS, referred);
   });
 
   try {
     trx();
   } catch (err) {
-    console.error('Referral transaction error:', err);
+    console.error('❌ Referral transaction error:', err);
     return res.status(500).json({ error: 'Database error during referral claim' });
   }
 
@@ -60,7 +62,7 @@ router.get('/referrals/:wallet', (req, res) => {
 
     res.json({ referrals: list });
   } catch (err) {
-    console.error('Referral fetch error:', err);
+    console.error('❌ Referral fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch referrals' });
   }
 });
@@ -72,15 +74,19 @@ router.get('/referrals/:wallet', (req, res) => {
  */
 router.post('/referral/complete', (req, res) => {
   const { referred } = req.body;
-  if (!referred) return res.status(400).json({ error: 'Missing referred wallet' });
+
+  if (!referred) {
+    return res.status(400).json({ error: 'Missing referred wallet' });
+  }
 
   try {
     db.prepare(`UPDATE referrals SET completed = 1 WHERE referred = ?`).run(referred);
     res.json({ ok: true });
   } catch (err) {
-    console.error('Referral complete error:', err);
+    console.error('❌ Referral complete error:', err);
     res.status(500).json({ error: 'Failed to mark referral as completed' });
   }
 });
 
 export default router;
+

@@ -57,7 +57,11 @@ router.post('/complete', async (req, res) => {
   if (!wallet || !questId) return res.status(400).json({ error: 'Missing wallet or questId' });
 
   try {
-    const already = await db.get(`SELECT 1 FROM completed_quests WHERE wallet = ? AND questId = ?`, wallet, questId);
+    const already = await db.get(
+      `SELECT 1 FROM completed_quests WHERE wallet = ? AND questId = ?`,
+      wallet,
+      questId
+    );
     if (already) return res.status(400).json({ error: 'Quest already completed' });
 
     const user = await db.get('SELECT * FROM users WHERE wallet = ?', wallet);
@@ -83,7 +87,6 @@ router.post('/complete', async (req, res) => {
     }[userTier];
 
     const xpGain = Math.round(quest.xp * multiplier);
-
     await db.run('UPDATE users SET xp = xp + ? WHERE wallet = ?', xpGain, wallet);
 
     const userData = await db.get('SELECT xp FROM users WHERE wallet = ?', wallet);

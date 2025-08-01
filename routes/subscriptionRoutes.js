@@ -3,6 +3,11 @@ import db from "../db.js";
 
 const router = express.Router();
 
+/**
+ * POST /api/subscribe
+ * Records a new subscription, adds XP, and updates user tier.
+ * Body: { wallet, tier, ton, usd }
+ */
 router.post("/", (req, res) => {
   const { wallet, tier, ton, usd } = req.body;
 
@@ -12,7 +17,7 @@ router.post("/", (req, res) => {
 
   const timestamp = new Date().toISOString();
 
-  // XP multiplier based on tier
+  // Define XP multiplier per tier
   const boostMap = {
     Free: 1.0,
     "Tier 1": 1.1,
@@ -24,26 +29,43 @@ router.post("/", (req, res) => {
   const baseXP = 100;
   const earnedXP = Math.floor(baseXP * multiplier);
 
-  // Insert into subscriptions table
-  db.prepare(`
-    INSERT INTO subscriptions (wallet, tier, ton, usd, timestamp, status)
-    VALUES (?, ?, ?, ?, ?, 'active')
-  `).run(wallet, tier, ton, usd, timestamp);
+  try {
+    // Insert new subscription
+    db.prepare(`
+      INSERT INTO subscriptions (wallet, tier, ton, usd, timestamp, status)
+      VALUES (?, ?, ?, ?, ?, 'active')
+    `).run(wallet, tier, ton, usd, timestamp);
 
-  // Update user's tier and XP
-  db.prepare(`
-    UPDATE users
-    SET tier = ?, xp = xp + ?
-    WHERE wallet = ?
-  `).run(tier, earnedXP, wallet);
+    // Update user tier and XP
+    db.prepare(`
+      UPDATE users
+      SET tier = ?, xp = xp + ?
+      WHERE wallet = ?
+    `).run(tier, earnedXP, wallet);
 
-  console.log(`✅ ${wallet} subscribed to ${tier} → +${earnedXP} XP`);
-  res.json({ success: true, earnedXP });
+    console.log(`✅ ${wallet} subscribed to ${tier} → +${earnedXP} XP`);
+    res.json({ success: true, earnedXP });
+  } catch (err) {
+    console.error("❌ Subscription error:", err);
+    res.status(500).json({ error: "Failed to process subscription" });
+  }
 });
 
+/**
+ * GET /api/subscribe
+ * Returns all subscription records.
+ */
 router.get("/", (req, res) => {
-  const subs = db.prepare(`SELECT * FROM subscriptions ORDER BY timestamp DESC`).all();
-  res.json(subs);
+  try {
+    const subs = db.prepare(`
+      SELECT * FROM subscriptions
+      ORDER BY timestamp DESC
+    `).all();
+    res.json(subs);
+  } catch (err) {
+    console.error("❌ Fetch subscriptions error:", err);
+    res.status(500).json({ error: "Failed to fetch subscriptions" });
+  }
 });
 
 export default router;

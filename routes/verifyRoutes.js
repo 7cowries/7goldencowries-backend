@@ -16,13 +16,13 @@ router.get('/subscriptions/:wallet', (req, res) => {
   try {
     const rows = db
       .prepare(`
-        SELECT 
+        SELECT
           tier,
-          ton_amount    AS nanoton,
-          ton_amount/1e9 AS ton,         -- human TON value
-          tx_hash       AS txHash,
+          ton_amount        AS nanoton,
+          ton_amount / 1e9  AS ton,         -- human TON value
+          tx_hash           AS txHash,
           status,
-          timestamp     AS startDate,
+          timestamp         AS startDate,
           datetime(timestamp, '+30 days') AS expiryDate
         FROM subscriptions
         WHERE wallet = ?
@@ -44,19 +44,20 @@ router.get('/subscriptions/:wallet', (req, res) => {
  */
 router.post('/subscribe', (req, res) => {
   const { wallet, tier, tonAmount, txHash } = req.body;
+
   if (!wallet || !tier || typeof tonAmount !== 'number') {
     return res.status(400).json({ error: 'wallet, tier and tonAmount are required' });
   }
 
   try {
-    // ensure user exists
+    // Ensure user exists
     const user = db.prepare('SELECT * FROM users WHERE wallet = ?').get(wallet);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // (optionally) update their tier immediately
+    // Optionally update their tier immediately
     db.prepare('UPDATE users SET tier = ? WHERE wallet = ?').run(tier, wallet);
 
-    // insert a pending subscription
+    // Insert a pending subscription
     db.prepare(`
       INSERT INTO subscriptions (wallet, tier, ton_amount, tx_hash, status)
       VALUES (?, ?, ?, ?, 'pending')
