@@ -1,26 +1,25 @@
-import passport from 'passport';
-import { Strategy as TwitterStrategy } from 'passport-twitter';
-import dotenv from 'dotenv';
+// passport.js
+import passport from "passport";
+import { Strategy as TwitterStrategy } from "passport-twitter";
 
-dotenv.config();
+const cb = process.env.TWITTER_CALLBACK || "http://localhost:5000/auth/twitter/callback";
 
 passport.use(
   new TwitterStrategy(
     {
       consumerKey: process.env.TWITTER_CONSUMER_KEY,
       consumerSecret: process.env.TWITTER_CONSUMER_SECRET,
-      callbackURL: 'http://localhost:5000/auth/twitter/callback'
+      callbackURL: cb,
+      includeEmail: false
     },
-    (token, tokenSecret, profile, done) => {
-      return done(null, profile);
+    (_token, _tokenSecret, profile, done) => {
+      // Keep only what we need
+      done(null, { id: profile.id, username: profile.username });
     }
   )
 );
 
-passport.serializeUser((user, done) => {
-  done(null, user);
-});
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((obj, done) => done(null, obj));
 
-passport.deserializeUser((user, done) => {
-  done(null, user);
-});
+export default passport;

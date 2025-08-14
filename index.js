@@ -12,6 +12,7 @@ import './passport.js';
 import db from './db.js';
 import { getLevelInfo } from './utils/levelUtils.js';
 
+// ✅ Route Imports
 import questRoutes from './routes/questRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
@@ -20,18 +21,18 @@ import tonWebhook from './routes/tonWebhook.js';
 import referralRoutes from './routes/referralRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import twitterRoutes from './routes/twitterRoutes.js';
+import tokenSaleRoutes from './routes/tokenSaleRoutes.js';   // ⬅️ NEW
 
 dotenv.config();
 const app = express();
 
-// 🌐 CORS + JSON
+// 🔐 Middleware
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true
 }));
 app.use(express.json());
 
-// 🧠 Sessions
 const Store = MemoryStore(session);
 app.use(session({
   secret: process.env.SESSION_SECRET || 'cowrie-secret',
@@ -44,38 +45,39 @@ app.use(session({
     maxAge: 3600000
   }
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
-// 🚀 Routes
+// 🧭 Routes
 app.use(questRoutes);
 app.use(authRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
 app.use(referralRoutes);
-app.use("/api/subscribe", subscriptionRoutes);
-app.use("/api", twitterRoutes);
+app.use('/api/subscribe', subscriptionRoutes);
+app.use('/api', twitterRoutes);
+app.use(tokenSaleRoutes);                        // ⬅️ NEW mounts /token-sale/contribute
 
-// 🧪 Health check
+// 🧪 Health checks
 app.get('/', (req, res) => res.send('7goldencowries backend is running'));
 app.get('/session-debug', (req, res) => res.json({ session: req.session }));
 
-// 🏆 Leaderboard Route — FIXED!
+// 🏆 Leaderboard route
 app.get('/leaderboard', async (req, res) => {
   try {
-    const users = db.prepare(`
+    const users = await db.all(`
       SELECT wallet, twitterHandle, xp, tier
       FROM users
       ORDER BY xp DESC
       LIMIT 20
-    `).all();
+    `);
 
     const ranked = users.map((u, i) => {
       const level = getLevelInfo(u.xp || 0);
-
       const badgeSlug = level?.name
-        ? `level-${String(level.name).toLowerCase().replace(/\s+/g, '-')}.png`
+        ? `level-${level.name.toLowerCase().replace(/\s+/g, '-')}.png`
         : 'unranked.png';
 
       return {
@@ -97,23 +99,27 @@ app.get('/leaderboard', async (req, res) => {
   }
 });
 
-// ⏰ Cron: expire subscriptions
-cron.schedule('0 0 * * *', () => {
+// ⏰ Subscription Expiry Cron
+cron.schedule('0 0 * * *', async () => {
   console.log('🔄 Running daily subscription expiry check…');
   const now = dayjs().toISOString();
 
-  const expired = db.prepare(`
-    SELECT id, wallet
-    FROM subscriptions
-    WHERE status = 'active'
-      AND datetime(timestamp, '+30 days') <= ?
-  `).all(now);
+  try {
+    const expired = await db.all(`
+      SELECT id, wallet
+      FROM subscriptions
+      WHERE status = 'active'
+        AND datetime(timestamp, '+30 days') <= ?
+    `, now);
 
-  expired.forEach(({ id, wallet }) => {
-    db.prepare(`UPDATE users SET tier = 'Free' WHERE wallet = ?`).run(wallet);
-    db.prepare(`UPDATE subscriptions SET status = 'expired' WHERE id = ?`).run(id);
-    console.log(` → Downgraded ${wallet}, sub#${id}`);
-  });
+    for (const { id, wallet } of expired) {
+      await db.run(`UPDATE users SET tier = 'Free' WHERE wallet = ?`, wallet);
+      await db.run(`UPDATE subscriptions SET status = 'expired' WHERE id = ?`, id);
+      console.log(` → Downgraded ${wallet}, sub#${id}`);
+    }
+  } catch (err) {
+    console.error('❌ Cron error:', err);
+  }
 });
 
 // 🚀 Start server
