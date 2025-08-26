@@ -5,12 +5,21 @@ import db from "../db.js";
 const router = express.Router();
 
 /**
- * GET /leaderboard
- * Response shape the frontend expects:
- * { top: [{ rank, wallet, xp, tier, name, progress, twitter }] }
+ * GET /api/leaderboard
+ * Optional query: ?limit=50&offset=0
+ * Response:
+ *   { top: [{ rank, wallet, xp, tier, name, progress, twitter }] }
  */
-router.get("/leaderboard", async (_req, res) => {
+router.get("/", async (req, res) => {
   try {
+    // sanitize pagination
+    const maxLimit = 100;
+    const limit = Math.min(
+      maxLimit,
+      Math.max(1, parseInt(req.query.limit ?? "50", 10) || 50)
+    );
+    const offset = Math.max(0, parseInt(req.query.offset ?? "0", 10) || 0);
+
     const rows = await db.all(
       `
       SELECT
@@ -18,24 +27,26 @@ router.get("/leaderboard", async (_req, res) => {
         COALESCE(u.xp, 0)                      AS xp,
         COALESCE(u.tier, 'Free')               AS tier,
         COALESCE(u.levelName, 'Shellborn')     AS levelName,
-        COALESCE(u.levelProgress, 0.0)         AS levelProgress, -- 0..1 in DB
+        COALESCE(u.levelProgress, 0.0)         AS levelProgress, -- 0..1
         COALESCE(u.nextXP, 10000)              AS nextXP,
         COALESCE(sl.twitter, u.twitterHandle)  AS twitter
       FROM users u
       LEFT JOIN social_links sl ON sl.wallet = u.wallet
       WHERE u.wallet IS NOT NULL
-      ORDER BY xp DESC
-      LIMIT 50
-      `
+      ORDER BY COALESCE(u.xp, 0) DESC, u.wallet ASC
+      LIMIT ? OFFSET ?
+      `,
+      limit,
+      offset
     );
 
     const top = (rows || []).map((r, i) => ({
-      rank: i + 1,
-      wallet: r.wallet,
-      xp: r.xp,
-      tier: r.tier,
-      name: r.levelName,                               // frontend uses .name
-      progress: Math.round((r.levelProgress ?? 0) * 100), // percent 0..100
+      rank: offset + i + 1,
+      wallet: r.wallet || "",
+      xp: Number(r.xp ?? 0),
+      tier: r.tier || "Free",
+      name: r.levelName || "Shellborn",                       // frontend expects .name
+      progress: Math.round((Number(r.levelProgress ?? 0) || 0) * 100), // 0..100
       twitter: r.twitter || null,
     }));
 

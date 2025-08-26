@@ -3,7 +3,7 @@ import "dotenv/config"; // loads .env
 import express from "express";
 import cors from "cors";
 import cookieSession from "cookie-session";
-import cookieParser from "cookie-parser"; // ✨ NEW: parse cookies for /debug
+import cookieParser from "cookie-parser"; // parse cookies for /debug
 import passport from "passport";
 import "./passportConfig.js";
 
@@ -81,7 +81,7 @@ app.use(compression());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser()); // ✨ ensure req.cookies exists
+app.use(cookieParser()); // ensure req.cookies exists
 
 const isProd = process.env.NODE_ENV === "production";
 app.use(
@@ -169,9 +169,17 @@ try {
 // mount at '/' to avoid double '/auth/auth/...'
 app.use("/", authRoutes);
 
+// quests router is mounted under /api/quest
+// (internally it defines '/quests', '/completed/:wallet', '/complete')
 if (questRoutes) app.use("/api/quest", questRoutes);
+
+// optional plural fallback
 if (questsRoutes) app.use("/api/quests", questsRoutes);
+
+// leaderboard router is mounted under /api/leaderboard
+// ensure its file uses `router.get("/", ...)`
 if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
+
 app.use("/api/profile", profileRoutes);
 
 /* =========================
