@@ -1,5 +1,5 @@
 // server.js — resilient Express setup for 7goldencowries backend
-import "dotenv/config.js";
+import "dotenv/config"; // loads .env
 import express from "express";
 import cors from "cors";
 import session from "express-session";
@@ -9,22 +9,67 @@ import "./passportConfig.js";
 // Importing db initializes tables (top-level await in db.js)
 import db from "./db.js";
 
-// ---- ENV & APP ----
+/* =========================
+   ENV
+   ========================= */
 const app = express();
 const PORT = process.env.PORT || 5000;
-const CLIENT_URL =
-  process.env.CLIENT_URL || process.env.FRONTEND_URL || "http://localhost:3000";
 
-// ---- MIDDLEWARE ----
-app.use(
-  cors({
-    origin: CLIENT_URL,
-    credentials: true,
-  })
-);
+// Build an allowed-origins list (env may contain single or comma-separated)
+function splitEnvList(v) {
+  return (v || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Derive Vercel URL from env if present
+const vercelUrl = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : null;
+
+const baseAllowed = [
+  "http://localhost:3000",
+  "https://7goldencowries.vercel.app",
+  "https://7goldencowries.com",
+];
+
+const envAllowed = [
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  ...splitEnvList(process.env.ALLOWED_ORIGINS),
+  vercelUrl,
+].filter(Boolean);
+
+const ALLOWED_ORIGINS = [...new Set([...baseAllowed, ...envAllowed])];
+
+// On Render/behind proxy we need this so secure cookies work
+if (process.env.RENDER || process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+/* =========================
+   MIDDLEWARE
+   ========================= */
+const corsOptions = {
+  origin(origin, cb) {
+    // allow same-origin requests, curl, health checks (no Origin)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // preflight
+
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // needed for Telegram fallback form
+app.use(express.urlencoded({ extended: true })); // Telegram fallback forms, etc.
 
+// Session (secure in prod, lax in dev)
+const isProd = process.env.NODE_ENV === "production";
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "dev_secret_change_me",
@@ -33,7 +78,8 @@ app.use(
     cookie: {
       maxAge: 1000 * 60 * 60, // 1 hour
       httpOnly: true,
-      secure: false,
+      secure: !!isProd,       // requires HTTPS (set true in prod)
+      sameSite: isProd ? "none" : "lax", // "none" for cross-site with secure
     },
   })
 );
@@ -41,10 +87,17 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ---- HEALTHCHECK ----
+/* =========================
+   HEALTH & ROOT
+   ========================= */
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/", (_req, res) => {
+  res.send("7goldencowries backend is running 🚀");
+});
 
-// ---- ROUTES ----
+/* =========================
+   ROUTES (your existing modules)
+   ========================= */
 import profileRoutes from "./routes/profileRoutes.js"; // /api/profile
 import authRoutes from "./routes/authRoutes.js";       // /auth/*
 
@@ -74,16 +127,33 @@ try {
   console.log("ℹ️  No routes/leaderboardRoutes.js (skipping leaderboard mount)");
 }
 
-// ---- MOUNT ----
+/* =========================
+   MOUNT
+   ========================= */
 app.use("/", authRoutes);
 if (questRoutes) app.use("/", questRoutes);
 if (questsRoutes) app.use("/", questsRoutes);
 if (leaderboardRoutes) app.use("/", leaderboardRoutes);
-
 app.use("/api/profile", profileRoutes);
 
-// ---- START ----
+/* =========================
+   404 + ERROR HANDLERS
+   ========================= */
+app.use((req, res, next) => {
+  if (req.path === "/favicon.ico") return res.sendStatus(204);
+  res.status(404).json({ error: "Not Found" });
+});
+
+app.use((err, _req, res, _next) => {
+  console.error("❌ Server error:", err?.message || err);
+  const code = err.status || 500;
+  res.status(code).json({ error: err?.message || "Server error" });
+});
+
+/* =========================
+   START
+   ========================= */
 app.listen(PORT, () => {
-  console.log(`✅  7goldencowries backend running on http://localhost:${PORT}`);
-  console.log(`   CORS allowed: ${CLIENT_URL}`);
+  console.log(`✅  7goldencowries backend on :${PORT}`);
+  console.log(`   CORS allowed origins:`, ALLOWED_ORIGINS.join(", "));
 });
