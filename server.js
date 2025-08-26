@@ -2,7 +2,7 @@
 import "dotenv/config"; // loads .env
 import express from "express";
 import cors from "cors";
-import session from "express-session";
+import cookieSession from "cookie-session"; // ⬅️ replace express-session
 import passport from "passport";
 import "./passportConfig.js";
 
@@ -68,19 +68,16 @@ app.options("*", cors(corsOptions)); // preflight
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Telegram fallback forms, etc.
 
-// Session (secure in prod, lax in dev)
+// Cookie-based session (no MemoryStore warning, works with Passport)
 const isProd = process.env.NODE_ENV === "production";
 app.use(
-  session({
+  cookieSession({
+    name: "7gc.sid",
     secret: process.env.SESSION_SECRET || "dev_secret_change_me",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      maxAge: 1000 * 60 * 60, // 1 hour
-      httpOnly: true,
-      secure: !!isProd,       // requires HTTPS (set true in prod)
-      sameSite: isProd ? "none" : "lax", // "none" for cross-site with secure
-    },
+    maxAge: 1000 * 60 * 60, // 1 hour
+    httpOnly: true,
+    secure: !!isProd,                   // requires HTTPS in prod
+    sameSite: isProd ? "none" : "lax",  // "none" for cross-site with secure cookies
   })
 );
 
