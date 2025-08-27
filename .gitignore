@@ -8,3 +8,10 @@ node_modules/
 .env
 .vercel
 .DS_Store
+
+# local artifacts
+*.sqlite
+database.sqlite
+routes/questRoutes.backup.*.js
+.env
+node_modules/
