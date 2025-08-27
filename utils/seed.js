@@ -6,13 +6,26 @@ async function ensureQuestColumns() {
   const names = new Set(cols.map(c => c.name));
 
   const alters = [];
-  if (!names.has("code"))        alters.push(`ALTER TABLE quests ADD COLUMN code TEXT UNIQUE;`);
+  if (!names.has("code"))        alters.push(`ALTER TABLE quests ADD COLUMN code TEXT;`);
   if (!names.has("requirement")) alters.push(`ALTER TABLE quests ADD COLUMN requirement TEXT;`);
   if (!names.has("target"))      alters.push(`ALTER TABLE quests ADD COLUMN target TEXT;`);
   if (!names.has("active"))      alters.push(`ALTER TABLE quests ADD COLUMN active INTEGER DEFAULT 1;`);
 
   for (const sql of alters) {
-    try { await db.run(sql); } catch { /* column may already exist */ }
+    try {
+      await db.run(sql);
+      console.log("Migration OK:", sql);
+    } catch (e) {
+      console.log("Migration skipped:", sql, "-", e.message);
+    }
+  }
+
+  // Need a UNIQUE index so ON CONFLICT(code) works
+  try {
+    await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quests_code ON quests(code)`);
+    console.log("Index OK: idx_quests_code");
+  } catch (e) {
+    console.log("Index skipped: idx_quests_code -", e.message);
   }
 }
 
