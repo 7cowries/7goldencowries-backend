@@ -85,7 +85,7 @@ async function discordIsMember(accessToken, guildId) {
  */
 router.get("/quests", async (_req, res) => {
   try {
-    const rows = await db.all(`SELECT * FROM quests ORDER BY id`);
+    const rows = await db.all(`SELECT * FROM quests WHERE COALESCE(active,1)=1 ORDER BY id`);
     const quests = rows.map(normalizeQuestRow).map(q => ({
       // keep legacy fields for frontend compatibility
       id: q.id,
