@@ -64,7 +64,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-admin"],
 };
 
 app.use(cors(corsOptions));
@@ -109,9 +109,13 @@ app.use(passport.session());
 /* =========================
    HEALTH & ROOT
    ========================= */
-app.get("/health", (_req, res) =>
-  res.json({ ok: true, env: process.env.NODE_ENV })
-);
+const healthPayload = () => ({
+  ok: true,
+  env: process.env.NODE_ENV || "development",
+  uptime: process.uptime(),
+});
+app.get("/health", (_req, res) => res.json(healthPayload()));
+app.get("/api/health", (_req, res) => res.json(healthPayload())); // alias for clients calling /api/health
 app.get("/", (_req, res) => {
   res.send("7goldencowries backend is running 🚀");
 });
@@ -132,9 +136,11 @@ app.get("/debug/cors", (req, res) => {
 import profileRoutes from "./routes/profileRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 
+// optional imports (some may not exist in all deployments)
 let questRoutes = null;
 let questsRoutes = null;
 let leaderboardRoutes = null;
+let adminRoutes = null;
 
 try {
   const mod = await import("./routes/questRoutes.js"); // singular
@@ -162,6 +168,14 @@ try {
   console.error("Failed to load leaderboardRoutes.js:", e.message);
 }
 
+try {
+  const mod = await import("./routes/adminRoutes.js");
+  adminRoutes = mod.default;
+  console.log("➡️  Loaded routes/adminRoutes.js");
+} catch (e) {
+  console.error("Failed to load adminRoutes.js:", e.message);
+}
+
 /* =========================
    MOUNT
    ========================= */
@@ -179,6 +193,9 @@ if (questsRoutes) app.use("/api/quests", questsRoutes);
 // leaderboard router is mounted under /api/leaderboard
 // ensure its file uses `router.get("/", ...)`
 if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
+
+// admin utilities (seed, dump, disable-others, ping)
+if (adminRoutes) app.use("/api/admin", adminRoutes);
 
 app.use("/api/profile", profileRoutes);
 
