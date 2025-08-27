@@ -13,6 +13,9 @@ import db from "./db.js";
 import helmet from "helmet";
 import compression from "compression";
 
+// 👉 auto-seed on boot (no admin route required)
+import { seedOnBoot } from "./utils/seed.js";
+
 /* =========================
    ENV
    ========================= */
@@ -168,12 +171,13 @@ try {
   console.error("Failed to load leaderboardRoutes.js:", e.message);
 }
 
+// Admin routes are optional now; AUTO_SEED replaces the need for them
 try {
   const mod = await import("./routes/adminRoutes.js");
   adminRoutes = mod.default;
   console.log("➡️  Loaded routes/adminRoutes.js");
 } catch (e) {
-  console.error("Failed to load adminRoutes.js:", e.message);
+  console.warn("Admin routes not loaded (optional):", e.message);
 }
 
 /* =========================
@@ -194,10 +198,26 @@ if (questsRoutes) app.use("/api/quests", questsRoutes);
 // ensure its file uses `router.get("/", ...)`
 if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
 
-// admin utilities (seed, dump, disable-others, ping)
+// admin utilities (seed, dump, disable-others, ping) — optional
 if (adminRoutes) app.use("/api/admin", adminRoutes);
 
 app.use("/api/profile", profileRoutes);
+
+/* =========================
+   AUTO-SEED ON BOOT (no admin needed)
+   ========================= */
+try {
+  const yes = String(process.env.AUTO_SEED || "").toLowerCase();
+  const disable = String(process.env.DISABLE_OLD_QUESTS || "").toLowerCase();
+  if (yes === "1" || yes === "true") {
+    console.log("🌱 AUTO_SEED enabled. Seeding quests...");
+    await seedOnBoot({ disableOthers: disable === "1" || disable === "true" });
+  } else {
+    console.log("ℹ️  AUTO_SEED disabled (set AUTO_SEED=true to enable on boot).");
+  }
+} catch (e) {
+  console.error("❌ Auto seed failed:", e);
+}
 
 /* =========================
    404 + ERROR HANDLERS
