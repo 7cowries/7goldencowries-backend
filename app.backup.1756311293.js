@@ -6,7 +6,6 @@ import morgan from 'morgan';
 import db from './db.js';
 import discordAuth from './routes/discordAuth.js';
 import questRoutes from './routes/questRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
 
 const app = express();
 
@@ -15,8 +14,10 @@ const allowed = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+
 app.use(cors({
   origin: (origin, cb) => {
+    // allow same-origin / curl (no origin) and any explicitly allowed origins
     if (!origin || allowed.includes(origin)) return cb(null, true);
     return cb(null, false);
   },
@@ -28,10 +29,14 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 /* ---------- Health ---------- */
-app.get('/api/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
-app.get('/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() })); // alias
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
 
-/* ---------- Profile ---------- */
+/* ---------- Profile (used by frontend) ----------
+   GET /api/profile?wallet=EQxxxx
+   Returns: { profile: {...}, history: [...] }
+*/
 app.get('/api/profile', async (req, res) => {
   try {
     const wallet = String(req.query.wallet || '').trim();
@@ -44,6 +49,7 @@ app.get('/api/profile', async (req, res) => {
       wallet
     );
 
+    // Default empty profile if user not found yet
     if (!user) {
       return res.json({
         profile: {
@@ -95,9 +101,8 @@ app.get('/api/profile', async (req, res) => {
 });
 
 /* ---------- Routes ---------- */
-app.use('/auth', discordAuth);
-app.use('/api/quest', questRoutes);
-app.use('/api/admin', adminRoutes);   // seeding utilities
+app.use('/auth', discordAuth);      // /auth/discord, /auth/discord/callback
+app.use('/api/quest', questRoutes); // /api/quest/quests, /completed/:wallet, /complete
 
 /* ---------- Start ---------- */
 const PORT = process.env.PORT || 5000;

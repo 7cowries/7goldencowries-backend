@@ -16,6 +16,13 @@ import compression from "compression";
 // 👉 auto-seed on boot (no admin route required)
 import { seedOnBoot } from "./utils/seed.js";
 
+// Core feature routes
+import profileRoutes from "./routes/profileRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+
+// NEW: referrals (public + admin)
+import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
+
 /* =========================
    ENV
    ========================= */
@@ -39,6 +46,7 @@ const baseAllowed = [
   "http://localhost:3000",
   "https://7goldencowries.vercel.app",
   "https://7goldencowries.com",
+  "https://www.7goldencowries.com", // add www
 ];
 
 const envAllowed = [
@@ -67,7 +75,14 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-admin"],
+  // include both admin headers (case-insensitive but list them for preflight clarity)
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "x-admin",
+    "x-admin-secret",
+  ],
 };
 
 app.use(cors(corsOptions));
@@ -134,12 +149,8 @@ app.get("/debug/cors", (req, res) => {
 });
 
 /* =========================
-   ROUTES
+   OPTIONAL ROUTES (dynamic import)
    ========================= */
-import profileRoutes from "./routes/profileRoutes.js";
-import authRoutes from "./routes/authRoutes.js";
-
-// optional imports (some may not exist in all deployments)
 let questRoutes = null;
 let questsRoutes = null;
 let leaderboardRoutes = null;
@@ -201,7 +212,12 @@ if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
 // admin utilities (seed, dump, disable-others, ping) — optional
 if (adminRoutes) app.use("/api/admin", adminRoutes);
 
+// profile API (read-only profile & history)
 app.use("/api/profile", profileRoutes);
+
+// referrals (public + admin)
+app.use("/api/referrals", referralRoutes);
+app.use("/api/admin/referrals", referralAdminRoutes);
 
 /* =========================
    AUTO-SEED ON BOOT (no admin needed)

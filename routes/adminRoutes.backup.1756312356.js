@@ -4,10 +4,6 @@ import db from "../db.js";
 const router = express.Router();
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "dev_admin_secret_change_me";
 
-/* Public ping (no auth) to verify mount */
-router.get("/ping", (_req, res) => res.json({ ok: true, route: "admin" }));
-
-/* Require x-admin for everything below */
 router.use((req, res, next) => {
   const key = req.header("x-admin");
   if (key && key === ADMIN_SECRET) return next();
@@ -28,12 +24,6 @@ router.post("/seed-quests", async (_req, res) => {
   try {
     await ensureQuestColumns();
 
-    // ensure code column
-    const cols = await db.all(`PRAGMA table_info(quests)`);
-    if (!cols.some(c => c.name === "code")) {
-      try { await db.run(`ALTER TABLE quests ADD COLUMN code TEXT UNIQUE;`); } catch(_e) {}
-    }
-
     const quests = [
       { code: "tg_join_channel",  title: "Enroll in the Official 7GoldenCowries Telegram Channel", xp: 5, type: "social", requirement: "tg_channel_member", target: "@GOLDENCOWRIE" },
       { code: "tg_start_bot",     title: "Initiate the 7GoldenCowries Telegram Bot",               xp: 5, type: "social", requirement: "tg_bot_linked",     target: "@GOLDENCOWRIEBOT" },
@@ -43,6 +33,11 @@ router.post("/seed-quests", async (_req, res) => {
       { code: "x_follow_partner", title: "Follow Our Ecosystem Partner on X",                      xp: 5, type: "social", requirement: "x_follow",           target: "@Gigilabs_" },
       { code: "discord_join",     title: "Enter the 7GoldenCowries Discord Realm",                 xp: 5, type: "social", requirement: "discord_member",     target: "https://discord.gg/Yj9TQYdgSP" },
     ];
+
+    // add code column if it doesn't exist
+    const cols = await db.all(`PRAGMA table_info(quests)`);
+    const hasCode = cols.some(c => c.name === "code");
+    if (!hasCode) { try { await db.run(`ALTER TABLE quests ADD COLUMN code TEXT UNIQUE;`); } catch(_e) {} }
 
     for (const q of quests) {
       await db.run(
