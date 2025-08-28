@@ -16,7 +16,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   process.env.CLIENT_URL ||
-  "https://7goldencowries.com";
+  "https://www.7goldencowries.com";
 
 // Max age for telegram login payload (seconds). Prevents replay.
 // Set TELEGRAM_AUTH_MAX_AGE=0 to disable.
