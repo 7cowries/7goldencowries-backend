@@ -3,28 +3,28 @@ import "dotenv/config"; // loads .env
 import express from "express";
 import cors from "cors";
 import cookieSession from "cookie-session";
-import cookieParser from "cookie-parser"; // parse cookies for /debug
+import cookieParser from "cookie-parser";
 import passport from "passport";
-import "./passportConfig.js";
+import "./passportConfig.js"; // configures Twitter (and any other) passport strategies
 
-// Importing db initializes tables (top-level await in db.js)
+// Importing db initializes tables/migrations (top-level await inside db.js)
 import db from "./db.js";
 
 import helmet from "helmet";
 import compression from "compression";
 
-// 👉 auto-seed on boot (no admin route required)
+// Auto-seed quests on boot (no admin call needed)
 import { seedOnBoot } from "./utils/seed.js";
 
 // Core feature routes
 import profileRoutes from "./routes/profileRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 
-// NEW: referrals (public + admin)
+// Referrals (public + admin)
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
 
 /* =========================
-   ENV
+   ENV / APP
    ========================= */
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -38,15 +38,13 @@ function splitEnvList(v) {
 }
 
 // Derive Vercel URL from env if present
-const vercelUrl = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : null;
+const vercelUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null;
 
 const baseAllowed = [
   "http://localhost:3000",
   "https://7goldencowries.vercel.app",
   "https://7goldencowries.com",
-  "https://www.7goldencowries.com", // add www
+  "https://www.7goldencowries.com",
 ];
 
 const envAllowed = [
@@ -75,7 +73,6 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  // include both admin headers (case-insensitive but list them for preflight clarity)
   allowedHeaders: [
     "Content-Type",
     "Authorization",
@@ -84,7 +81,6 @@ const corsOptions = {
     "x-admin-secret",
   ],
 };
-
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // Preflight
 
@@ -94,12 +90,11 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
-
 app.use(compression());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser()); // ensure req.cookies exists
+app.use(cookieParser());
 
 const isProd = process.env.NODE_ENV === "production";
 app.use(
@@ -125,7 +120,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* =========================
-   HEALTH & ROOT
+   HEALTH / ROOT / DEBUG
    ========================= */
 const healthPayload = () => ({
   ok: true,
@@ -133,12 +128,9 @@ const healthPayload = () => ({
   uptime: process.uptime(),
 });
 app.get("/health", (_req, res) => res.json(healthPayload()));
-app.get("/api/health", (_req, res) => res.json(healthPayload())); // alias for clients calling /api/health
-app.get("/", (_req, res) => {
-  res.send("7goldencowries backend is running 🚀");
-});
+app.get("/api/health", (_req, res) => res.json(healthPayload()));
+app.get("/", (_req, res) => res.send("7goldencowries backend is running 🚀"));
 
-// Debug endpoint to verify CORS/cookies/session
 app.get("/debug/cors", (req, res) => {
   res.json({
     origin: req.get("origin"),
@@ -149,7 +141,7 @@ app.get("/debug/cors", (req, res) => {
 });
 
 /* =========================
-   OPTIONAL ROUTES (dynamic import)
+   OPTIONAL ROUTES (dynamic import to be resilient)
    ========================= */
 let questRoutes = null;
 let questsRoutes = null;
@@ -182,7 +174,7 @@ try {
   console.error("Failed to load leaderboardRoutes.js:", e.message);
 }
 
-// Admin routes are optional now; AUTO_SEED replaces the need for them
+// Admin utilities (seed, dump, disable-others, ping) — optional
 try {
   const mod = await import("./routes/adminRoutes.js");
   adminRoutes = mod.default;
@@ -194,33 +186,28 @@ try {
 /* =========================
    MOUNT
    ========================= */
-// IMPORTANT: If authRoutes defines paths beginning with '/auth/...',
-// mount at '/' to avoid double '/auth/auth/...'
+// Auth endpoints (start/callbacks for Twitter/X, Telegram, Discord) live under /auth/...
 app.use("/", authRoutes);
 
-// quests router is mounted under /api/quest
-// (internally it defines '/quests', '/completed/:wallet', '/complete')
-if (questRoutes) app.use("/api/quest", questRoutes);
+// Quests API
+if (questRoutes) app.use("/api/quest", questRoutes);    // singular file
+if (questsRoutes) app.use("/api/quests", questsRoutes); // plural fallback
 
-// optional plural fallback
-if (questsRoutes) app.use("/api/quests", questsRoutes);
-
-// leaderboard router is mounted under /api/leaderboard
-// ensure its file uses `router.get("/", ...)`
+// Leaderboard API
 if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
 
-// admin utilities (seed, dump, disable-others, ping) — optional
+// Admin utilities (optional)
 if (adminRoutes) app.use("/api/admin", adminRoutes);
 
-// profile API (read-only profile & history)
+// Profile API (read-only profile & history)
 app.use("/api/profile", profileRoutes);
 
-// referrals (public + admin)
+// Referrals: public + admin
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
 
 /* =========================
-   AUTO-SEED ON BOOT (no admin needed)
+   AUTO-SEED ON BOOT
    ========================= */
 try {
   const yes = String(process.env.AUTO_SEED || "").toLowerCase();

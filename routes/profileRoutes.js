@@ -1,3 +1,4 @@
+
 // routes/profileRoutes.js
 import express from "express";
 import db from "../db.js";
@@ -5,125 +6,182 @@ import { getLevelInfo } from "../utils/levelUtils.js";
 
 const router = express.Router();
 
-/* ------------------------------ helpers ------------------------------ */
+/* ---------------------------- helpers ---------------------------- */
+
+/** Normalize/trim the wallet string so inserts & queries match */
+function normalizeWallet(w) {
+  return String(w || "").trim();
+}
+
+/** Resolve wallet from several places (query/param/header/cookie/body) */
 function resolveWallet(req) {
-  // priority: explicit param > query > header > cookie > body
-  return (
-    (req.params && req.params.wallet) ||
+  const w =
+    (req.params && (req.params.wallet || req.params.address)) ||
     (req.query && (req.query.wallet || req.query.address)) ||
     req.get("x-wallet") ||
     (req.cookies && (req.cookies.wallet || req.cookies.address)) ||
     (req.body && (req.body.wallet || req.body.address)) ||
-    ""
-  ).trim();
+    "";
+  return normalizeWallet(w);
 }
 
-/* Small utility so we don’t duplicate the main logic */
-async function buildProfileResponse(wallet) {
-  // 1) User core stats
-  let user = await db.get(
-    `SELECT wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, twitterHandle
-       FROM users WHERE wallet = ?`,
-    wallet
-  );
-
-  // If user doesn’t exist yet, create a minimal row so UI has something sane to show
-  if (!user) {
+/** Ensure there is a users row so the UI always has sane defaults */
+async function ensureUserRow(wallet) {
+  const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
+  if (!row) {
     await db.run(
       `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP)
        VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000)`,
       wallet
     );
-    user = await db.get(
-      `SELECT wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, twitterHandle
-         FROM users WHERE wallet = ?`,
+  }
+}
+
+/** Get recent history; prefer quest_history, else fall back to completed_quests+quests */
+async function fetchHistory(wallet) {
+  // Preferred: quest_history (if you created it)
+  try {
+    const rows = await db.all(
+      `SELECT id, quest_id AS questId, title, xp, completed_at
+         FROM quest_history
+        WHERE wallet = ?
+        ORDER BY id DESC
+        LIMIT 50`,
       wallet
     );
+    if (Array.isArray(rows)) return rows;
+  } catch {
+    // table may not exist; ignore
   }
 
-  // 2) Social links
-  const links = await db.get(
-    `SELECT twitter, telegram, discord
-       FROM social_links WHERE wallet = ?`,
+  // Fallback: join completed_quests with quests
+  try {
+    const rows = await db.all(
+      `SELECT c.id,
+              c.questId AS questId,
+              q.title AS title,
+              q.xp     AS xp,
+              c.timestamp AS completed_at
+         FROM completed_quests c
+         JOIN quests q ON q.id = c.questId
+        WHERE c.wallet = ?
+        ORDER BY c.timestamp DESC
+        LIMIT 50`,
+      wallet
+    );
+    if (Array.isArray(rows)) return rows;
+  } catch {
+    // also optional
+  }
+
+  return [];
+}
+
+/** Build the full profile payload (core stats + socials + history) */
+async function buildProfile(wallet) {
+  await ensureUserRow(wallet);
+
+  // Join users with social_links so we always return latest socials
+  const u = await db.get(
+    `
+    SELECT
+      u.wallet,
+      u.xp, u.tier, u.levelName, u.levelSymbol, u.levelProgress, u.nextXP,
+      u.twitterHandle, u.telegramHandle, u.discordHandle, u.discordGuildMember,
+      sl.twitter  AS linkTwitter,
+      sl.telegram AS linkTelegram,
+      sl.discord  AS linkDiscord
+    FROM users u
+    LEFT JOIN social_links sl ON sl.wallet = u.wallet
+    WHERE u.wallet = ?
+    `,
     wallet
   );
 
-  // 3) Compute level info if missing/outdated
-  const lvl = getLevelInfo(user.xp ?? 0);
-  const levelName = user.levelName || lvl.name;
-  const levelSymbol = user.levelSymbol || lvl.symbol;
-  const levelProgress =
-    typeof user.levelProgress === "number" ? user.levelProgress : lvl.progress;
-  const nextXP = typeof user.nextXP === "number" ? user.nextXP : lvl.nextXP;
+  // Compute level info/fallbacks
+  const lvl = getLevelInfo(u?.xp ?? 0);
+  const levelName     = u?.levelName     || lvl.name;
+  const levelSymbol   = u?.levelSymbol   || lvl.symbol;
+  const levelProgress = typeof u?.levelProgress === "number" ? u.levelProgress : lvl.progress;
+  const nextXP        = typeof u?.nextXP        === "number" ? u.nextXP        : lvl.nextXP;
 
-  // 4) History (most recent first)
-  const history = await db.all(
-    `SELECT q.title, q.xp, c.timestamp
-       FROM completed_quests c
-       JOIN quests q ON q.id = c.questId
-      WHERE c.wallet = ?
-      ORDER BY c.timestamp DESC
-      LIMIT 100`,
-    wallet
-  );
+  // Merge links: prefer social_links table, then users.*Handle
+  const links = {
+    twitter:  u?.linkTwitter  || u?.twitterHandle  || null,
+    telegram: u?.linkTelegram || u?.telegramHandle || null,
+    discord:  u?.linkDiscord  || u?.discordHandle  || null,
+  };
+
+  const history = await fetchHistory(wallet);
 
   return {
     profile: {
-      wallet: user.wallet,
-      xp: user.xp ?? 0,
-      tier: user.tier || "Free",
+      wallet: u?.wallet || wallet,
+      xp: u?.xp ?? 0,
+      tier: u?.tier || "Free",
       levelName,
       levelSymbol,
       levelProgress,
       nextXP,
-      twitterHandle: user.twitterHandle || null,
-      links: {
-        twitter: links?.twitter || user.twitterHandle || "",
-        telegram: links?.telegram || "",
-        discord: links?.discord || "",
-      },
+      twitterHandle:  u?.twitterHandle  || null,
+      telegramHandle: u?.telegramHandle || null,
+      discordHandle:  u?.discordHandle  || null,
+      discordGuildMember: !!(u?.discordGuildMember),
+      links,
     },
-    history: history || [],
+    history,
   };
 }
 
-/* ------------------------------- routes ------------------------------ */
-/**
- * GET /api/profile?wallet=...  (also supports header/cookie/body)
- */
+/* ----------------------------- routes ----------------------------- */
+
+/** GET /api/profile?wallet=...  (query/header/body/cookie accepted) */
 router.get("/", async (req, res) => {
   try {
     const wallet = resolveWallet(req);
     if (!wallet) {
       return res.status(400).json({
         error: "Missing wallet",
-        hint:
-          "Provide ?wallet=ADDRESS, or send 'x-wallet' header, or use /api/profile/:wallet.",
+        hint: "Provide ?wallet=ADDRESS, or send 'x-wallet' header, or use /api/profile/:wallet",
       });
     }
-    const data = await buildProfileResponse(wallet);
-    return res.json(data);
+    const data = await buildProfile(wallet);
+    res.json(data);
   } catch (e) {
     console.error("Profile route error:", e);
-    return res.status(500).json({ error: "Failed to load profile" });
+    res.status(500).json({ error: "Failed to load profile" });
   }
 });
 
-/**
- * GET /api/profile/:wallet
- * Path alternative to make calling simpler from clients.
- */
+/** GET /api/profile/:wallet  (path variant) */
 router.get("/:wallet", async (req, res) => {
   try {
     const wallet = resolveWallet(req);
-    if (!wallet) {
-      return res.status(400).json({ error: "Missing wallet" });
-    }
-    const data = await buildProfileResponse(wallet);
-    return res.json(data);
+    if (!wallet) return res.status(400).json({ error: "Missing wallet" });
+    const data = await buildProfile(wallet);
+    res.json(data);
   } catch (e) {
     console.error("Profile route error:", e);
-    return res.status(500).json({ error: "Failed to load profile" });
+    res.status(500).json({ error: "Failed to load profile" });
+  }
+});
+
+/** Optional debug helper to inspect what’s stored */
+router.get("/_debug/links", async (req, res) => {
+  const wallet = resolveWallet(req);
+  if (!wallet) return res.status(400).json({ error: "Missing wallet" });
+  try {
+    const sl = await db.get(
+      "SELECT wallet,twitter,telegram,discord,updated_at FROM social_links WHERE wallet = ?",
+      wallet
+    );
+    const u = await db.get(
+      "SELECT wallet,twitterHandle,telegramHandle,discordHandle,discordGuildMember FROM users WHERE wallet = ?",
+      wallet
+    );
+    res.json({ social_links: sl || null, users: u || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
