@@ -3,7 +3,7 @@ import "dotenv/config"; // loads .env
 import express from "express";
 import cors from "cors";
 import cookieSession from "cookie-session";
-import cookieParser from "cookie-parser";
+import cookieParser from "cookie-parser"; // parse cookies for /debug
 import passport from "passport";
 import "./passportConfig.js"; // configures Twitter (and any other) passport strategies
 
@@ -22,6 +22,9 @@ import authRoutes from "./routes/authRoutes.js";
 
 // Referrals (public + admin)
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
+
+// NEW: Telegram auth routes (widget + callback)
+import telegramAuthRoutes from "./routes/telegramRoutes.js";
 
 /* =========================
    ENV / APP
@@ -188,6 +191,9 @@ try {
    ========================= */
 // Auth endpoints (start/callbacks for Twitter/X, Telegram, Discord) live under /auth/...
 app.use("/", authRoutes);
+
+// Telegram widget + callback routes
+app.use("/", telegramAuthRoutes);
 
 // Quests API
 if (questRoutes) app.use("/api/quest", questRoutes);    // singular file
