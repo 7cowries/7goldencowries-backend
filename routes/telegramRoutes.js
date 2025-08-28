@@ -75,7 +75,7 @@ router.get("/auth/telegram/start", async (req, res) => {
 </html>`);
 });
 
-/* GET /auth/telegram/callback — verify, save, redirect */
+/* GET /auth/telegram/callback — verify, save, redirect/popup-close */
 router.get("/auth/telegram/callback", async (req, res) => {
   try {
     if (!BOT_TOKEN) throw new Error("Missing bot token");
@@ -107,7 +107,19 @@ router.get("/auth/telegram/callback", async (req, res) => {
       wallet, tgUsername
     );
 
-    return res.redirect(`${FRONTEND_URL}/profile?linked=telegram`);
+    // ✅ On success, close popup and notify opener, else fallback to redirect
+    return res.send(`
+      <script>
+        if (window.opener) {
+          window.opener.postMessage('telegram-linked', '*');
+          window.close();
+        } else {
+          window.location = "${FRONTEND_URL}/profile?linked=telegram";
+        }
+      </script>
+      <p style="font-family:sans-serif;text-align:center;margin-top:2em;">Telegram linked! You may close this window.</p>
+    `);
+
   } catch (e) {
     console.error("Telegram callback error:", e);
     return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=server`);
