@@ -19,6 +19,11 @@ async function ensureIndex(name, sql) {
   await db.exec(`CREATE INDEX IF NOT EXISTS ${name} ${sql};`);
 }
 
+// Create a unique index if it doesn't exist
+async function ensureUniqueIndex(name, sql) {
+  await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${name} ${sql};`);
+}
+
 const initDB = async () => {
   db = await open({
     filename: "./database.sqlite", // keep in sync with your CLI usage
@@ -28,9 +33,10 @@ const initDB = async () => {
   // Pragmas for stability/concurrency
   await db.exec(`PRAGMA foreign_keys = ON;`);
   await db.exec(`PRAGMA journal_mode = WAL;`);
+  await db.exec(`PRAGMA synchronous = NORMAL;`);
   await db.exec(`PRAGMA busy_timeout = 3000;`);
 
-  // --- Tables (create if missing) ---
+  // --- Core tables (create if missing) ---
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       wallet TEXT PRIMARY KEY,
@@ -106,6 +112,29 @@ const initDB = async () => {
       xp INTEGER DEFAULT 0,
       completed_at TEXT DEFAULT (datetime('now'))
     );
+
+    -- Subscriptions (used by daily expiry cron in index.js)
+    -- status: active | expired | canceled
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      tier TEXT NOT NULL,                  -- Free | Tier1 | Tier2 | Tier3
+      tonAmount REAL DEFAULT 0,
+      usdAmount REAL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Token sale contributions (used by tokenSaleRoutes)
+    CREATE TABLE IF NOT EXISTS token_sale_contributions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      ton_amount REAL NOT NULL,
+      usd_amount REAL DEFAULT 0,
+      referral_code TEXT,
+      tx_hash TEXT,                        -- optional onchain tx id
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // --- Indices (speed up common lookups) ---
@@ -116,10 +145,13 @@ const initDB = async () => {
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");
-  // If you want uniqueness so a wallet can't be referred twice, uncomment:
-  // await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_referrals_referred ON referrals(referred);");
+  await ensureIndex("idx_subscriptions_wallet_time", "ON subscriptions(wallet, timestamp)");
+  await ensureIndex("idx_tokensale_wallet_time", "ON token_sale_contributions(wallet, created_at)");
 
-  // --- Columns (safe migrations for older DBs) ---
+  // Ensure uniqueness for social_links upsert logic
+  await ensureUniqueIndex("uq_social_links_wallet", "ON social_links(wallet)");
+
+  // --- Backward-compatible column migrations (safe) ---
   // users
   await addColumnIfMissing("users", "tier",                  `tier TEXT NOT NULL DEFAULT 'Free'`);
   await addColumnIfMissing("users", "levelName",             `levelName TEXT DEFAULT 'Shellborn'`);
@@ -149,6 +181,14 @@ const initDB = async () => {
   await addColumnIfMissing("social_links", "updated_at",     `updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
   await addColumnIfMissing("referrals",    "created_at",     `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
 
+  // subscriptions (ensure any missing columns on older DBs)
+  await addColumnIfMissing("subscriptions", "tonAmount",     `tonAmount REAL DEFAULT 0`);
+  await addColumnIfMissing("subscriptions", "usdAmount",     `usdAmount REAL DEFAULT 0`);
+
+  // token sale (ensure any missing columns on older DBs)
+  await addColumnIfMissing("token_sale_contributions", "referral_code", `referral_code TEXT`);
+  await addColumnIfMissing("token_sale_contributions", "tx_hash",       `tx_hash TEXT`);
+
   // --- Normalize legacy NULLs to defaults ---
   await db.exec(`
     UPDATE users SET tier='Free'           WHERE tier IS NULL;
@@ -157,6 +197,7 @@ const initDB = async () => {
     UPDATE users SET levelProgress=0       WHERE levelProgress IS NULL;
     UPDATE users SET nextXP=10000          WHERE nextXP IS NULL;
     UPDATE users SET discordGuildMember=0  WHERE discordGuildMember IS NULL;
+    UPDATE subscriptions SET status='active' WHERE status IS NULL;
   `);
 };
 
