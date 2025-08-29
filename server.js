@@ -5,7 +5,7 @@ import cors from "cors";
 import cookieSession from "cookie-session";
 import cookieParser from "cookie-parser"; // parse cookies for /debug
 import passport from "passport";
-import "./passportConfig.js"; // configures Twitter (and any other) passport strategies
+import "./passportConfig.js"; // configures Twitter/Discord/etc. strategies
 
 // Importing db initializes tables/migrations (top-level await inside db.js)
 import db from "./db.js";
@@ -89,7 +89,7 @@ app.options("*", cors(corsOptions)); // Preflight
 
 app.use(
   helmet({
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: false, // widget HTML serves <script> from telegram.org
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
@@ -107,7 +107,7 @@ app.use(
     maxAge: 1000 * 60 * 60 * 24, // 24h
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "none" : "lax",
+    sameSite: isProd ? "none" : "lax", // required for cross-site OAuth popups in prod
     path: "/",
   })
 );
@@ -192,8 +192,9 @@ try {
 // Auth endpoints (start/callbacks for Twitter/X, Telegram, Discord) live under /auth/...
 app.use("/", authRoutes);
 
-// Telegram widget + callback routes
+// Telegram widget + callback routes — mount early
 app.use("/", telegramAuthRoutes);
+console.log("➡️  Mounted telegramRoutes at /auth/telegram/*");
 
 // Quests API
 if (questRoutes) app.use("/api/quest", questRoutes);    // singular file
