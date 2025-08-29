@@ -145,6 +145,15 @@ router.get("/auth/telegram/start", async (req, res) => {
 });
 
 // ------------------------------------------------------------------
+// Legacy alias: /auth/telegram/verify  → redirect to /callback
+// (covers any old cached /verify pages)
+// ------------------------------------------------------------------
+router.get("/auth/telegram/verify", (req, res) => {
+  const qs = new URLSearchParams(req.query).toString();
+  res.redirect(302, `/auth/telegram/callback${qs ? `?${qs}` : ""}`);
+});
+
+// ------------------------------------------------------------------
 // GET /auth/telegram/callback — verify payload, save links, notify opener
 // ------------------------------------------------------------------
 router.get("/auth/telegram/callback", async (req, res) => {
