@@ -134,8 +134,8 @@ router.get("/auth/telegram/start", async (req, res) => {
     <p>Tap the button to authorize with Telegram. You’ll be sent back automatically.</p>
     <script async src="https://telegram.org/js/telegram-widget.js?22"
       data-telegram-login="${BOT_USERNAME}"
-      data-size="large"
-      data-radius="20"
+      data-size="medium"
+      data-radius="14"
       data-auth-url="${authUrl}"
       data-request-access="write"></script>
     <p><small>If nothing happens after auth, you can close this tab.</small></p>
@@ -174,7 +174,7 @@ router.get("/auth/telegram/callback", async (req, res) => {
     }
 
     const tgId = String(req.query.id || "");
-    const tgUsername = String(req.query.username || "");
+       const tgUsername = String(req.query.username || "");
 
     await ensureUser(wallet);
 
