@@ -23,17 +23,11 @@ const FRONTEND_URL =
 const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 300); // 5 min default
 
 // --- Helpers ---
-function baseUrl(req) {
-  const proto = String(req.headers["x-forwarded-proto"] || "https")
-    .split(",")[0]
-    .trim();
-  const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return `${proto}://${host}`;
-}
-
 function decodeState(s) {
   try {
-    return decodeURIComponent(Buffer.from(String(s || ""), "base64").toString("utf8"));
+    return decodeURIComponent(
+      Buffer.from(String(s || ""), "base64").toString("utf8")
+    );
   } catch {
     return "";
   }
@@ -51,12 +45,12 @@ async function ensureUser(wallet) {
   }
 }
 
-/**
- * Verify Telegram OAuth data per official docs:
+/** Verify Telegram OAuth data per official docs:
  * https://core.telegram.org/widgets/login#checking-authorization
  */
 function verifyTelegram(data, botToken) {
   const { hash, ...rest } = data;
+
   // Optional replay protection using auth_date
   if (AUTH_MAX_AGE > 0 && rest.auth_date) {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -65,24 +59,42 @@ function verifyTelegram(data, botToken) {
       return false;
     }
   }
+
   const checkString = Object.keys(rest)
     .sort()
     .map((k) => `${k}=${rest[k]}`)
     .join("\n");
+
   const secret = crypto.createHash("sha256").update(botToken).digest();
   const hmac = crypto.createHmac("sha256", secret).update(checkString).digest("hex");
   return hmac === hash;
 }
 
-function getOrigin(urlStr) {
+function originOf(urlStr) {
   try {
-    return new URL(urlStr).origin;
+    return new URL(String(urlStr)).origin;
   } catch {
     return "";
   }
 }
 
-const FRONTEND_ORIGIN = getOrigin(FRONTEND_URL);
+// Prefer explicit FRONTEND_URL origin; else use forwarded host/proto.
+// Works when called behind Vercel → Render rewrites.
+function resolveFrontendOrigin(req) {
+  const envOrigin = originOf(FRONTEND_URL);
+  if (envOrigin) return envOrigin;
+
+  const proto = String(req.headers["x-forwarded-proto"] || "https")
+    .split(",")[0]
+    .trim();
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "")
+    .split(",")[0]
+    .trim()
+    .replace(/:\d+$/, ""); // strip port
+  return host ? `${proto}://${host}` : "";
+}
+
+const FRONTEND_ORIGIN = originOf(FRONTEND_URL);
 
 // ------------------------------------------------------------------
 // GET /auth/telegram/start — serve Telegram widget page
@@ -91,14 +103,19 @@ router.get("/auth/telegram/start", async (req, res) => {
   if (!BOT_USERNAME || !BOT_TOKEN) {
     return res
       .status(500)
-      .send("Telegram not configured: set TELEGRAM_BOT_USERNAME/NAME and TELEGRAM_BOT_TOKEN");
+      .send(
+        "Telegram not configured: set TELEGRAM_BOT_USERNAME/NAME and TELEGRAM_BOT_TOKEN"
+      );
   }
 
   const state = req.query.state || "";
-  const authUrl = `${baseUrl(req)}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
+  const origin = resolveFrontendOrigin(req) || "https://www.7goldencowries.com";
+  const authUrl = `${origin}/auth/telegram/callback?state=${encodeURIComponent(
+    state
+  )}`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  // Note: If you use Helmet CSP globally, ensure telegram.org is allowed for script/frame sources.
+  // (If you use Helmet CSP globally, ensure telegram.org & oauth.telegram.org are allowed)
   res.send(`<!doctype html>
 <html>
 <head>
@@ -118,6 +135,7 @@ router.get("/auth/telegram/start", async (req, res) => {
     <script async src="https://telegram.org/js/telegram-widget.js?22"
       data-telegram-login="${BOT_USERNAME}"
       data-size="large"
+      data-radius="20"
       data-auth-url="${authUrl}"
       data-request-access="write"></script>
     <p><small>If nothing happens after auth, you can close this tab.</small></p>
@@ -132,13 +150,18 @@ router.get("/auth/telegram/start", async (req, res) => {
 router.get("/auth/telegram/callback", async (req, res) => {
   try {
     if (!BOT_TOKEN) throw new Error("Missing bot token");
+
     const wallet = decodeState(req.query.state || "");
     if (!wallet) {
-      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=nostate`);
+      return res.redirect(
+        `${FRONTEND_URL}/profile?linked=telegram&err=nostate`
+      );
     }
 
     if (!verifyTelegram(req.query, BOT_TOKEN)) {
-      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`);
+      return res.redirect(
+        `${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`
+      );
     }
 
     const tgId = String(req.query.id || "");
@@ -174,15 +197,12 @@ router.get("/auth/telegram/callback", async (req, res) => {
       <script>
         try {
           if (window.opener) {
-            // Inform the opener (frontend) and close the popup
             window.opener.postMessage('telegram-linked', ${JSON.stringify(targetOrigin)});
             window.close();
           } else {
-            // Fallback: redirect this tab
             window.location = ${JSON.stringify(`${FRONTEND_URL}/profile?linked=telegram`)};
           }
         } catch (e) {
-          // If anything goes wrong, just redirect
           window.location = ${JSON.stringify(`${FRONTEND_URL}/profile?linked=telegram`)};
         }
       </script>
@@ -193,7 +213,9 @@ router.get("/auth/telegram/callback", async (req, res) => {
     `);
   } catch (e) {
     console.error("Telegram callback error:", e);
-    return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=server`);
+    return res.redirect(
+      `${FRONTEND_URL}/profile?linked=telegram&err=server`
+    );
   }
 });
 
