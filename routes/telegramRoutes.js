@@ -53,9 +53,7 @@ function verifyTelegram(data, botToken) {
   if (AUTH_MAX_AGE > 0 && rest.auth_date) {
     const nowSec = Math.floor(Date.now() / 1000);
     const skew = nowSec - Number(rest.auth_date);
-    if (!Number.isFinite(skew) || skew < 0 || skew > AUTH_MAX_AGE) {
-      return false;
-    }
+    if (!Number.isFinite(skew) || skew < 0 || skew > AUTH_MAX_AGE) return false;
   }
 
   const checkString = Object.keys(rest)
@@ -76,6 +74,7 @@ function originOf(urlStr) {
   }
 }
 
+// Prefer explicit FRONTEND_URL origin; else use forwarded host/proto.
 function resolveFrontendOrigin(req) {
   const envOrigin = originOf(FRONTEND_URL);
   if (envOrigin) return envOrigin;
@@ -102,11 +101,13 @@ router.get("/auth/telegram/start", async (req, res) => {
       .send("Telegram not configured: set TELEGRAM_BOT_USERNAME/NAME and TELEGRAM_BOT_TOKEN");
   }
 
-  const state = req.query.state || "";
+  const state = String(req.query.state || "");
   const origin = resolveFrontendOrigin(req) || "https://www.7goldencowries.com";
-  const authUrl = `${origin}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
+  const callbackBase = `${origin}/auth/telegram/callback`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+  // NOTE: We use data-onauth (JS callback mode). This avoids the flaky auto-close
+  // when Telegram uses embed=1 in popups. We construct the callback URL ourselves.
   res.send(`<!doctype html>
 <html>
 <head>
@@ -114,34 +115,57 @@ router.get("/auth/telegram/start", async (req, res) => {
   <title>Connect Telegram</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;background:#0a1620;color:#e6fff6;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
-    .box{background:#0f1f2b;border:1px solid #173344;padding:24px 20px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);text-align:center;max-width:520px}
+    .box{background:#0f1f2b;border:1px solid #173344;padding:24px 20px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);text-align:center;max-width:520px;width:100%}
     h2{margin:0 0 10px}
     small{opacity:.8}
+    .muted{opacity:.85}
   </style>
 </head>
 <body>
   <div class="box">
     <h2>Connect Telegram</h2>
-    <p>Tap the button to authorize with Telegram. You’ll be sent back automatically.</p>
+    <p class="muted">Tap the button to authorize with Telegram. You'll be returned here and linked automatically.</p>
+
+    <script>
+      // Build a callback URL with the exact fields Telegram gives us.
+      function onTelegramAuth(user) {
+        try {
+          // 'user' contains: id, first_name, last_name?, username?, photo_url?, auth_date, hash
+          var params = new URLSearchParams();
+          params.set("state", ${JSON.stringify(state)});
+          for (var k in user) {
+            if (!Object.prototype.hasOwnProperty.call(user, k)) continue;
+            params.set(k, String(user[k]));
+          }
+          // Navigate in SAME popup to our backend callback
+          var url = ${JSON.stringify(callbackBase)} + "?" + params.toString();
+          window.location.replace(url);
+        } catch (e) {
+          console.error("onTelegramAuth error", e);
+          // Worst case, send user to profile with error
+          window.location.href = ${JSON.stringify(FRONTEND_URL + "/profile?linked=telegram&err=client")};
+        }
+      }
+    </script>
+
     <script async src="https://telegram.org/js/telegram-widget.js?22"
       data-telegram-login="${BOT_USERNAME}"
       data-size="medium"
       data-radius="14"
-      data-auth-url="${authUrl}"
-      data-request-access="write"></script>
+      data-request-access="write"
+      data-onauth="onTelegramAuth(user)"></script>
+
     <p><small>If nothing happens after auth, you can close this tab.</small></p>
   </div>
 
   <script>
-    // Ensure opener always gets message even if Telegram auto-closes fast
+    // Safety: if some integration were to postMessage('telegram-linked'), forward it to opener.
     window.addEventListener("message", (ev) => {
       if (ev.data === "telegram-linked" && window.opener) {
         try {
           window.opener.postMessage("telegram-linked", ${JSON.stringify(FRONTEND_ORIGIN || "*")});
           window.close();
-        } catch (e) {
-          console.error("PostMessage error", e);
-        }
+        } catch (e) {}
       }
     });
   </script>
