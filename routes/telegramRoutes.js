@@ -20,29 +20,6 @@ const FRONTEND_URL =
 const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 300); // 5 min
 
 // ---------- Helpers ----------
-function originOf(urlStr) {
-  try {
-    return new URL(String(urlStr)).origin;
-  } catch {
-    return "";
-  }
-}
-
-// Prefer explicit FRONTEND_URL; else infer from headers (works behind Vercel proxy)
-function resolveFrontendOrigin(req) {
-  const envOrigin = originOf(FRONTEND_URL);
-  if (envOrigin) return envOrigin;
-
-  const proto = String(req.headers["x-forwarded-proto"] || "https")
-    .split(",")[0]
-    .trim();
-  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "")
-    .split(",")[0]
-    .trim()
-    .replace(/:\d+$/, "");
-  return host ? `${proto}://${host}` : "";
-}
-
 function decodeState(s) {
   try {
     return decodeURIComponent(
@@ -74,7 +51,10 @@ function verifyTelegram(data, botToken) {
     .join("\n");
 
   const secret = crypto.createHash("sha256").update(botToken).digest();
-  const hmac = crypto.createHmac("sha256", secret).update(checkString).digest("hex");
+  const hmac = crypto
+    .createHmac("sha256", secret)
+    .update(checkString)
+    .digest("hex");
   return hmac === hash;
 }
 
@@ -91,21 +71,21 @@ async function ensureUser(wallet) {
 }
 
 // ------------------------------------------------------------------
-// GET /auth/telegram/start  ->  302 to Telegram "push" (same-tab flow)
+// FIXED: GET /auth/telegram/start → 302 redirect to oauth.telegram.org
 // ------------------------------------------------------------------
-router.get("/auth/telegram/start", async (req, res) => {
+router.get("/auth/telegram/start", (req, res) => {
   try {
     if (!BOT_TOKEN || !BOT_ID) {
-      return res
-        .status(500)
-        .send("Telegram not configured: set TELEGRAM_BOT_TOKEN (and TELEGRAM_BOT_ID or use a standard token).");
+      return res.status(500).send("Telegram not configured properly.");
     }
 
     const state = String(req.query.state || "");
-    const origin = resolveFrontendOrigin(req) || "https://www.7goldencowries.com";
-    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
+    const origin = "https://www.7goldencowries.com"; // force frontend domain
+    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(
+      state
+    )}`;
 
-    // Build Telegram push URL (no widget, no nested popup)
+    // Build Telegram push URL (always same-tab)
     const tp = new URL("https://oauth.telegram.org/auth/push");
     tp.searchParams.set("bot_id", BOT_ID);
     tp.searchParams.set("origin", origin);
@@ -113,7 +93,6 @@ router.get("/auth/telegram/start", async (req, res) => {
     tp.searchParams.set("request_access", "write");
     tp.searchParams.set("return_to", returnTo);
 
-    // Same-tab redirect straight to Telegram
     return res.redirect(302, tp.toString());
   } catch (e) {
     console.error("Telegram /start error:", e);
@@ -171,7 +150,7 @@ router.get("/auth/telegram/callback", async (req, res) => {
       tgUsername
     );
 
-    // Final: same-tab success
+    // Final success redirect
     return res.redirect(`${FRONTEND_URL}/profile?linked=telegram`);
   } catch (e) {
     console.error("Telegram callback error:", e);
