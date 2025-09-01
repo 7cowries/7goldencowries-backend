@@ -5,27 +5,56 @@ import db from "../db.js";
 
 const router = express.Router();
 
-// --- Env ---
-const BOT_USERNAME =
-  process.env.TELEGRAM_BOT_USERNAME ||
-  process.env.TELEGRAM_BOT_NAME || "";
-
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-
+/* ========= ENV ========= */
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   process.env.CLIENT_URL ||
   "https://www.7goldencowries.com";
 
-// Max age for telegram login payload (seconds). Prevents replay.
-const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 300); // 5 min default
+const BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN || ""; // e.g. "8197436765:AA...."
 
-// --- Helpers ---
+const BOT_USERNAME =
+  process.env.TELEGRAM_BOT_USERNAME ||
+  process.env.TELEGRAM_BOT_NAME ||
+  ""; // optional, not required for this flow
+
+// You may provide TELEGRAM_BOT_ID explicitly. If not, we'll derive it from token (numbers before ':').
+const BOT_ID =
+  process.env.TELEGRAM_BOT_ID ||
+  (BOT_TOKEN.includes(":") ? BOT_TOKEN.split(":")[0] : "");
+
+// Optional replay-protection: max age for Telegram auth payload (seconds).
+const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 300); // 5m default
+
+/* ========= HELPERS ========= */
+function originOf(urlStr) {
+  try {
+    return new URL(String(urlStr)).origin;
+  } catch {
+    return "";
+  }
+}
+
+function resolveFrontendOrigin(req) {
+  // Prefer explicit FRONTEND_URL (should be https://www.7goldencowries.com)
+  const envOrigin = originOf(FRONTEND_URL);
+  if (envOrigin) return envOrigin;
+
+  // Fallback: infer from forwarded headers (behind proxy)
+  const proto = String(req.headers["x-forwarded-proto"] || "https")
+    .split(",")[0]
+    .trim();
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "")
+    .split(",")[0]
+    .trim()
+    .replace(/:\d+$/, "");
+  return host ? `${proto}://${host}` : "https://www.7goldencowries.com";
+}
+
 function decodeState(s) {
   try {
-    return decodeURIComponent(
-      Buffer.from(String(s || ""), "base64").toString("utf8")
-    );
+    return decodeURIComponent(Buffer.from(String(s || ""), "base64").toString("utf8"));
   } catch {
     return "";
   }
@@ -53,7 +82,9 @@ function verifyTelegram(data, botToken) {
   if (AUTH_MAX_AGE > 0 && rest.auth_date) {
     const nowSec = Math.floor(Date.now() / 1000);
     const skew = nowSec - Number(rest.auth_date);
-    if (!Number.isFinite(skew) || skew < 0 || skew > AUTH_MAX_AGE) return false;
+    if (!Number.isFinite(skew) || skew < 0 || skew > AUTH_MAX_AGE) {
+      return false;
+    }
   }
 
   const checkString = Object.keys(rest)
@@ -66,133 +97,54 @@ function verifyTelegram(data, botToken) {
   return hmac === hash;
 }
 
-function originOf(urlStr) {
-  try {
-    return new URL(String(urlStr)).origin;
-  } catch {
-    return "";
-  }
-}
+/* ========= ROUTES ========= */
 
-// Prefer explicit FRONTEND_URL origin; else use forwarded host/proto.
-function resolveFrontendOrigin(req) {
-  const envOrigin = originOf(FRONTEND_URL);
-  if (envOrigin) return envOrigin;
-
-  const proto = String(req.headers["x-forwarded-proto"] || "https")
-    .split(",")[0]
-    .trim();
-  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "")
-    .split(",")[0]
-    .trim()
-    .replace(/:\d+$/, "");
-  return host ? `${proto}://${host}` : "";
-}
-
-const FRONTEND_ORIGIN = originOf(FRONTEND_URL);
-
-// ------------------------------------------------------------------
-// GET /auth/telegram/start — serve Telegram widget page
-// ------------------------------------------------------------------
-router.get("/auth/telegram/start", async (req, res) => {
-  if (!BOT_USERNAME || !BOT_TOKEN) {
+/**
+ * GET /auth/telegram/start
+ * Same-tab redirect → Telegram OAuth "push" endpoint.
+ * After auth, Telegram will return to /auth/telegram/callback with the payload in the query string.
+ */
+router.get("/auth/telegram/start", (req, res) => {
+  if (!BOT_TOKEN || !BOT_ID) {
     return res
       .status(500)
-      .send("Telegram not configured: set TELEGRAM_BOT_USERNAME/NAME and TELEGRAM_BOT_TOKEN");
+      .send("Telegram not configured: set TELEGRAM_BOT_TOKEN (and TELEGRAM_BOT_ID or a token with ':' so we can derive it).");
   }
 
   const state = String(req.query.state || "");
-  const origin = resolveFrontendOrigin(req) || "https://www.7goldencowries.com";
-  const callbackBase = `${origin}/auth/telegram/callback`;
+  const origin = resolveFrontendOrigin(req); // should resolve to https://www.7goldencowries.com
 
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  // NOTE: We use data-onauth (JS callback mode). This avoids the flaky auto-close
-  // when Telegram uses embed=1 in popups. We construct the callback URL ourselves.
-  res.send(`<!doctype html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Connect Telegram</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;background:#0a1620;color:#e6fff6;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
-    .box{background:#0f1f2b;border:1px solid #173344;padding:24px 20px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.35);text-align:center;max-width:520px;width:100%}
-    h2{margin:0 0 10px}
-    small{opacity:.8}
-    .muted{opacity:.85}
-  </style>
-</head>
-<body>
-  <div class="box">
-    <h2>Connect Telegram</h2>
-    <p class="muted">Tap the button to authorize with Telegram. You'll be returned here and linked automatically.</p>
+  // Where Telegram should send the signed user payload after login:
+  const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
 
-    <script>
-      // Build a callback URL with the exact fields Telegram gives us.
-      function onTelegramAuth(user) {
-        try {
-          // 'user' contains: id, first_name, last_name?, username?, photo_url?, auth_date, hash
-          var params = new URLSearchParams();
-          params.set("state", ${JSON.stringify(state)});
-          for (var k in user) {
-            if (!Object.prototype.hasOwnProperty.call(user, k)) continue;
-            params.set(k, String(user[k]));
-          }
-          // Navigate in SAME popup to our backend callback
-          var url = ${JSON.stringify(callbackBase)} + "?" + params.toString();
-          window.location.replace(url);
-        } catch (e) {
-          console.error("onTelegramAuth error", e);
-          // Worst case, send user to profile with error
-          window.location.href = ${JSON.stringify(FRONTEND_URL + "/profile?linked=telegram&err=client")};
-        }
-      }
-    </script>
+  // Telegram "push" URL (embed=1 + request_access=write to match widget behavior)
+  const pushUrl =
+    `https://oauth.telegram.org/auth/push` +
+    `?bot_id=${encodeURIComponent(BOT_ID)}` +
+    `&origin=${encodeURIComponent(origin)}` +
+    `&embed=1` +
+    `&request_access=write` +
+    `&return_to=${encodeURIComponent(returnTo)}`;
 
-    <script async src="https://telegram.org/js/telegram-widget.js?22"
-      data-telegram-login="${BOT_USERNAME}"
-      data-size="medium"
-      data-radius="14"
-      data-request-access="write"
-      data-onauth="onTelegramAuth(user)"></script>
-
-    <p><small>If nothing happens after auth, you can close this tab.</small></p>
-  </div>
-
-  <script>
-    // Safety: if some integration were to postMessage('telegram-linked'), forward it to opener.
-    window.addEventListener("message", (ev) => {
-      if (ev.data === "telegram-linked" && window.opener) {
-        try {
-          window.opener.postMessage("telegram-linked", ${JSON.stringify(FRONTEND_ORIGIN || "*")});
-          window.close();
-        } catch (e) {}
-      }
-    });
-  </script>
-</body>
-</html>`);
+  // Same-tab redirect
+  res.redirect(302, pushUrl);
 });
 
-// ------------------------------------------------------------------
-// Legacy alias: /auth/telegram/verify → redirect to /callback
-// ------------------------------------------------------------------
-router.get("/auth/telegram/verify", (req, res) => {
-  const qs = new URLSearchParams(req.query).toString();
-  res.redirect(302, `/auth/telegram/callback${qs ? `?${qs}` : ""}`);
-});
-
-// ------------------------------------------------------------------
-// GET /auth/telegram/callback — verify payload, save links, notify opener
-// ------------------------------------------------------------------
+/**
+ * GET /auth/telegram/callback
+ * Verify Telegram signature, upsert links, then redirect the user to Profile.
+ */
 router.get("/auth/telegram/callback", async (req, res) => {
   try {
     if (!BOT_TOKEN) throw new Error("Missing bot token");
 
+    // The wallet we encoded in state (base64) on the client
     const wallet = decodeState(req.query.state || "");
     if (!wallet) {
       return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=nostate`);
     }
 
+    // Verify payload from Telegram
     if (!verifyTelegram(req.query, BOT_TOKEN)) {
       return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`);
     }
@@ -200,11 +152,14 @@ router.get("/auth/telegram/callback", async (req, res) => {
     const tgId = String(req.query.id || "");
     const tgUsername = String(req.query.username || "");
 
+    // Ensure user exists in DB; then save Telegram linkage
     await ensureUser(wallet);
 
     await db.run(
       `UPDATE users SET telegramId = ?, telegramHandle = ? WHERE wallet = ?`,
-      tgId, tgUsername, wallet
+      tgId,
+      tgUsername,
+      wallet
     );
 
     await db.run(
@@ -213,28 +168,12 @@ router.get("/auth/telegram/callback", async (req, res) => {
        ON CONFLICT(wallet) DO UPDATE SET
          telegram = excluded.telegram,
          updated_at = CURRENT_TIMESTAMP`,
-      wallet, tgUsername
+      wallet,
+      tgUsername
     );
 
-    const targetOrigin = FRONTEND_ORIGIN || "*";
-    return res.send(`
-      <script>
-        try {
-          if (window.opener) {
-            window.opener.postMessage('telegram-linked', ${JSON.stringify(targetOrigin)});
-            window.close();
-          } else {
-            window.location = ${JSON.stringify(`${FRONTEND_URL}/profile?linked=telegram`)};
-          }
-        } catch (e) {
-          window.location = ${JSON.stringify(`${FRONTEND_URL}/profile?linked=telegram`)};
-        }
-      </script>
-      <noscript>
-        <meta http-equiv="refresh" content="0;url=${FRONTEND_URL.replace(/"/g, "&quot;")}/profile?linked=telegram" />
-      </noscript>
-      <p style="font-family:sans-serif;text-align:center;margin-top:2em;">Telegram linked! You may close this window.</p>
-    `);
+    // Done — return user to their profile (no popup)
+    return res.redirect(`${FRONTEND_URL}/profile?linked=telegram`);
   } catch (e) {
     console.error("Telegram callback error:", e);
     return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=server`);
