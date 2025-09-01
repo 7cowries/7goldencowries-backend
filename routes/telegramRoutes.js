@@ -8,8 +8,7 @@ const router = express.Router();
 // --- Env ---
 const BOT_USERNAME =
   process.env.TELEGRAM_BOT_USERNAME ||
-  process.env.TELEGRAM_BOT_NAME || // fallback if older var is set
-  "";
+  process.env.TELEGRAM_BOT_NAME || "";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -19,7 +18,6 @@ const FRONTEND_URL =
   "https://www.7goldencowries.com";
 
 // Max age for telegram login payload (seconds). Prevents replay.
-// Set TELEGRAM_AUTH_MAX_AGE=0 to disable.
 const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 300); // 5 min default
 
 // --- Helpers ---
@@ -78,8 +76,6 @@ function originOf(urlStr) {
   }
 }
 
-// Prefer explicit FRONTEND_URL origin; else use forwarded host/proto.
-// Works when called behind Vercel → Render rewrites.
 function resolveFrontendOrigin(req) {
   const envOrigin = originOf(FRONTEND_URL);
   if (envOrigin) return envOrigin;
@@ -90,7 +86,7 @@ function resolveFrontendOrigin(req) {
   const host = String(req.headers["x-forwarded-host"] || req.headers.host || "")
     .split(",")[0]
     .trim()
-    .replace(/:\d+$/, ""); // strip port
+    .replace(/:\d+$/, "");
   return host ? `${proto}://${host}` : "";
 }
 
@@ -103,19 +99,14 @@ router.get("/auth/telegram/start", async (req, res) => {
   if (!BOT_USERNAME || !BOT_TOKEN) {
     return res
       .status(500)
-      .send(
-        "Telegram not configured: set TELEGRAM_BOT_USERNAME/NAME and TELEGRAM_BOT_TOKEN"
-      );
+      .send("Telegram not configured: set TELEGRAM_BOT_USERNAME/NAME and TELEGRAM_BOT_TOKEN");
   }
 
   const state = req.query.state || "";
   const origin = resolveFrontendOrigin(req) || "https://www.7goldencowries.com";
-  const authUrl = `${origin}/auth/telegram/callback?state=${encodeURIComponent(
-    state
-  )}`;
+  const authUrl = `${origin}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  // (If you use Helmet CSP globally, ensure telegram.org & oauth.telegram.org are allowed)
   res.send(`<!doctype html>
 <html>
 <head>
@@ -140,13 +131,26 @@ router.get("/auth/telegram/start", async (req, res) => {
       data-request-access="write"></script>
     <p><small>If nothing happens after auth, you can close this tab.</small></p>
   </div>
+
+  <script>
+    // Ensure opener always gets message even if Telegram auto-closes fast
+    window.addEventListener("message", (ev) => {
+      if (ev.data === "telegram-linked" && window.opener) {
+        try {
+          window.opener.postMessage("telegram-linked", ${JSON.stringify(FRONTEND_ORIGIN || "*")});
+          window.close();
+        } catch (e) {
+          console.error("PostMessage error", e);
+        }
+      }
+    });
+  </script>
 </body>
 </html>`);
 });
 
 // ------------------------------------------------------------------
-// Legacy alias: /auth/telegram/verify  → redirect to /callback
-// (covers any old cached /verify pages)
+// Legacy alias: /auth/telegram/verify → redirect to /callback
 // ------------------------------------------------------------------
 router.get("/auth/telegram/verify", (req, res) => {
   const qs = new URLSearchParams(req.query).toString();
@@ -162,45 +166,32 @@ router.get("/auth/telegram/callback", async (req, res) => {
 
     const wallet = decodeState(req.query.state || "");
     if (!wallet) {
-      return res.redirect(
-        `${FRONTEND_URL}/profile?linked=telegram&err=nostate`
-      );
+      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=nostate`);
     }
 
     if (!verifyTelegram(req.query, BOT_TOKEN)) {
-      return res.redirect(
-        `${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`
-      );
+      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`);
     }
 
     const tgId = String(req.query.id || "");
-       const tgUsername = String(req.query.username || "");
+    const tgUsername = String(req.query.username || "");
 
     await ensureUser(wallet);
 
-    // Update primary users table
     await db.run(
-      `UPDATE users
-         SET telegramId = ?, telegramHandle = ?
-       WHERE wallet = ?`,
-      tgId,
-      tgUsername,
-      wallet
+      `UPDATE users SET telegramId = ?, telegramHandle = ? WHERE wallet = ?`,
+      tgId, tgUsername, wallet
     );
 
-    // Upsert social_links
     await db.run(
       `INSERT INTO social_links (wallet, twitter, telegram, discord)
        VALUES (?, NULL, ?, NULL)
        ON CONFLICT(wallet) DO UPDATE SET
          telegram = excluded.telegram,
          updated_at = CURRENT_TIMESTAMP`,
-      wallet,
-      tgUsername
+      wallet, tgUsername
     );
 
-    // Success—close popup and inform opener with origin-scoped postMessage.
-    // Fallback to redirect if no opener (e.g., mobile Safari).
     const targetOrigin = FRONTEND_ORIGIN || "*";
     return res.send(`
       <script>
@@ -222,9 +213,7 @@ router.get("/auth/telegram/callback", async (req, res) => {
     `);
   } catch (e) {
     console.error("Telegram callback error:", e);
-    return res.redirect(
-      `${FRONTEND_URL}/profile?linked=telegram&err=server`
-    );
+    return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=server`);
   }
 });
 
