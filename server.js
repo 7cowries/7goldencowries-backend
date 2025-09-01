@@ -23,7 +23,7 @@ import authRoutes from "./routes/authRoutes.js";
 // Referrals (public + admin)
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
 
-// NEW: Telegram auth routes (widget + callback)
+// Telegram auth routes (start/callback)
 import telegramAuthRoutes from "./routes/telegramRoutes.js";
 
 /* =========================
@@ -67,6 +67,8 @@ if (process.env.RENDER || process.env.NODE_ENV === "production") {
 /* =========================
    MIDDLEWARE
    ========================= */
+app.disable("x-powered-by");
+
 const corsOptions = {
   origin(origin, cb) {
     // allow same-origin tools, curl, and no-Origin health checks
@@ -89,7 +91,8 @@ app.options("*", cors(corsOptions)); // Preflight
 
 app.use(
   helmet({
-    contentSecurityPolicy: false, // widget HTML serves <script> from telegram.org
+    // We load third-party scripts during auth; keep CSP off unless you define a custom allowlist.
+    contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
@@ -99,6 +102,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// Session for OAuth (Twitter/Discord use it; cookies must be cross-site safe in prod)
 const isProd = process.env.NODE_ENV === "production";
 app.use(
   cookieSession({
@@ -107,7 +111,7 @@ app.use(
     maxAge: 1000 * 60 * 60 * 24, // 24h
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "none" : "lax", // required for cross-site OAuth popups in prod
+    sameSite: isProd ? "none" : "lax",
     path: "/",
   })
 );
@@ -121,6 +125,19 @@ app.use((req, _res, next) => {
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+/* =========================
+   AUTH FLOW CACHE CONTROL (Telegram)
+   ========================= */
+// Hard-disable caching for Telegram auth endpoints so no stale widget/page is served
+app.use((req, res, next) => {
+  if (req.path.startsWith("/auth/telegram")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
 
 /* =========================
    HEALTH / ROOT / DEBUG
@@ -192,7 +209,7 @@ try {
 // Auth endpoints (start/callbacks for Twitter/X, Telegram, Discord) live under /auth/...
 app.use("/", authRoutes);
 
-// Telegram widget + callback routes — mount early
+// Telegram start/callback — mount early
 app.use("/", telegramAuthRoutes);
 console.log("➡️  Mounted telegramRoutes at /auth/telegram/*");
 
@@ -252,3 +269,5 @@ app.listen(PORT, () => {
   console.log(`   CORS allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);
   console.log(`   Environment: ${process.env.NODE_ENV || "development"}`);
 });
+
+export default app;
