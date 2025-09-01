@@ -1,4 +1,4 @@
-// server.js — resilient Express setup for 7goldencowries backend
+// server.js (Backend) — resilient Express setup for 7goldencowries backend
 import "dotenv/config"; // loads .env
 import express from "express";
 import cors from "cors";
@@ -22,9 +22,6 @@ import authRoutes from "./routes/authRoutes.js";
 
 // Referrals (public + admin)
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
-
-// Telegram auth routes (start/callback)
-import telegramAuthRoutes from "./routes/telegramRoutes.js";
 
 /* =========================
    ENV / APP
@@ -67,8 +64,6 @@ if (process.env.RENDER || process.env.NODE_ENV === "production") {
 /* =========================
    MIDDLEWARE
    ========================= */
-app.disable("x-powered-by");
-
 const corsOptions = {
   origin(origin, cb) {
     // allow same-origin tools, curl, and no-Origin health checks
@@ -91,8 +86,7 @@ app.options("*", cors(corsOptions)); // Preflight
 
 app.use(
   helmet({
-    // We load third-party scripts during auth; keep CSP off unless you define a custom allowlist.
-    contentSecurityPolicy: false,
+    contentSecurityPolicy: false, // widget HTML serves <script> from telegram.org
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
@@ -102,7 +96,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Session for OAuth (Twitter/Discord use it; cookies must be cross-site safe in prod)
 const isProd = process.env.NODE_ENV === "production";
 app.use(
   cookieSession({
@@ -111,7 +104,7 @@ app.use(
     maxAge: 1000 * 60 * 60 * 24, // 24h
     httpOnly: true,
     secure: isProd,
-    sameSite: isProd ? "none" : "lax",
+    sameSite: isProd ? "none" : "lax", // required for cross-site OAuth popups in prod
     path: "/",
   })
 );
@@ -125,19 +118,6 @@ app.use((req, _res, next) => {
 
 app.use(passport.initialize());
 app.use(passport.session());
-
-/* =========================
-   AUTH FLOW CACHE CONTROL (Telegram)
-   ========================= */
-// Hard-disable caching for Telegram auth endpoints so no stale widget/page is served
-app.use((req, res, next) => {
-  if (req.path.startsWith("/auth/telegram")) {
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-  }
-  next();
-});
 
 /* =========================
    HEALTH / ROOT / DEBUG
@@ -171,7 +151,7 @@ let adminRoutes = null;
 try {
   const mod = await import("./routes/questRoutes.js"); // singular
   questRoutes = mod.default;
-  console.log("➡️  Loaded routes/questRoutes.js");
+  console.log("➡  Loaded routes/questRoutes.js");
 } catch (e) {
   console.error("Failed to load questRoutes.js:", e.message);
 }
@@ -180,7 +160,7 @@ if (!questRoutes) {
   try {
     const mod = await import("./routes/questsRoutes.js"); // plural fallback
     questsRoutes = mod.default;
-    console.log("➡️  Loaded routes/questsRoutes.js");
+    console.log("➡  Loaded routes/questsRoutes.js");
   } catch (e) {
     console.error("Failed to load questsRoutes.js:", e.message);
   }
@@ -189,7 +169,7 @@ if (!questRoutes) {
 try {
   const mod = await import("./routes/leaderboardRoutes.js");
   leaderboardRoutes = mod.default;
-  console.log("➡️  Loaded routes/leaderboardRoutes.js");
+  console.log("➡  Loaded routes/leaderboardRoutes.js");
 } catch (e) {
   console.error("Failed to load leaderboardRoutes.js:", e.message);
 }
@@ -198,7 +178,7 @@ try {
 try {
   const mod = await import("./routes/adminRoutes.js");
   adminRoutes = mod.default;
-  console.log("➡️  Loaded routes/adminRoutes.js");
+  console.log("➡  Loaded routes/adminRoutes.js");
 } catch (e) {
   console.warn("Admin routes not loaded (optional):", e.message);
 }
@@ -208,10 +188,6 @@ try {
    ========================= */
 // Auth endpoints (start/callbacks for Twitter/X, Telegram, Discord) live under /auth/...
 app.use("/", authRoutes);
-
-// Telegram start/callback — mount early
-app.use("/", telegramAuthRoutes);
-console.log("➡️  Mounted telegramRoutes at /auth/telegram/*");
 
 // Quests API
 if (questRoutes) app.use("/api/quest", questRoutes);    // singular file
@@ -240,7 +216,7 @@ try {
     console.log("🌱 AUTO_SEED enabled. Seeding quests...");
     await seedOnBoot({ disableOthers: disable === "1" || disable === "true" });
   } else {
-    console.log("ℹ️  AUTO_SEED disabled (set AUTO_SEED=true to enable on boot).");
+    console.log("ℹ  AUTO_SEED disabled (set AUTO_SEED=true to enable on boot).");
   }
 } catch (e) {
   console.error("❌ Auto seed failed:", e);
@@ -269,5 +245,3 @@ app.listen(PORT, () => {
   console.log(`   CORS allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);
   console.log(`   Environment: ${process.env.NODE_ENV || "development"}`);
 });
-
-export default app;
