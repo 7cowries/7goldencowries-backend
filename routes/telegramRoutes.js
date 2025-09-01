@@ -71,11 +71,12 @@ async function ensureUser(wallet) {
 }
 
 // ------------------------------------------------------------------
-// FIXED: GET /auth/telegram/start → 302 redirect to oauth.telegram.org
+// UPDATED: GET /auth/telegram/start → 302 redirect to oauth.telegram.org
+//          with no-cache headers and inline botId resolution
 // ------------------------------------------------------------------
 router.get("/auth/telegram/start", (req, res) => {
   try {
-    if (!BOT_TOKEN || !BOT_ID) {
+    if (!BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN) {
       return res.status(500).send("Telegram not configured properly.");
     }
 
@@ -85,9 +86,19 @@ router.get("/auth/telegram/start", (req, res) => {
       state
     )}`;
 
-    // Build Telegram push URL (always same-tab)
+    // absolutely disable caching so you never get the old widget page from a cache/CDN
+    res.setHeader(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    );
+
     const tp = new URL("https://oauth.telegram.org/auth/push");
-    tp.searchParams.set("bot_id", BOT_ID);
+    const botId =
+      process.env.TELEGRAM_BOT_ID ||
+      (process.env.TELEGRAM_BOT_TOKEN || "").split(":")[0] ||
+      BOT_ID;
+
+    tp.searchParams.set("bot_id", botId);
     tp.searchParams.set("origin", origin);
     tp.searchParams.set("embed", "1");
     tp.searchParams.set("request_access", "write");
@@ -117,11 +128,15 @@ router.get("/auth/telegram/callback", async (req, res) => {
 
     const wallet = decodeState(req.query.state || "");
     if (!wallet) {
-      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=nostate`);
+      return res.redirect(
+        `${FRONTEND_URL}/profile?linked=telegram&err=nostate`
+      );
     }
 
     if (!verifyTelegram(req.query, BOT_TOKEN)) {
-      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`);
+      return res.redirect(
+        `${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`
+      );
     }
 
     const tgId = String(req.query.id || "");
