@@ -30,6 +30,7 @@ async function ensureUser(wallet, extra = {}) {
          discordId, discordHandle, discordGuildMember
        )
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+
       wallet,
       extra.xp ?? 0,
       extra.tier ?? "Free",
@@ -98,7 +99,9 @@ router.get("/auth/twitter/callback", (req, res, next) => {
         return res.redirect(`${CLIENT_URL}/profile?linked=twitter`);
       } catch (e) {
         console.error("❌ Twitter callback error:", e);
-        return res.status(500).send("Internal server error during Twitter linking");
+        return res
+          .status(500)
+          .send("Internal server error during Twitter linking");
       }
     });
   })(req, res, next);
@@ -107,10 +110,15 @@ router.get("/auth/twitter/callback", (req, res, next) => {
 // Manual twitter linking fallback
 router.post("/link-twitter", async (req, res) => {
   const { wallet, twitter } = req.body || {};
-  if (!wallet || !twitter) return res.status(400).json({ error: "Missing wallet or twitter" });
+  if (!wallet || !twitter)
+    return res.status(400).json({ error: "Missing wallet or twitter" });
   try {
     await ensureUser(wallet, { twitterHandle: twitter });
-    await db.run("UPDATE users SET twitterHandle = ? WHERE wallet = ?", twitter, wallet);
+    await db.run(
+      "UPDATE users SET twitterHandle = ? WHERE wallet = ?",
+      twitter,
+      wallet
+    );
     await db.run(
       `INSERT INTO social_links (wallet, twitter) VALUES (?, ?)
        ON CONFLICT(wallet) DO UPDATE SET twitter=excluded.twitter`,
@@ -123,77 +131,60 @@ router.post("/link-twitter", async (req, res) => {
   }
 });
 
-/* ------------------------- TELEGRAM (per-user linking) ------------------------- */
-/**
- * Modes:
- *  A) Secure login widget (if TELEGRAM_BOT_TOKEN + TELEGRAM_BOT_NAME are set)
- *  B) Fallback (no bot): simple username form
- */
-const HAS_TELEGRAM_BOT =
-  !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_BOT_NAME;
+/* ------------------------- TELEGRAM (linking via oauth.telegram.org/push) ------------------------- */
 
-// Tiny alias
+/** Hard-force the origin to the exact domain you set with @BotFather /setdomain */
+const FRONTEND_ORIGIN = "https://www.7goldencowries.com";
+
+/** Extract bot_id from env */
+const TELEGRAM_BOT_ID =
+  process.env.TELEGRAM_BOT_ID ||
+  (process.env.TELEGRAM_BOT_TOKEN || "").split(":")[0] ||
+  "";
+
+// Tiny alias (kept for existing links)
 router.get("/auth/telegram", (req, res) => {
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
   res.redirect(`/auth/telegram/start${qs}`);
 });
 
+/** NEW: Always 302 to Telegram’s push endpoint (no widget HTML, no popup) */
 router.get("/auth/telegram/start", (req, res) => {
-  const incoming = req.query.state;
-  if (!incoming) return res.status(400).send("Missing wallet state");
-  req.session.state = incoming;
+  const state = String(req.query.state || "");
 
-  if (HAS_TELEGRAM_BOT) {
-    const botName = process.env.TELEGRAM_BOT_NAME; // without @
-    const html = `
-<!doctype html>
-<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Connect Telegram</title>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;background:#0b1220;color:#e7eef3}
-.card{max-width:520px;margin:0 auto;padding:24px;border-radius:16px;background:#0f1a2b;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-h1{font-size:22px;margin:0 0 12px}
-p{opacity:.85}.muted{opacity:.6}
-</style></head>
-<body><div class="card">
-<h1>Connect your Telegram</h1>
-<p class="muted">Click the button below to authorize with Telegram.</p>
-<script async src="https://telegram.org/js/telegram-widget.js?22"
-  data-telegram-login="${botName}"
-  data-size="large"
-  data-userpic="false"
-  data-request-access="write"
-  data-auth-url="/auth/telegram/verify"></script>
-<p class="muted">If the widget doesn't appear, set your bot domain to this origin in @BotFather via <b>/setdomain</b>.</p>
-</div></body></html>`;
-    return res.type("html").send(html);
+  if (!TELEGRAM_BOT_ID) {
+    console.error("Missing TELEGRAM_BOT_TOKEN/ID");
+    return res.status(500).send("Telegram not configured");
   }
 
-  // Fallback: small username form
-  const html = `
-<!doctype html>
-<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Connect Telegram</title>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;background:#0b1220;color:#e7eef3}
-.card{max-width:520px;margin:0 auto;padding:24px;border-radius:16px;background:#0f1a2b;box-shadow:0 10px 30px rgba(0,0,0,.35)}
-h1{font-size:22px;margin:0 0 12px}
-input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #22314a;background:#0b1526;color:#e7eef3}
-button{margin-top:12px;padding:10px 14px;border-radius:10px;border:none;background:#10b981;color:#03151a;font-weight:600;cursor:pointer}
-.muted{opacity:.7}
-</style></head>
-<body><div class="card">
-<h1>Connect your Telegram</h1>
-<p class="muted">Enter your Telegram username (without @).</p>
-<form method="POST" action="/auth/telegram/manual">
-  <input type="text" name="username" placeholder="e.g. gigixyz" required />
-  <button type="submit">Link Telegram</button>
-</form>
-</div></body></html>`;
-  return res.type("html").send(html);
+  // absolutely disable caching so you never get the old widget HTML from cache/CDN
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+  );
+
+  const returnTo = `${FRONTEND_ORIGIN}/auth/telegram/callback?state=${encodeURIComponent(
+    state
+  )}`;
+
+  const tp = new URL("https://oauth.telegram.org/auth/push");
+  tp.searchParams.set("bot_id", TELEGRAM_BOT_ID);
+  tp.searchParams.set("origin", FRONTEND_ORIGIN);
+  tp.searchParams.set("embed", "1");
+  tp.searchParams.set("request_access", "write");
+  tp.searchParams.set("return_to", returnTo);
+
+  return res.redirect(302, tp.toString());
 });
 
-/** Fallback username form submit */
+/** Legacy widget verifier path — now just a shim to the shared callback */
+router.get("/auth/telegram/verify", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  // Let routes/telegramRoutes.js handle signature verify + DB update
+  res.redirect(`/auth/telegram/callback${qs}`);
+});
+
+/** Optional: Fallback username form (kept as-is) */
 router.post("/auth/telegram/manual", async (req, res) => {
   try {
     const wallet = parseWalletFromState(req.session?.state);
@@ -221,65 +212,6 @@ router.post("/auth/telegram/manual", async (req, res) => {
   }
 });
 
-/** Secure Telegram Login Widget verification */
-router.get("/auth/telegram/verify", async (req, res) => {
-  if (!HAS_TELEGRAM_BOT) return res.status(400).send("Telegram bot not configured");
-  try {
-    // signature verify
-    const params = { ...req.query }; // includes id, username, first_name, auth_date, hash, etc
-    const hash = params.hash;
-    delete params.hash;
-
-    const pairs = Object.keys(params)
-      .sort()
-      .map((k) => `${k}=${params[k]}`);
-    const dataCheckString = pairs.join("\n");
-
-    const crypto = await import("crypto");
-    const secret = crypto
-      .createHash("sha256")
-      .update(process.env.TELEGRAM_BOT_TOKEN)
-      .digest();
-    const hmac = crypto
-      .createHmac("sha256", secret)
-      .update(dataCheckString)
-      .digest("hex");
-
-    if (hmac !== hash) {
-      console.error("Telegram verify failed: Invalid signature");
-      return res.status(403).send("Telegram verification failed: Invalid signature");
-    }
-
-    const wallet =
-      parseWalletFromState(req.query.state) ||
-      parseWalletFromState(req.session?.state);
-    if (!wallet) return res.status(400).send("Missing wallet state");
-    const username = (req.query.username || "").trim().replace(/^@/, "");
-    const tgId = req.query.id ? String(req.query.id) : null;
-    if (!username) return res.status(400).send("No Telegram username provided");
-
-    await ensureUser(wallet, { telegramId: tgId, telegramHandle: username });
-    await db.run(
-      `UPDATE users SET telegramId = ?, telegramHandle = ? WHERE wallet = ?`,
-      tgId,
-      username,
-      wallet
-    );
-    await db.run(
-      `INSERT INTO social_links (wallet, telegram) VALUES (?, ?)
-       ON CONFLICT(wallet) DO UPDATE SET telegram=excluded.telegram`,
-      [wallet, username]
-    );
-
-    req.session.state = null;
-    if (req.session.save) req.session.save(() => {});
-    return res.redirect(`${CLIENT_URL}/profile?linked=telegram`);
-  } catch (e) {
-    console.error("❌ Telegram verify error:", e);
-    return res.status(500).send("Telegram link failed");
-  }
-});
-
 /* ------------------------- DISCORD ------------------------- */
 const DISCORD_SCOPES = process.env.DISCORD_SCOPES || "identify guilds";
 const DISCORD_REDIRECT =
@@ -295,7 +227,9 @@ router.get("/api/discord/login", (req, res) => {
   }
   const state = String(req.query.state || "");
   const url =
-    `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(cid)}` +
+    `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(
+      cid
+    )}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT)}` +
     `&scope=${encodeURIComponent(DISCORD_SCOPES)}` +
@@ -309,10 +243,13 @@ router.get("/auth/discord", (req, res) => {
   req.session.state = incoming;
 
   const cid = process.env.DISCORD_CLIENT_ID;
-  if (!cid || !DISCORD_REDIRECT) return res.status(500).send("Discord env vars not set");
+  if (!cid || !DISCORD_REDIRECT)
+    return res.status(500).send("Discord env vars not set");
 
   const url =
-    `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(cid)}` +
+    `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(
+      cid
+    )}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT)}` +
     `&scope=${encodeURIComponent(DISCORD_SCOPES)}` +
@@ -359,7 +296,8 @@ router.get("/auth/discord/callback", async (req, res) => {
     const refreshToken = tokenJson.refresh_token || null;
     const expiresIn = Number(tokenJson.expires_in || 0);
     const tokenExpiresAt =
-      Math.floor(Date.now() / 1000) + (Number.isFinite(expiresIn) ? expiresIn : 0);
+      Math.floor(Date.now() / 1000) +
+      (Number.isFinite(expiresIn) ? expiresIn : 0);
 
     // 2) me
     const meRes = await fetch("https://discord.com/api/users/@me", {
@@ -383,12 +321,17 @@ router.get("/auth/discord/callback", async (req, res) => {
     let isMember = false;
     const guildId = process.env.DISCORD_GUILD_ID;
     if (guildId && DISCORD_SCOPES.split(/\s+/).includes("guilds")) {
-      const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const guildsRes = await fetch(
+        "https://discord.com/api/users/@me/guilds",
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
       if (guildsRes.ok) {
         const guilds = await guildsRes.json();
-        isMember = Array.isArray(guilds) && guilds.some((g) => String(g.id) === String(guildId));
+        isMember =
+          Array.isArray(guilds) &&
+          guilds.some((g) => String(g.id) === String(guildId));
       } else {
         const body = await guildsRes.text();
         console.error("Discord guilds fetch error:", body);
@@ -457,7 +400,6 @@ router.get("/api/profile", async (req, res) => {
 });
 
 /* ------------------------- QUESTS (DEV-ONLY helper) ------------------------- */
-// Disable on prod unless you explicitly enable it
 const DEV_COMPLETE_ENABLED = process.env.DEV_COMPLETE_ENABLED === "1";
 
 router.post("/api/quest/complete", async (req, res) => {
@@ -469,11 +411,9 @@ router.post("/api/quest/complete", async (req, res) => {
     return res.status(400).json({ error: "Missing wallet, questId, or xp" });
   }
   try {
-    // clamp xp for safety
     const xpInt = Math.max(0, Math.min(100000, Number(xp) || 0));
 
     await ensureUser(wallet);
-    // NOTE: this is a naive progress update (for dev). Your main questRoutes handles real leveling.
     const user = await db.get("SELECT xp FROM users WHERE wallet = ?", wallet);
     const newXp = (user?.xp || 0) + xpInt;
     const progress = Math.max(0, Math.min(1, newXp / 10000));
@@ -537,4 +477,3 @@ router.get("/session-debug", (req, res) => {
 });
 
 export default router;
-
