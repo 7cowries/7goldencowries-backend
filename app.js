@@ -1,7 +1,11 @@
+// app.js
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
+import session from 'express-session';
+import passport from 'passport';
 
 import db from './db.js';
 import discordAuth from './routes/discordAuth.js';
@@ -10,28 +14,129 @@ import adminRoutes from './routes/adminRoutes.js';
 
 const app = express();
 
-/* ---------- CORS ---------- */
-const allowed = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
+/* ---------- CORS (Render ↔ Vercel with cookies) ---------- */
+const defaultOrigin = 'https://7goldencowries-frontend.vercel.app';
+const allowedOrigins = (
+  process.env.ALLOWED_ORIGINS ||
+  process.env.FRONTEND_URL ||
+  defaultOrigin
+)
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || allowed.includes(origin)) return cb(null, true);
+    // allow non-browser tools (no Origin) and any whitelisted origin
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
     return cb(null, false);
   },
   credentials: true,
 }));
 
-/* ---------- Middlewares ---------- */
-app.use(express.json());
+/* ---------- Core middlewares ---------- */
 app.use(morgan('dev'));
+app.use(express.json());
+app.use(cookieParser());
+
+/* ---------- Sessions (cross-site, secure) ---------- */
+// Required on Render/behind proxy so 'secure' cookies are set correctly
+app.set('trust proxy', 1);
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'change-me-in-render',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,      // not readable by JS
+    secure: true,        // HTTPS only
+    sameSite: 'none',    // allow cross-site (Vercel <-> Render)
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+  },
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 /* ---------- Health ---------- */
 app.get('/api/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
 app.get('/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() })); // alias
 
-/* ---------- Profile ---------- */
+/* ---------- Session-based profile: /api/users/me ---------- */
+/*  Frontend can call this without passing wallet; it reads the session user.
+    Adjust the fields to match what your strategies store on req.user / req.session. */
+app.get('/api/users/me', async (req, res) => {
+  try {
+    // Prefer req.user (passport), fallback to whatever you saved in session
+    const sess = req.user || req.session?.user || {};
+    const wallet = sess.wallet || req.session?.wallet || null;
+
+    if (!wallet) {
+      return res.json({
+        authed: false,
+        profile: null,
+      });
+    }
+
+    const user = await db.get(
+      `SELECT wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP,
+              twitterHandle, telegramHandle, discordHandle
+         FROM users WHERE wallet = ?`,
+      wallet
+    );
+
+    if (!user) {
+      return res.json({
+        authed: true,
+        profile: {
+          wallet,
+          xp: 0,
+          tier: 'Free',
+          levelName: 'Shellborn',
+          levelSymbol: '🐚',
+          levelProgress: 0,
+          nextXP: 10000,
+          links: { twitter: null, telegram: null, discord: null },
+        },
+        history: [],
+      });
+    }
+
+    const links = {
+      twitter: user.twitterHandle || null,
+      telegram: user.telegramHandle || null,
+      discord: user.discordHandle || null,
+    };
+
+    const profile = {
+      wallet: user.wallet,
+      xp: user.xp ?? 0,
+      tier: user.tier || 'Free',
+      levelName: user.levelName || 'Shellborn',
+      levelSymbol: user.levelSymbol || '🐚',
+      levelProgress: user.levelProgress ?? 0,
+      nextXP: user.nextXP ?? 10000,
+      links,
+    };
+
+    const history = await db.all(
+      `SELECT c.questId AS id, q.title, q.xp, c.timestamp
+         FROM completed_quests c
+         JOIN quests q ON q.id = c.questId
+        WHERE c.wallet = ?
+        ORDER BY c.timestamp DESC
+        LIMIT 200`,
+      wallet
+    );
+
+    res.json({ authed: true, profile, history: history || [] });
+  } catch (e) {
+    console.error('users/me error:', e);
+    res.status(500).json({ error: 'Failed to load session profile' });
+  }
+});
+
+/* ---------- Wallet-query profile (kept from your version) ---------- */
 app.get('/api/profile', async (req, res) => {
   try {
     const wallet = String(req.query.wallet || '').trim();
@@ -97,7 +202,7 @@ app.get('/api/profile', async (req, res) => {
 /* ---------- Routes ---------- */
 app.use('/auth', discordAuth);
 app.use('/api/quest', questRoutes);
-app.use('/api/admin', adminRoutes);   // seeding utilities
+app.use('/api/admin', adminRoutes); // seeding utilities
 
 /* ---------- Start ---------- */
 const PORT = process.env.PORT || 5000;
