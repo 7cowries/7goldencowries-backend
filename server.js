@@ -16,8 +16,6 @@ import { seedOnBoot } from "./utils/seed.js";
 // Core feature routes
 import profileRoutes from "./routes/profileRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
-// NEW: session routes for wallet binding
-import sessionRoutes from "./routes/sessionRoutes.js";
 
 // Referrals (public + admin)
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
@@ -29,7 +27,13 @@ import telegramAuthRoutes from "./routes/telegramRoutes.js";
    ENV / APP
    ========================= */
 const app = express();
+app.disable("x-powered-by");
+
 const PORT = process.env.PORT || 5000;
+const FRONTEND_URL =
+  process.env.FRONTEND_URL ||
+  process.env.CLIENT_URL ||
+  "https://www.7goldencowries.com";
 
 // Build an allowed-origins list
 function splitEnvList(v) {
@@ -80,7 +84,6 @@ const corsOptions = {
     "X-Requested-With",
     "x-admin",
     "x-admin-secret",
-    "x-admin-key", // allow Telegram debug header
   ],
 };
 app.use(cors(corsOptions));
@@ -185,14 +188,29 @@ try {
 }
 
 /* =========================
+   SMALL HELPERS
+   ========================= */
+// Bind a wallet to the session so the OAuth links can pick it up
+app.post("/api/session/bind-wallet", (req, res) => {
+  const wallet = String(req.body?.wallet || "").trim();
+  if (!wallet) return res.status(400).json({ error: "Missing wallet" });
+  req.session.wallet = wallet;
+  req.session.state = wallet; // also store as 'state' for convenience
+  res.json({ ok: true, wallet });
+});
+
+// Public referral → redirect to frontend
+app.get("/referrals/:code", (req, res) => {
+  const code = encodeURIComponent(req.params.code || "");
+  return res.redirect(302, `${FRONTEND_URL}/referrals/${code}`);
+});
+
+/* =========================
    MOUNT
    ========================= */
 app.use("/", authRoutes);
 app.use("/", telegramAuthRoutes);
 console.log("➡️  Mounted telegramRoutes at /auth/telegram/*");
-
-// NEW: session routes for wallet binding
-app.use("/api/session", sessionRoutes);
 
 if (questRoutes) app.use("/api/quest", questRoutes);
 if (questsRoutes) app.use("/api/quests", questsRoutes);
@@ -202,12 +220,6 @@ if (adminRoutes) app.use("/api/admin", adminRoutes);
 // Referrals (public + admin APIs)
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
-
-// Redirect plain /referrals/:address to frontend (avoid 404s)
-app.get("/referrals/:address", (req, res) => {
-  const FRONTEND = process.env.FRONTEND_URL || "https://www.7goldencowries.com";
-  res.redirect(302, `${FRONTEND}/referrals/${encodeURIComponent(req.params.address)}`);
-});
 
 // Profile API (read-only profile & history)
 app.use("/api/profile", profileRoutes);
