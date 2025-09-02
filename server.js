@@ -193,11 +193,11 @@ if (questsRoutes) app.use("/api/quests", questsRoutes);
 if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
 if (adminRoutes) app.use("/api/admin", adminRoutes);
 
-import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
+// Referrals (public + admin)
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
 
-import profileRoutes from "./routes/profileRoutes.js";
+// Profile API (read-only profile & history)
 app.use("/api/profile", profileRoutes);
 
 /* =========================
