@@ -7,44 +7,40 @@ const router = express.Router();
 
 /* ========= ENV ========= */
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-// You can omit TELEGRAM_BOT_ID; we'll derive it from the token "123456:abc..."
+// Derive bot_id from token "123456789:ABC..."
 const BOT_ID =
   process.env.TELEGRAM_BOT_ID ||
   (BOT_TOKEN.includes(":") ? BOT_TOKEN.split(":")[0] : "");
-
-const BOT_NAME = (process.env.TELEGRAM_BOT_NAME || "").replace(/^@/, ""); // used only for embed mode
-
-// Force the frontend origin that Telegram should trust/redirect back to
+const BOT_NAME = (process.env.TELEGRAM_BOT_NAME || "").replace(/^@/, ""); // for embed
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   process.env.CLIENT_URL ||
   "https://www.7goldencowries.com";
 
-// Max age (seconds) for Telegram login payload to avoid replay
-const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 300); // 5 minutes
+// AUTH_MAX_AGE (seconds). 0 disables time check (safe while you debug).
+const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 0); // default: OFF
 
 /* ========= HELPERS ========= */
 function decodeState(s) {
   try {
-    return decodeURIComponent(
-      Buffer.from(String(s || ""), "base64").toString("utf8")
-    );
+    return decodeURIComponent(Buffer.from(String(s || ""), "base64").toString("utf8"));
   } catch {
-    return "";
+    return String(s || "");
   }
 }
 
-/** Check signature per official docs:
+/** HMAC check per Telegram docs:
  * https://core.telegram.org/widgets/login#checking-authorization
  */
-function verifyTelegram(data, botToken) {
-  const { hash, ...rest } = data;
+function verifyTelegram(query, botToken) {
+  const { hash, ...rest } = query;
 
-  // Optional replay protection using auth_date
+  // Optional replay protection
   if (AUTH_MAX_AGE > 0 && rest.auth_date) {
     const nowSec = Math.floor(Date.now() / 1000);
     const skew = nowSec - Number(rest.auth_date);
     if (!Number.isFinite(skew) || skew < 0 || skew > AUTH_MAX_AGE) {
+      console.warn(`[TG] auth_date too old or invalid. now=${nowSec} auth_date=${rest.auth_date} skew=${skew}s`);
       return false;
     }
   }
@@ -56,7 +52,12 @@ function verifyTelegram(data, botToken) {
 
   const secret = crypto.createHash("sha256").update(botToken).digest();
   const hmac = crypto.createHmac("sha256", secret).update(checkString).digest("hex");
-  return hmac === hash;
+  const ok = hmac === hash;
+
+  if (!ok) {
+    console.error("[TG] HMAC mismatch: computed != provided hash");
+  }
+  return ok;
 }
 
 async function ensureUser(wallet) {
@@ -72,44 +73,35 @@ async function ensureUser(wallet) {
 }
 
 /* =========================================================================
-   GET /auth/telegram/start  →
-   Default: 302 redirect to Telegram's hosted login page (no popups/iframes).
-   Optional: add ?mode=embed to render the button on our page using Telegram's JS.
+   GET /auth/telegram/start
+   → Default: 302 to Telegram hosted OAuth (best reliability)
+   → Optional: ?mode=embed renders the JS widget on our page
    ========================================================================= */
 router.get("/auth/telegram/start", (req, res) => {
   try {
     if (!BOT_TOKEN || !BOT_ID) {
-      return res
-        .status(500)
-        .send(
-          "Telegram not configured: set TELEGRAM_BOT_TOKEN (and TELEGRAM_BOT_ID or use a standard token)."
-        );
+      console.error("[TG] Missing TELEGRAM_BOT_TOKEN or unable to derive BOT_ID.");
+      return res.status(500).send("Telegram not configured on server.");
     }
 
+    // Wallet state (base64)
     const state = String(req.query.state || "");
-    const origin = "https://www.7goldencowries.com"; // force the trusted origin (set this in @BotFather /setdomain)
-    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(
-      state
-    )}`;
+    // Force origin to your production site (must match @BotFather /setdomain)
+    const origin = "https://www.7goldencowries.com";
+    // Telegram will return to the FRONTEND first (bridge), then the bridge redirects to backend verify
+    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
 
-    // Absolutely disable caching so you never get a stale widget page
-    res.setHeader(
-      "Cache-Control",
-      "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
-    );
+    // no-cache headers for the widget page
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
-    // If you explicitly want the in-page embed, call .../start?state=...&mode=embed
+    // Embed mode (optional): render Telegram JS widget on our page
     if ((req.query.mode || "").toString() === "embed") {
       if (!BOT_NAME) {
-        return res
-          .status(500)
-          .send("Set TELEGRAM_BOT_NAME (without @) to use embed mode.");
+        return res.status(500).send("Set TELEGRAM_BOT_NAME (without @) to use embed mode.");
       }
-      const authUrl = `/auth/telegram/callback?state=${encodeURIComponent(
-        state
-      )}`;
+      const authUrl = `/auth/telegram/callback?state=${encodeURIComponent(state)}`;
       return res
         .type("html")
         .send(`<!doctype html>
@@ -140,7 +132,7 @@ router.get("/auth/telegram/start", (req, res) => {
 </html>`);
     }
 
-    // Recommended default: send user straight to Telegram's hosted page
+    // Hosted OAuth (recommended)
     const tp = new URL("https://oauth.telegram.org/auth/push");
     tp.searchParams.set("bot_id", BOT_ID);
     tp.searchParams.set("origin", origin);
@@ -148,6 +140,7 @@ router.get("/auth/telegram/start", (req, res) => {
     tp.searchParams.set("request_access", "write");
     tp.searchParams.set("return_to", returnTo);
 
+    console.log(`[TG] Start → bot_id=${BOT_ID}, origin=${origin}, return_to=${returnTo}`);
     return res.redirect(302, tp.toString());
   } catch (e) {
     console.error("Telegram /start error:", e);
@@ -157,6 +150,7 @@ router.get("/auth/telegram/start", (req, res) => {
 
 /* -----------------------------------------------------------
    Legacy alias: /auth/telegram/verify → redirect to /callback
+   (Telegram widget can still point here; we just bounce it)
    ----------------------------------------------------------- */
 router.get("/auth/telegram/verify", (req, res) => {
   const qs = new URLSearchParams(req.query).toString();
@@ -164,37 +158,45 @@ router.get("/auth/telegram/verify", (req, res) => {
 });
 
 /* =========================================================================
-   GET /auth/telegram/callback — verify payload, save links, land on profile
+   GET /auth/telegram/callback — backend verification (from bridge)
    ========================================================================= */
 router.get("/auth/telegram/callback", async (req, res) => {
   try {
-    if (!BOT_TOKEN) throw new Error("Missing bot token");
+    if (!BOT_TOKEN) {
+      console.error("[TG] Missing TELEGRAM_BOT_TOKEN on server.");
+      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=server`);
+    }
 
+    // 1) Verify Telegram signature
+    const ok = verifyTelegram(req.query, BOT_TOKEN);
+    if (!ok) {
+      // Helpful logs for setup issues (do not log secrets)
+      console.error("[TG] Bad signature. Check that:");
+      console.error("  - TELEGRAM_BOT_TOKEN matches the bot used in widget.");
+      console.error("  - @BotFather /setdomain is exactly https://www.7goldencowries.com");
+      console.error("  - You're not stripping query params in the frontend bridge.");
+      return res.redirect(`${FRONTEND_URL}/profile?err=bad_sig`);
+    }
+
+    // 2) Resolve wallet state
     const wallet = decodeState(req.query.state || "");
     if (!wallet) {
+      console.error("[TG] Missing/invalid state → cannot map to wallet");
       return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=nostate`);
     }
 
-    if (!verifyTelegram(req.query, BOT_TOKEN)) {
-      return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`);
-    }
-
+    // 3) Persist
     const tgId = String(req.query.id || "");
-    const tgUsername = String(req.query.username || "");
-
+    const tgUsername = String(req.query.username || "").replace(/^@/, "");
     await ensureUser(wallet);
 
-    // Update users table
     await db.run(
-      `UPDATE users
-         SET telegramId = ?, telegramHandle = ?
-       WHERE wallet = ?`,
-      tgId,
-      tgUsername,
+      `UPDATE users SET telegramId = ?, telegramHandle = ? WHERE wallet = ?`,
+      tgId || null,
+      tgUsername || null,
       wallet
     );
 
-    // Upsert social_links table
     await db.run(
       `INSERT INTO social_links (wallet, twitter, telegram, discord)
        VALUES (?, NULL, ?, NULL)
@@ -202,10 +204,10 @@ router.get("/auth/telegram/callback", async (req, res) => {
          telegram = excluded.telegram,
          updated_at = CURRENT_TIMESTAMP`,
       wallet,
-      tgUsername
+      tgUsername || null
     );
 
-    // Final success: back to profile (same tab)
+    console.log(`[TG] Linked wallet=${wallet} ← tgId=${tgId} username=${tgUsername || "(none)"}`);
     return res.redirect(`${FRONTEND_URL}/profile?linked=telegram`);
   } catch (e) {
     console.error("Telegram callback error:", e);
