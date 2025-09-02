@@ -1,17 +1,24 @@
-node_modules/
-.env
+# node
 /node_modules
-.env
-.vercel
-.DS_Store
-/node_modules
-.env
-.vercel
-.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# local artifacts
+# env (NEVER COMMIT)
+/.env
+/.env.*
+!.env.example
+
+# sqlite DB & journals (NEVER COMMIT)
+*.db
 *.sqlite
-database.sqlite
-routes/questRoutes.backup.*.js
-.env
-node_modules/
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+
+# build/output
+/dist
+/build
+
+# misc
+.DS_Store
