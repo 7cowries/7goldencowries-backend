@@ -72,22 +72,31 @@ async function ensureUser(wallet) {
 }
 
 /* =========================================================================
-   GET /auth/telegram/start  → 
+   GET /auth/telegram/start  →
    Default: 302 redirect to Telegram's hosted login page (no popups/iframes).
    Optional: add ?mode=embed to render the button on our page using Telegram's JS.
    ========================================================================= */
 router.get("/auth/telegram/start", (req, res) => {
   try {
     if (!BOT_TOKEN || !BOT_ID) {
-      return res.status(500).send("Telegram not configured: set TELEGRAM_BOT_TOKEN (and TELEGRAM_BOT_ID or use a standard token).");
+      return res
+        .status(500)
+        .send(
+          "Telegram not configured: set TELEGRAM_BOT_TOKEN (and TELEGRAM_BOT_ID or use a standard token)."
+        );
     }
 
     const state = String(req.query.state || "");
-    const origin = "https://www.7goldencowries.com"; // force the trusted origin
-    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(state)}`;
+    const origin = "https://www.7goldencowries.com"; // force the trusted origin (set this in @BotFather /setdomain)
+    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(
+      state
+    )}`;
 
     // Absolutely disable caching so you never get a stale widget page
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
+    res.setHeader(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    );
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
@@ -98,7 +107,9 @@ router.get("/auth/telegram/start", (req, res) => {
           .status(500)
           .send("Set TELEGRAM_BOT_NAME (without @) to use embed mode.");
       }
-      const authUrl = `/auth/telegram/callback?state=${encodeURIComponent(state)}`;
+      const authUrl = `/auth/telegram/callback?state=${encodeURIComponent(
+        state
+      )}`;
       return res
         .type("html")
         .send(`<!doctype html>
