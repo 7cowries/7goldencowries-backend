@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import session from "express-session";
 import passport from "passport";
 import MemoryStore from "memorystore";
+import cookieParser from "cookie-parser";
 import cron from "node-cron";
 import dayjs from "dayjs";
 
@@ -12,7 +13,7 @@ import "./passport.js";
 import db from "./db.js";
 import { getLevelInfo } from "./utils/levelUtils.js";
 
-// ✅ Route Imports
+// ✅ Core routes already in your repo
 import questRoutes from "./routes/questRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -21,8 +22,13 @@ import tonWebhook from "./routes/tonWebhook.js";
 import referralRoutes from "./routes/referralRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import twitterRoutes from "./routes/twitterRoutes.js";
-import tokenSaleRoutes from "./routes/tokenSaleRoutes.js";
-import telegramRoutes from "./routes/telegramRoutes.js"; // ⬅️ NEW
+import telegramRoutes from "./routes/telegramRoutes.js";
+
+// ✅ New routes we added for secure quests & socials
+import questLinkRoutes from "./routes/questLinkRoutes.js";
+import questTelegramRoutes from "./routes/questTelegramRoutes.js";
+import questDiscordRoutes from "./routes/questDiscordRoutes.js";
+import socialLinkRoutes from "./routes/socialLinkRoutes.js";
 
 dotenv.config();
 
@@ -33,7 +39,7 @@ const DEFAULT_FRONTEND = "http://localhost:3000";
 // FRONTEND_URL can be comma-separated list to allow Vercel + preview domains
 const ALLOWED = (process.env.FRONTEND_URL || DEFAULT_FRONTEND)
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
 // Trust Render/Proxies so req.protocol & secure cookies work
@@ -45,7 +51,6 @@ app.use(
     origin(origin, callback) {
       // Allow same-origin / curl / server-to-server with no Origin header
       if (!origin) return callback(null, true);
-      // Match exact origins from env list
       if (ALLOWED.includes(origin)) return callback(null, true);
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);
     },
@@ -54,7 +59,10 @@ app.use(
   })
 );
 
+// --- Body parsers & cookies ---
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
 
 // --- Sessions (popup-friendly cookies) ---
 const Store = MemoryStore(session);
@@ -67,9 +75,9 @@ app.use(
     store: new Store({ checkPeriod: 86400000 }), // 24h
     cookie: {
       httpOnly: true,
-      secure: PROD,                 // secure cookies on https in prod
+      secure: PROD, // secure cookies on https in prod
       sameSite: PROD ? "none" : "lax", // allow cross-site OAuth popups in prod
-      maxAge: 1000 * 60 * 60,      // 1h
+      maxAge: 1000 * 60 * 60, // 1h
     },
   })
 );
@@ -77,17 +85,24 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-// --- Routes ---
-app.use(telegramRoutes);                    // ⬅️ mount FIRST so /auth/telegram/... works reliably
+// --- Mount order matters for auth popups/callbacks ---
+app.use(telegramRoutes);            // /auth/telegram/* (your existing bridge)
+app.use(authRoutes);                // /auth/twitter, etc.
+
+// --- Secure quest + social routes (new) ---
+app.use(questLinkRoutes);           // /api/quests/:id/link/start, /r/:nonce, /finish
+app.use(questTelegramRoutes);       // /api/quests/telegram/join/verify
+app.use(questDiscordRoutes);        // /api/quests/discord/join/verify
+app.use(socialLinkRoutes);          // /api/social/:provider/unlink|resync
+
+// --- Existing app APIs ---
 app.use(questRoutes);
-app.use(authRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
 app.use(referralRoutes);
 app.use("/api/subscribe", subscriptionRoutes);
 app.use("/api", twitterRoutes);
-app.use(tokenSaleRoutes);                   // mounts /token-sale/contribute
 
 // --- Health checks ---
 app.get("/", (req, res) => res.send("7goldencowries backend is running"));
@@ -117,8 +132,8 @@ app.get("/leaderboard", async (req, res) => {
         twitter: u.twitterHandle || null,
         xp: u.xp,
         tier: u.tier || "Free",
-        name: level.name || "Unranked",
-        progress: level.progress || 0,
+        name: level?.name || "Unranked",
+        progress: level?.progress || 0,
         badge: `/images/badges/${badgeSlug}`,
       };
     });

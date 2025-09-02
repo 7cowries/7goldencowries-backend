@@ -1,7 +1,23 @@
 // routes/referralRoutes.js
+// Public + Admin referral APIs using the new schema:
+//
+//  Tables (from migrations):
+//   - users: id, wallet, twitter_handle, referral_code, xp, ...
+//   - referrals: id, referrer_user_id, referee_user_id, code, created_at, UNIQUE(referee_user_id)
+//   - referral_events: id, referee_user_id, first_quest_completed_at
+//
+// Public endpoints (mounted at /api/referrals):
+//   POST /api/referrals/accept { code }                 -> link me (req.user) to a referrer
+//   GET  /api/referrals/code                            -> get or create my referral code
+//   GET  /api/referrals/stats                           -> my code + list of referees
+//
+// Admin endpoints (mounted at /api/admin/referrals) with x-admin/x-admin-secret header:
+//   POST /api/admin/referrals/create { referrer_id, referee_id }  (or wallets)
+//   GET  /api/admin/referrals?referrer_id=&referee_id=&limit=&offset=
+//   POST /api/admin/referrals/unlink { referee_id }               (remove a link)
+
 import express from "express";
 import db from "../db.js";
-import { getLevelInfo } from "../utils/levelUtils.js";
 
 const publicRouter = express.Router();
 const adminRouter = express.Router();
@@ -9,6 +25,13 @@ const adminRouter = express.Router();
 const ADMIN_SECRET = process.env.ADMIN_SECRET || process.env.ADMIN_TOKEN || "";
 
 /* ----------------------------- helpers ----------------------------- */
+
+function requireAuth(req, res, next) {
+  const uid = req.user?.id;
+  if (!uid) return res.status(401).json({ error: "Auth required" });
+  next();
+}
+
 function requireAdmin(req, res, next) {
   if (!ADMIN_SECRET) {
     return res.status(500).json({ error: "ADMIN_SECRET not set on server" });
@@ -18,34 +41,28 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-async function ensureUser(wallet) {
-  if (!wallet) return;
-  const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
-  if (!row) {
-    await db.run(
-      `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP)
-       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000)`,
-      wallet
-    );
-  }
+// Create a short readable code from user id
+function makeRefCode(id) {
+  return (id.toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
 }
 
-async function awardXpAndLog(wallet, amount, title = "Referral bonus", questId = null) {
-  if (!amount) return;
-  await ensureUser(wallet);
-  await db.run("UPDATE users SET xp = xp + ? WHERE wallet = ?", amount, wallet);
-  try {
-    await db.run(
-      `INSERT INTO quest_history (wallet, quest_id, title, xp)
-       VALUES (?, ?, ?, ?)`,
-      wallet,
-      questId,
-      title,
-      amount
-    );
-  } catch {
-    // quest_history table may not exist yet; ignore
+// Get or create a user's referral code
+async function getOrCreateReferralCode(userId) {
+  const row = await db.get("SELECT referral_code FROM users WHERE id=?", [userId]);
+  if (row?.referral_code) return row.referral_code;
+  const code = makeRefCode(userId);
+  await db.run("UPDATE users SET referral_code=? WHERE id=?", [code, userId]);
+  return code;
+}
+
+// Resolve a user by id or wallet (for admin convenience)
+async function resolveUserId({ id, wallet }) {
+  if (id) return id;
+  if (wallet) {
+    const u = await db.get("SELECT id FROM users WHERE wallet=?", [wallet]);
+    return u?.id || null;
   }
+  return null;
 }
 
 /* =========================
@@ -53,161 +70,73 @@ async function awardXpAndLog(wallet, amount, title = "Referral bonus", questId =
    Mounted at /api/referrals
    ========================= */
 
-async function handleClaim(req, res) {
-  const { referrer, referred } = req.body || {};
-  if (!referrer || !referred) {
-    return res.status(400).json({ error: "Missing referrer or referred" });
-  }
-  if (referrer === referred) {
-    return res.status(400).json({ error: "Cannot refer yourself" });
-  }
-
+// Accept a referral code (idempotent). Links the current user (referee) to referrer.
+publicRouter.post("/accept", requireAuth, async (req, res) => {
   try {
-    await ensureUser(referrer);
-    await ensureUser(referred);
+    const refereeId = req.user.id;
+    const code = (req.body?.code || "").trim();
+    if (!code) return res.status(400).json({ error: "Missing code" });
 
-    const exists = await db.get(
-      "SELECT id FROM referrals WHERE referred = ?",
-      referred
-    );
-    if (exists) {
-      return res.status(409).json({ error: "Referral already claimed" });
-    }
+    // who owns this code?
+    const referrer = await db.get("SELECT id FROM users WHERE referral_code=?", [code]);
+    if (!referrer) return res.status(404).json({ error: "Invalid code" });
+    if (referrer.id === refereeId) return res.status(400).json({ error: "Self referral not allowed" });
 
-    const result = await db.run(
-      "INSERT INTO referrals (referrer, referred) VALUES (?, ?)",
-      referrer,
-      referred
-    );
+    // already linked?
+    const exists = await db.get("SELECT 1 AS x FROM referrals WHERE referee_user_id=?", [refereeId]);
+    if (exists) return res.json({ status: "already_linked" });
 
-    const REFERRER_XP = 50;
-    const REFERRED_XP = 50;
-
-    await awardXpAndLog(
-      referrer,
-      REFERRER_XP,
-      `Referral: invited ${referred}`,
-      `referral:${result.lastID}`
-    );
-    await awardXpAndLog(
-      referred,
-      REFERRED_XP,
-      `Referral: joined via ${referrer}`,
-      `referral:${result.lastID}`
+    // link
+    await db.run(
+      "INSERT INTO referrals (referrer_user_id, referee_user_id, code) VALUES (?,?,?)",
+      [referrer.id, refereeId, code]
     );
 
-    const userRow = await db.get(
-      "SELECT xp FROM users WHERE wallet = ?",
-      referred
-    );
-    const level = getLevelInfo(userRow?.xp || 0);
-
-    return res.json({
-      ok: true,
-      id: result.lastID,
-      referred: { wallet: referred, xp: userRow?.xp || 0, level },
-    });
-  } catch (err) {
-    console.error("Referral claim error:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-}
-
-publicRouter.post("/claim-referral", handleClaim);
-publicRouter.post("/claim", handleClaim);
-
-/** List referrals for a referrer */
-publicRouter.get("/referrals/:wallet", async (req, res) => {
-  const { wallet } = req.params;
-  try {
-    let list = [];
-    try {
-      list = await db.all(
-        `SELECT id, referred AS address, completed
-           FROM referrals
-          WHERE referrer = ?
-          ORDER BY id DESC`,
-        wallet
-      );
-    } catch (err) {
-      if (String(err.message || "").includes("no such column: completed")) {
-        list = await db.all(
-          `SELECT id, referred AS address, 0 AS completed
-             FROM referrals
-            WHERE referrer = ?
-            ORDER BY id DESC`,
-          wallet
-        );
-      } else {
-        throw err;
-      }
-    }
-    res.json({ referrals: list });
-  } catch (err) {
-    console.error("Referral fetch error:", err);
-    res.status(500).json({ error: "Failed to fetch referrals" });
+    res.json({ status: "linked", referrer_user_id: referrer.id, referee_user_id: refereeId });
+  } catch (e) {
+    console.error("referrals/accept error:", e);
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
-/** Quick stats */
-publicRouter.get("/stats/:wallet", async (req, res) => {
+// Get (or create) my referral code
+publicRouter.get("/code", requireAuth, async (req, res) => {
   try {
-    const w = req.params.wallet;
-    const rows = await db.all(
-      "SELECT completed, COUNT(*) AS c FROM referrals WHERE referrer = ? GROUP BY completed",
-      w
+    const code = await getOrCreateReferralCode(req.user.id);
+    res.json({ code });
+  } catch (e) {
+    console.error("referrals/code error:", e);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// Stats for the current user (their own code + list of referees)
+publicRouter.get("/stats", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const code = await getOrCreateReferralCode(userId);
+
+    // list referees with minimal profile
+    const referees = await db.all(
+      `SELECT u.id AS user_id,
+              u.wallet,
+              u.twitter_handle,
+              r.created_at,
+              (SELECT first_quest_completed_at
+                 FROM referral_events e
+                WHERE e.referee_user_id = u.id
+                LIMIT 1) AS first_quest_completed_at
+         FROM referrals r
+         JOIN users u ON u.id = r.referee_user_id
+        WHERE r.referrer_user_id = ?
+        ORDER BY r.created_at DESC`,
+      [userId]
     );
-    const completed = rows.find((r) => r.completed === 1)?.c || 0;
-    const pending = rows.find((r) => r.completed === 0)?.c || 0;
-    res.json({ ok: true, referrer: w, completed, pending, total: completed + pending });
+
+    res.json({ code, referees });
   } catch (e) {
     console.error("referrals/stats error:", e);
-    res.status(500).json({ error: "Failed to fetch stats" });
-  }
-});
-
-/** Back-compat: protected mark-complete */
-publicRouter.post("/referral/complete", requireAdmin, async (req, res) => {
-  const { id, referred, awardXp = 0 } = req.body || {};
-  try {
-    let targets = [];
-    if (id) {
-      const row = await db.get("SELECT * FROM referrals WHERE id = ?", id);
-      if (row) targets = [row];
-    } else if (referred) {
-      targets = await db.all(
-        "SELECT * FROM referrals WHERE referred = ? AND completed = 0",
-        referred
-      );
-    } else {
-      return res.status(400).json({ error: "Provide id or referred" });
-    }
-
-    if (!targets.length) return res.json({ ok: true, updated: 0 });
-
-    const ids = targets.map((t) => t.id);
-    const placeholders = ids.map(() => "?").join(",");
-    await db.run(`UPDATE referrals SET completed = 1 WHERE id IN (${placeholders})`, ids);
-
-    if (Number(awardXp) > 0) {
-      for (const t of targets) {
-        await awardXpAndLog(
-          t.referrer,
-          Number(awardXp),
-          `Referral complete: ${t.referred}`,
-          `referral:${t.id}`
-        );
-      }
-    }
-
-    res.json({ ok: true, updated: ids.length });
-  } catch (err) {
-    if (String(err.message || "").includes("no such column: completed")) {
-      console.warn("⚠️ Column `completed` missing; no-op update.");
-      return res.json({ ok: true, warning: "Column `completed` missing", updated: 0 });
-    }
-    console.error("Referral complete error:", err);
-    res.status(500).json({ error: "Failed to mark referral(s) complete" });
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
@@ -216,95 +145,99 @@ publicRouter.post("/referral/complete", requireAdmin, async (req, res) => {
    Mounted at /api/admin/referrals
    ========================= */
 
+// Create a referral link (admin). Accepts either ids or wallets.
 adminRouter.post("/create", requireAdmin, async (req, res) => {
   try {
-    const { referrer, referred } = req.body || {};
-    if (!referrer || !referred) return res.status(400).json({ error: "Missing referrer or referred" });
-    if (referrer === referred) return res.status(400).json({ error: "Referrer and referred must differ" });
+    const referrer_id = await resolveUserId({
+      id: req.body?.referrer_id,
+      wallet: req.body?.referrer_wallet,
+    });
+    const referee_id = await resolveUserId({
+      id: req.body?.referee_id,
+      wallet: req.body?.referee_wallet,
+    });
 
-    await ensureUser(referrer);
-    await ensureUser(referred);
+    if (!referrer_id || !referee_id) {
+      return res.status(400).json({ error: "Missing referrer/referee (id or wallet)" });
+    }
+    if (referrer_id === referee_id) {
+      return res.status(400).json({ error: "Referrer and referee must differ" });
+    }
 
-    const exists = await db.get(
-      "SELECT id FROM referrals WHERE referrer = ? AND referred = ?",
-      referrer,
-      referred
+    const code = await getOrCreateReferralCode(referrer_id);
+
+    // idempotent: only one referrer per referee
+    const exists = await db.get("SELECT 1 FROM referrals WHERE referee_user_id=?", [referee_id]);
+    if (exists) return res.json({ ok: true, status: "already_linked" });
+
+    await db.run(
+      "INSERT INTO referrals (referrer_user_id, referee_user_id, code) VALUES (?,?,?)",
+      [referrer_id, referee_id, code]
     );
-    if (exists) return res.json({ ok: true, id: exists.id, message: "Already exists" });
 
-    const result = await db.run(
-      "INSERT INTO referrals (referrer, referred) VALUES (?, ?)",
-      referrer,
-      referred
-    );
-    res.json({ ok: true, id: result.lastID });
+    res.json({ ok: true, status: "linked", referrer_user_id: referrer_id, referee_user_id: referee_id, code });
   } catch (e) {
     console.error("admin referrals/create error:", e);
-    res.status(500).json({ error: "Failed to create referral" });
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
+// List referrals with filters
 adminRouter.get("/", requireAdmin, async (req, res) => {
   try {
-    const { referrer, referred, completed, limit = 100, offset = 0 } = req.query;
+    const limit = Math.min(Number(req.query.limit || 100), 500);
+    const offset = Math.max(Number(req.query.offset || 0), 0);
     const where = [];
     const args = [];
-    if (referrer) { where.push("referrer = ?"); args.push(referrer); }
-    if (referred) { where.push("referred = ?"); args.push(referred); }
-    if (completed === "0" || completed === "1") { where.push("completed = ?"); args.push(Number(completed)); }
-    const sql =
-      "SELECT id, referrer, referred, completed FROM referrals" +
-      (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
-      " ORDER BY id DESC LIMIT ? OFFSET ?";
-    args.push(Number(limit), Number(offset));
+
+    if (req.query.referrer_id) {
+      where.push("r.referrer_user_id = ?");
+      args.push(Number(req.query.referrer_id));
+    }
+    if (req.query.referee_id) {
+      where.push("r.referee_user_id = ?");
+      args.push(Number(req.query.referee_id));
+    }
+
+    const sql = `
+      SELECT r.id, r.code, r.created_at,
+             r.referrer_user_id, ru.wallet AS referrer_wallet, ru.twitter_handle AS referrer_twitter,
+             r.referee_user_id, eu.wallet AS referee_wallet,  eu.twitter_handle  AS referee_twitter,
+             (SELECT first_quest_completed_at
+                FROM referral_events e
+               WHERE e.referee_user_id = r.referee_user_id
+               LIMIT 1) AS first_quest_completed_at
+        FROM referrals r
+        JOIN users ru ON ru.id = r.referrer_user_id
+        JOIN users eu ON eu.id = r.referee_user_id
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY r.id DESC
+       LIMIT ? OFFSET ?
+    `;
+    args.push(limit, offset);
+
     const rows = await db.all(sql, args);
     res.json({ ok: true, rows });
   } catch (e) {
     console.error("admin referrals/list error:", e);
-    res.status(500).json({ error: "Failed to list referrals" });
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
-adminRouter.post("/complete", requireAdmin, async (req, res) => {
-  const { id, referred, awardXp = 0 } = req.body || {};
+// Unlink a referee (admin)
+adminRouter.post("/unlink", requireAdmin, async (req, res) => {
   try {
-    let targets = [];
-    if (id) {
-      const row = await db.get("SELECT * FROM referrals WHERE id = ?", id);
-      if (row) targets = [row];
-    } else if (referred) {
-      targets = await db.all("SELECT * FROM referrals WHERE referred = ? AND completed = 0", referred);
-    } else {
-      return res.status(400).json({ error: "Provide id or referred" });
-    }
+    const referee_id = await resolveUserId({
+      id: req.body?.referee_id,
+      wallet: req.body?.referee_wallet,
+    });
+    if (!referee_id) return res.status(400).json({ error: "Missing referee (id or wallet)" });
 
-    if (!targets.length) return res.json({ ok: true, updated: 0 });
-
-    const ids = targets.map((t) => t.id);
-    const placeholders = ids.map(() => "?").join(",");
-    await db.run(`UPDATE referrals SET completed = 1 WHERE id IN (${placeholders})`, ids);
-
-    let awarded = 0;
-    if (Number(awardXp) > 0) {
-      for (const t of targets) {
-        await awardXpAndLog(
-          t.referrer,
-          Number(awardXp),
-          `Referral complete: ${t.referred}`,
-          `referral:${t.id}`
-        );
-        awarded++;
-      }
-    }
-
-    res.json({ ok: true, updated: ids.length, awardedReferrers: awarded });
+    const del = await db.run("DELETE FROM referrals WHERE referee_user_id=?", [referee_id]);
+    res.json({ ok: true, deleted: del.changes || 0 });
   } catch (e) {
-    if (String(e.message || "").includes("no such column: completed")) {
-      console.warn("⚠️ Column `completed` missing; no-op update.");
-      return res.json({ ok: true, warning: "Column `completed` missing", updated: 0 });
-    }
-    console.error("admin referrals/complete error:", e);
-    res.status(500).json({ error: "Failed to complete referrals" });
+    console.error("admin referrals/unlink error:", e);
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
