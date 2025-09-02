@@ -8,6 +8,8 @@ import MemoryStore from "memorystore";
 import cookieParser from "cookie-parser";
 import cron from "node-cron";
 import dayjs from "dayjs";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 
 import "./passport.js";
 import db from "./db.js";
@@ -23,12 +25,16 @@ import referralRoutes from "./routes/referralRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import twitterRoutes from "./routes/twitterRoutes.js";
 import telegramRoutes from "./routes/telegramRoutes.js";
+import tokenSaleRoutes from "./routes/tokenSaleRoutes.js"; // keep if used
 
-// ✅ New routes we added for secure quests & socials
+// ✅ New routes for secure quests & socials
 import questLinkRoutes from "./routes/questLinkRoutes.js";
 import questTelegramRoutes from "./routes/questTelegramRoutes.js";
 import questDiscordRoutes from "./routes/questDiscordRoutes.js";
 import socialLinkRoutes from "./routes/socialLinkRoutes.js";
+
+// ✅ New XP/Quest history endpoints
+import historyRoutes from "./routes/historyRoutes.js";
 
 dotenv.config();
 
@@ -44,6 +50,13 @@ const ALLOWED = (process.env.FRONTEND_URL || DEFAULT_FRONTEND)
 
 // Trust Render/Proxies so req.protocol & secure cookies work
 app.set("trust proxy", 1);
+
+// --- Security headers ---
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // you serve assets next to API
+  })
+);
 
 // --- CORS (credentials on) ---
 app.use(
@@ -85,15 +98,23 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+// --- Rate limiting ---
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 600 });
+app.use("/api", apiLimiter);
+
+const questLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
+app.use("/api/quests", questLimiter);
+app.use("/api/verify", questLimiter);
+
 // --- Mount order matters for auth popups/callbacks ---
-app.use(telegramRoutes);            // /auth/telegram/* (your existing bridge)
-app.use(authRoutes);                // /auth/twitter, etc.
+app.use(telegramRoutes); // /auth/telegram/*
+app.use(authRoutes);     // /auth/twitter, /auth/discord, etc.
 
 // --- Secure quest + social routes (new) ---
-app.use(questLinkRoutes);           // /api/quests/:id/link/start, /r/:nonce, /finish
-app.use(questTelegramRoutes);       // /api/quests/telegram/join/verify
-app.use(questDiscordRoutes);        // /api/quests/discord/join/verify
-app.use(socialLinkRoutes);          // /api/social/:provider/unlink|resync
+app.use(questLinkRoutes);     // /api/quests/:id/link/start, /r/:nonce, /finish
+app.use(questTelegramRoutes); // /api/quests/telegram/join/verify
+app.use(questDiscordRoutes);  // /api/quests/discord/join/verify
+app.use(socialLinkRoutes);    // /api/social/:provider/unlink|resync
 
 // --- Existing app APIs ---
 app.use(questRoutes);
@@ -103,13 +124,25 @@ app.use(tonWebhook);
 app.use(referralRoutes);
 app.use("/api/subscribe", subscriptionRoutes);
 app.use("/api", twitterRoutes);
+app.use(tokenSaleRoutes); // mounts /token-sale/contribute (if present)
+
+// --- History APIs (XP + quest history) ---
+app.use(historyRoutes); // /api/xp/history, /api/quests/history
 
 // --- Health checks ---
-app.get("/", (req, res) => res.send("7goldencowries backend is running"));
+app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
+app.get("/healthz", async (_req, res) => {
+  try {
+    await db.get("SELECT 1 AS ok");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "db" });
+  }
+});
 app.get("/session-debug", (req, res) => res.json({ session: req.session }));
 
-// --- Leaderboard ---
-app.get("/leaderboard", async (req, res) => {
+// --- Leaderboard (frontend expects /api/leaderboard) ---
+app.get("/api/leaderboard", async (_req, res) => {
   try {
     const users = await db.all(
       `
@@ -133,7 +166,7 @@ app.get("/leaderboard", async (req, res) => {
         xp: u.xp,
         tier: u.tier || "Free",
         name: level?.name || "Unranked",
-        progress: level?.progress || 0,
+        progress: level?.progress || 0, // 0..1 (frontend multiplies to %)
         badge: `/images/badges/${badgeSlug}`,
       };
     });
@@ -169,6 +202,14 @@ cron.schedule("0 0 * * *", async () => {
   } catch (err) {
     console.error("❌ Cron error:", err);
   }
+});
+
+// --- CORS error handler (nice dev feedback) ---
+app.use((err, _req, res, _next) => {
+  if (err && String(err.message || "").startsWith("CORS blocked for origin:")) {
+    return res.status(401).json({ error: err.message, allowed: ALLOWED });
+  }
+  return res.status(500).json({ error: "Server error" });
 });
 
 // --- Start server ---
