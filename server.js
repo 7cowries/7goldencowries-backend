@@ -16,6 +16,8 @@ import { seedOnBoot } from "./utils/seed.js";
 // Core feature routes
 import profileRoutes from "./routes/profileRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
+// NEW: session routes for wallet binding
+import sessionRoutes from "./routes/sessionRoutes.js";
 
 // Referrals (public + admin)
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
@@ -78,6 +80,7 @@ const corsOptions = {
     "X-Requested-With",
     "x-admin",
     "x-admin-secret",
+    "x-admin-key", // allow Telegram debug header
   ],
 };
 app.use(cors(corsOptions));
@@ -188,14 +191,23 @@ app.use("/", authRoutes);
 app.use("/", telegramAuthRoutes);
 console.log("➡️  Mounted telegramRoutes at /auth/telegram/*");
 
+// NEW: session routes for wallet binding
+app.use("/api/session", sessionRoutes);
+
 if (questRoutes) app.use("/api/quest", questRoutes);
 if (questsRoutes) app.use("/api/quests", questsRoutes);
 if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
 if (adminRoutes) app.use("/api/admin", adminRoutes);
 
-// Referrals (public + admin)
+// Referrals (public + admin APIs)
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
+
+// Redirect plain /referrals/:address to frontend (avoid 404s)
+app.get("/referrals/:address", (req, res) => {
+  const FRONTEND = process.env.FRONTEND_URL || "https://www.7goldencowries.com";
+  res.redirect(302, `${FRONTEND}/referrals/${encodeURIComponent(req.params.address)}`);
+});
 
 // Profile API (read-only profile & history)
 app.use("/api/profile", profileRoutes);
