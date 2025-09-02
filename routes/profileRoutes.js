@@ -1,4 +1,3 @@
-
 // routes/profileRoutes.js
 import express from "express";
 import db from "../db.js";
@@ -27,6 +26,7 @@ function resolveWallet(req) {
 
 /** Ensure there is a users row so the UI always has sane defaults */
 async function ensureUserRow(wallet) {
+  if (!wallet) return;
   const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
   if (!row) {
     await db.run(
@@ -39,7 +39,7 @@ async function ensureUserRow(wallet) {
 
 /** Get recent history; prefer quest_history, else fall back to completed_quests+quests */
 async function fetchHistory(wallet) {
-  // Preferred: quest_history (if you created it)
+  // Preferred: quest_history (if present)
   try {
     const rows = await db.all(
       `SELECT id, quest_id AS questId, title, xp, completed_at
@@ -57,11 +57,12 @@ async function fetchHistory(wallet) {
   // Fallback: join completed_quests with quests
   try {
     const rows = await db.all(
-      `SELECT c.id,
-              c.questId AS questId,
-              q.title AS title,
-              q.xp     AS xp,
-              c.timestamp AS completed_at
+      `SELECT
+          c.rowid AS id,               -- use rowid to be schema-safe
+          c.questId AS questId,
+          q.title AS title,
+          q.xp     AS xp,
+          c.timestamp AS completed_at
          FROM completed_quests c
          JOIN quests q ON q.id = c.questId
         WHERE c.wallet = ?
@@ -149,7 +150,7 @@ router.get("/", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("Profile route error:", e);
-    res.status(500).json({ error: "Failed to load profile" });
+    res.status(500).njson({ error: "Failed to load profile" });
   }
 });
 

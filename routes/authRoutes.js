@@ -1,4 +1,6 @@
-// routes/authRoutes.js (Backend) — FINAL (no Telegram here)
+// routes/authRoutes.js (Backend) — FINAL
+// Twitter/X + Discord auth. Telegram handled in routes/telegramRoutes.js
+
 import express from "express";
 import passport from "passport";
 import db from "../db.js";
@@ -8,7 +10,9 @@ const router = express.Router();
 const CLIENT_URL =
   process.env.CLIENT_URL ||
   process.env.FRONTEND_URL ||
-  "https://www.7goldencowries.com"; // default to prod site
+  "https://www.7goldencowries.com"; // production default
+
+/* ----------------------------- helpers ----------------------------- */
 
 /** Accept state as base64 or plain text wallet */
 function parseWalletFromState(state) {
@@ -20,8 +24,9 @@ function parseWalletFromState(state) {
   return state; // fallback: treat as raw wallet
 }
 
-/** Ensure user exists (for first-time linkers) */
+/** Ensure user exists (for first-time linkers/reads) */
 async function ensureUser(wallet, extra = {}) {
+  if (!wallet) return;
   const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
   if (!row) {
     await db.run(
@@ -49,6 +54,7 @@ async function ensureUser(wallet, extra = {}) {
 }
 
 /* ------------------------- TWITTER (X) ------------------------- */
+
 // Start Twitter OAuth — store wallet state (base64 or raw)
 router.get("/auth/twitter", (req, res, next) => {
   const incoming = req.query.state;
@@ -78,6 +84,7 @@ router.get("/auth/twitter/callback", (req, res, next) => {
           parseWalletFromState(req.query.state) ||
           parseWalletFromState(req.session?.state) ||
           parseWalletFromState(req.query.wallet);
+
         if (!wallet || !twitterHandle) {
           return res.status(400).send("Missing wallet or Twitter handle");
         }
@@ -90,7 +97,7 @@ router.get("/auth/twitter/callback", (req, res, next) => {
         );
         await db.run(
           `INSERT INTO social_links (wallet, twitter) VALUES (?, ?)
-           ON CONFLICT(wallet) DO UPDATE SET twitter=excluded.twitter`,
+           ON CONFLICT(wallet) DO UPDATE SET twitter = excluded.twitter`,
           [wallet, twitterHandle]
         );
 
@@ -121,7 +128,7 @@ router.post("/link-twitter", async (req, res) => {
     );
     await db.run(
       `INSERT INTO social_links (wallet, twitter) VALUES (?, ?)
-       ON CONFLICT(wallet) DO UPDATE SET twitter=excluded.twitter`,
+       ON CONFLICT(wallet) DO UPDATE SET twitter = excluded.twitter`,
       [wallet, twitter]
     );
     res.json({ message: "Twitter handle linked" });
@@ -131,7 +138,17 @@ router.post("/link-twitter", async (req, res) => {
   }
 });
 
+/* ------------------------- TELEGRAM (alias only) ------------------------- */
+/** Safe alias so /auth/telegram → /auth/telegram/start.
+ *  Real Telegram logic lives in routes/telegramRoutes.js
+ */
+router.get("/auth/telegram", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  return res.redirect(302, `/auth/telegram/start${qs}`);
+});
+
 /* ------------------------- DISCORD ------------------------- */
+
 const DISCORD_SCOPES = process.env.DISCORD_SCOPES || "identify guilds";
 const DISCORD_REDIRECT =
   process.env.DISCORD_REDIRECT_URI ||
@@ -143,7 +160,7 @@ router.get("/api/discord/login", (req, res) => {
   const cid = process.env.DISCORD_CLIENT_ID;
   if (!cid || !DISCORD_REDIRECT) {
     return res.status(500).json({ error: "Discord env vars not set" });
-    }
+  }
   const state = String(req.query.state || "");
   const url =
     `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(
@@ -242,10 +259,9 @@ router.get("/auth/discord/callback", async (req, res) => {
     let isMember = false;
     const guildId = process.env.DISCORD_GUILD_ID;
     if (guildId && DISCORD_SCOPES.split(/\s+/).includes("guilds")) {
-      const guildsRes = await fetch(
-        "https://discord.com/api/users/@me/guilds",
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
+      const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (guildsRes.ok) {
         const guilds = await guildsRes.json();
         isMember =
@@ -265,7 +281,7 @@ router.get("/auth/discord/callback", async (req, res) => {
     });
     await db.run(
       `UPDATE users
-       SET discordId = ?, discordHandle = ?, discordAccessToken = ?, discordRefreshToken = ?, discordTokenExpiresAt = ?, discordGuildMember = ?
+         SET discordId = ?, discordHandle = ?, discordAccessToken = ?, discordRefreshToken = ?, discordTokenExpiresAt = ?, discordGuildMember = ?
        WHERE wallet = ?`,
       discordId,
       display,
@@ -277,7 +293,7 @@ router.get("/auth/discord/callback", async (req, res) => {
     );
     await db.run(
       `INSERT INTO social_links (wallet, discord) VALUES (?, ?)
-       ON CONFLICT(wallet) DO UPDATE SET discord=excluded.discord`,
+       ON CONFLICT(wallet) DO UPDATE SET discord = excluded.discord`,
       [wallet, display]
     );
 
@@ -293,38 +309,7 @@ router.get("/auth/discord/callback", async (req, res) => {
   }
 });
 
-/* ------------------------- PROFILE ------------------------- */
-router.get("/api/profile", async (req, res) => {
-  const { wallet } = req.query;
-  if (!wallet) return res.status(400).json({ error: "Missing wallet" });
-  try {
-    const profile = await db.get(
-      "SELECT * FROM users WHERE wallet = ?",
-      wallet
-    );
-    const links = await db.get(
-      "SELECT * FROM social_links WHERE wallet = ?",
-      wallet
-    );
-    const history = await db.all(
-      "SELECT id, quest_id AS questId, title, xp, completed_at FROM quest_history WHERE wallet = ? ORDER BY id DESC LIMIT 200",
-      wallet
-    );
-    if (!profile) return res.status(404).json({ error: "User not found" });
-    res.json({
-      profile: {
-        ...profile,
-        links: links || { twitter: null, telegram: null, discord: null },
-      },
-      history: history || [],
-    });
-  } catch (err) {
-    console.error("Profile fetch error:", err);
-    res.status(500).json({ error: "Failed to fetch profile" });
-  }
-});
-
-/* ------------------------- QUESTS (DEV-ONLY helper) ------------------------- */
+/* ------------------------- DEV QUEST HELPER ------------------------- */
 // Disable on prod unless you explicitly enable it
 const DEV_COMPLETE_ENABLED = process.env.DEV_COMPLETE_ENABLED === "1";
 
@@ -334,18 +319,13 @@ router.post("/api/quest/complete", async (req, res) => {
   }
   const { wallet, questId, title, xp } = req.body || {};
   if (!wallet || !questId || xp == null) {
-    return res
-      .status(400)
-      .json({ error: "Missing wallet, questId, or xp" });
+    return res.status(400).json({ error: "Missing wallet, questId, or xp" });
   }
   try {
     const xpInt = Math.max(0, Math.min(100000, Number(xp) || 0));
 
     await ensureUser(wallet);
-    const user = await db.get(
-      "SELECT xp FROM users WHERE wallet = ?",
-      wallet
-    );
+    const user = await db.get("SELECT xp FROM users WHERE wallet = ?", wallet);
     const newXp = (user?.xp || 0) + xpInt;
     const progress = Math.max(0, Math.min(1, newXp / 10000));
 
@@ -376,6 +356,7 @@ router.post("/api/quest/complete", async (req, res) => {
 });
 
 /* ------------------------- TIER/UTILITY ------------------------- */
+
 router.post("/assign-tier", async (req, res) => {
   const { wallet, tier } = req.body || {};
   if (!wallet || !tier)
