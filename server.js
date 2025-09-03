@@ -28,8 +28,8 @@ import twitterRoutes from "./routes/twitterRoutes.js";
 import tonWebhook from "./routes/tonWebhook.js";
 import tokenSaleRoutes from "./routes/tokenSaleRoutes.js";       // if present
 
-/* --- NEW: secure quest/social routes (these were missing in prod) --- */
-import questLinkRoutes from "./routes/questLinkRoutes.js";       // /api/quests/:id/link/start|finish, /r/:nonce
+/* --- NEW: secure quest/social routes --- */
+import questLinkRoutes from "./routes/questLinkRoutes.js";         // /api/quests/:id/link/start|finish, /r/:nonce
 import questTelegramRoutes from "./routes/questTelegramRoutes.js"; // /api/quests/telegram/join/verify
 import questDiscordRoutes from "./routes/questDiscordRoutes.js";   // /api/quests/discord/join/verify
 import socialLinkRoutes from "./routes/socialLinkRoutes.js";       // /api/social/:provider/unlink|resync
@@ -101,7 +101,7 @@ app.use("/api/verify", questLimiter);
 app.use(telegramRoutes);   // /auth/telegram/*
 app.use(authRoutes);       // /auth/twitter, /auth/discord, etc.
 
-/* --- ✅ MOUNT THE MISSING SECURE ROUTES --- */
+/* --- Secure routes --- */
 app.use(questLinkRoutes);        // /api/quests/:id/link/start  /r/:nonce  /finish
 app.use(questTelegramRoutes);    // /api/quests/telegram/join/verify
 app.use(questDiscordRoutes);     // /api/quests/discord/join/verify
@@ -118,6 +118,88 @@ app.use("/api", twitterRoutes);
 if (tokenSaleRoutes) app.use(tokenSaleRoutes);
 if (leaderboardRoutes) app.use(leaderboardRoutes);
 if (adminRoutes) app.use(adminRoutes);
+
+/* -------------------------------
+   Boot seed: live quests (idempotent)
+----------------------------------*/
+
+function normalizeQuestRow(row = {}) {
+  return {
+    id: Number(row.id),
+    title: row.title || "",
+    type: (row.type || "daily").toLowerCase(),
+    url: row.url || "#",
+    xp: Number(row.xp || 0),
+    requiredTier: row.requiredTier || "Free",
+    requiresTwitter: !!(row.requiresTwitter || false),
+    requirement: row.requirement || (row.requiresTwitter ? "x_follow" : "none"),
+    target: row.target || row.target_handle || null,
+    active: Number(row.active ?? 1),
+  };
+}
+
+async function seedLiveQuests() {
+  try {
+    const row = await db.get(`SELECT COUNT(*) AS c FROM quests`);
+    const empty = Number(row?.c || 0) === 0;
+    const force = String(process.env.AUTO_SEED || "0") === "1";
+    if (!empty && !force) return;
+
+    // wipe & seed (only when empty or forced)
+    await db.run(`DELETE FROM quests`);
+    await db.run(`VACUUM`);
+
+    const live = [
+      { id: 1, title: "Follow us on X",       type: "social", url: "https://x.com/7goldencowries",          xp: 50, active: 1, requirement: "x_follow" },
+      { id: 2, title: "Join our Telegram",    type: "social", url: "https://t.me/GOLDENCOWRIE",             xp: 50, active: 1, requirement: "tg_channel_member" },
+      { id: 3, title: "Join our Discord",     type: "social", url: "https://discord.gg/wdKntDQf",           xp: 75, active: 1, requirement: "discord_member" },
+      { id: 4, title: "Daily Check-in",       type: "daily",  url: "#",                                     xp: 10, active: 1, requirement: "none" },
+    ];
+
+    const stmt = await db.prepare(
+      `INSERT INTO quests (id, title, type, url, xp, active, requirement) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const q of live) {
+      await stmt.run(q.id, q.title, q.type, q.url, q.xp, q.active, q.requirement);
+    }
+    await stmt.finalize();
+    console.log(`✅ Seeded live quests: ${live.length}`);
+  } catch (e) {
+    console.error("❌ Seed live quests failed:", e);
+  }
+}
+
+/* Kick seeding shortly after boot (so DB is ready) */
+setTimeout(() => { seedLiveQuests(); }, 250);
+
+/* -------------------------------
+   Quests API (modern + legacy)
+----------------------------------*/
+
+// Modern: /api/quests  -> { quests: [ ...normalized ] }
+app.get("/api/quests", async (_req, res) => {
+  try {
+    const rows = await db.all(`SELECT * FROM quests WHERE COALESCE(active,1)=1 ORDER BY id`);
+    const quests = rows.map(normalizeQuestRow);
+    res.json({ quests });
+  } catch (err) {
+    console.error("Failed to fetch quests:", err);
+    res.status(500).json({ error: "Failed to load quests" });
+  }
+});
+
+// Legacy alias: /quests?flat=1 -> [ ...normalized ]
+app.get("/quests", async (req, res) => {
+  try {
+    const rows = await db.all(`SELECT * FROM quests WHERE COALESCE(active,1)=1 ORDER BY id`);
+    const quests = rows.map(normalizeQuestRow);
+    if (String(req.query.flat || "") === "1") return res.json(quests);
+    return res.json({ quests });
+  } catch (err) {
+    console.error("Failed to fetch quests (legacy):", err);
+    res.status(500).json({ error: "Failed to load quests" });
+  }
+});
 
 /* --- Health & debug --- */
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
