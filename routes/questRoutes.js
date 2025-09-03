@@ -77,16 +77,12 @@ async function discordIsMember(accessToken, guildId) {
   }
 }
 
-/* ========= Routes ========= */
+/* ========= Route handlers (shared) ========= */
 
-/**
- * GET /api/quest/quests
- * Return all quests (normalized fields)
- */
-router.get("/quests", async (_req, res) => {
+async function listQuestsHandler(_req, res) {
   try {
     const rows = await db.all(`SELECT * FROM quests WHERE COALESCE(active,1)=1 ORDER BY id`);
-    const quests = rows.map(normalizeQuestRow).map(q => ({
+    const quests = rows.map(normalizeQuestRow).map((q) => ({
       // keep legacy fields for frontend compatibility
       id: q.id,
       title: q.title,
@@ -95,23 +91,24 @@ router.get("/quests", async (_req, res) => {
       xp: q.xp,
       requiredTier: q.requiredTier,
       requiresTwitter: q.requiresTwitter,
-      target_handle: q.target,       // legacy alias
+      target_handle: q.target, // legacy alias
       // expose new fields too
       requirement: q.requirement,
       target: q.target,
     }));
-    res.json(quests);
+
+    // If the client explicitly asks for flat array, serve it (legacy behavior)
+    if (String(_req.query.flat || "") === "1") return res.json(quests);
+
+    // Default modern shape
+    return res.json({ quests });
   } catch (err) {
     console.error("Failed to fetch quests:", err);
     res.status(500).json({ error: "Failed to load quests" });
   }
-});
+}
 
-/**
- * GET /api/quest/completed/:wallet
- * List of completed quest IDs for a given wallet
- */
-router.get("/completed/:wallet", async (req, res) => {
+async function completedHandler(req, res) {
   const wallet = (req.params.wallet || "").trim();
   if (!wallet) return res.status(400).json({ error: "Missing wallet" });
 
@@ -126,13 +123,9 @@ router.get("/completed/:wallet", async (req, res) => {
     console.error("Fetch completed error:", err);
     res.status(500).json({ error: "Failed to fetch completed quests" });
   }
-});
+}
 
-/**
- * GET /api/quest/journal/:wallet
- * Recent quest journal entries for a wallet
- */
-router.get("/journal/:wallet", async (req, res) => {
+async function journalHandler(req, res) {
   const wallet = (req.params.wallet || "").trim();
   if (!wallet) return res.status(400).json({ error: "Missing wallet" });
 
@@ -151,15 +144,9 @@ router.get("/journal/:wallet", async (req, res) => {
     console.error("Journal fetch error:", err);
     res.status(500).json({ error: "Failed to fetch journal" });
   }
-});
+}
 
-/**
- * POST /api/quest/complete
- * Body: { wallet, questId }
- * Validates gating (Twitter/Telegram/Discord), applies tier multiplier,
- * updates XP + level, and records completion. Handles referral bonus.
- */
-router.post("/complete", async (req, res) => {
+async function completeHandler(req, res) {
   try {
     const wallet = String(req.body?.wallet || "").trim();
     const questId = Number(req.body?.questId);
@@ -300,12 +287,33 @@ router.post("/complete", async (req, res) => {
       message: `+${xpGain} XP gained!`,
       xpGain,
       baseXP,
-      multiplier: mult
+      multiplier: mult,
     });
   } catch (err) {
     console.error("Quest complete error:", err);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
-});
+}
+
+/* ========= Routes (primary + legacy aliases) ========= */
+
+/** PUBLIC: Quests list */
+router.get("/api/quests", listQuestsHandler);   // ✅ modern (frontend hits this)
+router.get("/quests", listQuestsHandler);       // ↩️ legacy (returns flat if ?flat=1)
+
+/** Completed IDs for a wallet */
+router.get("/api/quests/completed/:wallet", completedHandler); // modern
+router.get("/quest/completed/:wallet", completedHandler);      // legacy
+router.get("/completed/:wallet", completedHandler);            // extra alias
+
+/** Journal for a wallet */
+router.get("/api/quests/journal/:wallet", journalHandler); // modern
+router.get("/quest/journal/:wallet", journalHandler);      // legacy
+router.get("/journal/:wallet", journalHandler);            // extra alias
+
+/** Complete a quest */
+router.post("/api/quests/complete", completeHandler); // modern
+router.post("/api/quest/complete", completeHandler);  // legacy
+router.post("/complete", completeHandler);            // extra alias
 
 export default router;
