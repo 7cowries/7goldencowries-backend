@@ -1,265 +1,186 @@
-// server.js — resilient Express setup for 7goldencowries backend
-import "dotenv/config"; // loads .env
+// server.js  (production entrypoint on Render)
 import express from "express";
 import cors from "cors";
-import cookieSession from "cookie-session";
-import cookieParser from "cookie-parser";
+import dotenv from "dotenv";
+import session from "express-session";
 import passport from "passport";
-import "./passportConfig.js";
-
-import db from "./db.js";
+import MemoryStore from "memorystore";
+import cookieParser from "cookie-parser";
 import helmet from "helmet";
-import compression from "compression";
+import rateLimit from "express-rate-limit";
+import dayjs from "dayjs";
 
-import { seedOnBoot } from "./utils/seed.js";
+import "./passport.js";
+import db from "./db.js";
+import { getLevelInfo } from "./utils/levelUtils.js";
 
-// Core feature routes
-import profileRoutes from "./routes/profileRoutes.js";
-import authRoutes from "./routes/authRoutes.js";
+/* --- Core routes you already had --- */
+import questRoutes from "./routes/questRoutes.js";
+import leaderboardRoutes from "./routes/leaderboardRoutes.js";   // if present
+import adminRoutes from "./routes/adminRoutes.js";               // if present
+import authRoutes from "./routes/authRoutes.js";                 // /auth/twitter, /auth/discord, etc.
+import telegramRoutes from "./routes/telegramRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
+import verifyRoutes from "./routes/verifyRoutes.js";
+import referralRoutes from "./routes/referralRoutes.js";
+import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import twitterRoutes from "./routes/twitterRoutes.js";
+import tonWebhook from "./routes/tonWebhook.js";
+import tokenSaleRoutes from "./routes/tokenSaleRoutes.js";       // if present
 
-// Referrals (public + admin)
-import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
+/* --- NEW: secure quest/social routes (these were missing in prod) --- */
+import questLinkRoutes from "./routes/questLinkRoutes.js";       // /api/quests/:id/link/start|finish, /r/:nonce
+import questTelegramRoutes from "./routes/questTelegramRoutes.js"; // /api/quests/telegram/join/verify
+import questDiscordRoutes from "./routes/questDiscordRoutes.js";   // /api/quests/discord/join/verify
+import socialLinkRoutes from "./routes/socialLinkRoutes.js";       // /api/social/:provider/unlink|resync
 
-// Telegram auth routes
-import telegramAuthRoutes from "./routes/telegramRoutes.js";
+dotenv.config();
 
-/* =========================
-   ENV / APP
-   ========================= */
 const app = express();
-app.disable("x-powered-by");
+const PROD = process.env.NODE_ENV === "production";
+const DEFAULT_FRONTEND = "http://localhost:3000";
 
-const PORT = process.env.PORT || 5000;
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ||
-  process.env.CLIENT_URL ||
-  "https://www.7goldencowries.com";
+/* CORS allow-list (comma separated in FRONTEND_URL) */
+const ALLOWED = (process.env.FRONTEND_URL || DEFAULT_FRONTEND)
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
-// Build an allowed-origins list
-function splitEnvList(v) {
-  return (v || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+/* Trust proxy (Render) */
+app.set("trust proxy", 1);
 
-// Derive Vercel URL from env if present
-const vercelUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null;
+/* Security headers */
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
-const baseAllowed = [
-  "http://localhost:3000",
-  "https://7goldencowries.vercel.app",
-  "https://7goldencowries.com",
-  "https://www.7goldencowries.com",
-];
-
-const envAllowed = [
-  process.env.CLIENT_URL,
-  process.env.FRONTEND_URL,
-  ...splitEnvList(process.env.ALLOWED_ORIGINS),
-  vercelUrl,
-].filter(Boolean);
-
-const ALLOWED_ORIGINS = [...new Set([...baseAllowed, ...envAllowed])];
-
-// Render / production: trust proxy so secure cookies & SameSite=None work
-if (process.env.RENDER || process.env.NODE_ENV === "production") {
-  app.set("trust proxy", "loopback, linklocal, uniquelocal");
-}
-
-/* =========================
-   MIDDLEWARE
-   ========================= */
-const corsOptions = {
+/* CORS (with credentials) */
+app.use(cors({
   origin(origin, cb) {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    console.warn(`CORS blocked for origin: ${origin}`);
-    return cb(Object.assign(new Error("CORS not allowed"), { status: 403 }));
+    if (!origin) return cb(null, true);           // curl / same-origin
+    if (ALLOWED.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`), false);
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "X-Requested-With",
-    "x-admin",
-    "x-admin-secret",
-  ],
-};
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // Preflight
+  optionsSuccessStatus: 204
+}));
 
-app.use(
-  helmet({
-    contentSecurityPolicy: false, // telegram widget/scripts
-    crossOriginResourcePolicy: { policy: "cross-origin" },
-  })
-);
-app.use(compression());
-
+/* Parsers & cookies */
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-const isProd = process.env.NODE_ENV === "production";
-app.use(
-  cookieSession({
-    name: "7gc.sid",
-    secret: process.env.SESSION_SECRET || "dev_secret_change_me",
-    maxAge: 1000 * 60 * 60 * 24, // 24h
+/* Sessions (popup-friendly) */
+const Store = MemoryStore(session);
+app.use(session({
+  name: "7gc.sid",
+  secret: process.env.SESSION_SECRET || "cowrie-secret",
+  resave: false,
+  saveUninitialized: true,
+  store: new Store({ checkPeriod: 86400000 }), // 24h
+  cookie: {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? "none" : "lax",
-    path: "/",
-  })
-);
-
-// Ensure session methods exist
-app.use((req, _res, next) => {
-  if (req.session && !req.session.regenerate) req.session.regenerate = (cb) => cb();
-  if (req.session && !req.session.save) req.session.save = (cb) => cb();
-  next();
-});
+    secure: PROD,
+    sameSite: PROD ? "none" : "lax",
+    maxAge: 1000 * 60 * 60, // 1h
+  }
+}));
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* =========================
-   HEALTH / ROOT / DEBUG
-   ========================= */
-const healthPayload = () => ({
-  ok: true,
-  env: process.env.NODE_ENV || "development",
-  uptime: process.uptime(),
+/* Rate limits */
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 600 });
+app.use("/api", apiLimiter);
+
+const questLimiter = rateLimit({ windowMs: 60 * 1000, max: 40 });
+app.use("/api/quests", questLimiter);
+app.use("/api/verify", questLimiter);
+
+/* --- Mount order matters for OAuth popups/callbacks --- */
+app.use(telegramRoutes);   // /auth/telegram/*
+app.use(authRoutes);       // /auth/twitter, /auth/discord, etc.
+
+/* --- ✅ MOUNT THE MISSING SECURE ROUTES --- */
+app.use(questLinkRoutes);        // /api/quests/:id/link/start  /r/:nonce  /finish
+app.use(questTelegramRoutes);    // /api/quests/telegram/join/verify
+app.use(questDiscordRoutes);     // /api/quests/discord/join/verify
+app.use(socialLinkRoutes);       // /api/social/:provider/unlink|resync
+
+/* --- Existing app APIs --- */
+app.use(questRoutes);
+app.use(userRoutes);
+app.use(verifyRoutes);
+app.use(tonWebhook);
+app.use(referralRoutes);
+app.use("/api/subscribe", subscriptionRoutes);
+app.use("/api", twitterRoutes);
+if (tokenSaleRoutes) app.use(tokenSaleRoutes);
+if (leaderboardRoutes) app.use(leaderboardRoutes);
+if (adminRoutes) app.use(adminRoutes);
+
+/* --- Health & debug --- */
+app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
+app.get("/healthz", async (_req, res) => {
+  try { await db.get("SELECT 1"); res.json({ ok: true }); }
+  catch { res.status(500).json({ ok: false, error: "db" }); }
 });
-app.get("/health", (_req, res) => res.json(healthPayload()));
-app.get("/api/health", (_req, res) => res.json(healthPayload()));
-app.get("/", (_req, res) => res.send("7goldencowries backend is running 🚀"));
+app.get("/session-debug", (req, res) => res.json({ session: req.session }));
 
-app.get("/debug/cors", (req, res) => {
-  res.json({
-    origin: req.get("origin"),
-    allowedOrigins: ALLOWED_ORIGINS,
-    cookies: req.cookies,
-    sessionPresent: !!req.session,
-  });
-});
-
-/* =========================
-   OPTIONAL ROUTES (dynamic import)
-   ========================= */
-let questRoutes = null;
-let questsRoutes = null;
-let leaderboardRoutes = null;
-let adminRoutes = null;
-
-try {
-  const mod = await import("./routes/questRoutes.js"); // singular
-  questRoutes = mod.default;
-  console.log("➡️  Loaded routes/questRoutes.js");
-} catch (e) {
-  console.error("Failed to load questRoutes.js:", e.message);
-}
-
-if (!questRoutes) {
+/* --- Leaderboard (frontend hits /api/leaderboard) --- */
+app.get("/api/leaderboard", async (_req, res) => {
   try {
-    const mod = await import("./routes/questsRoutes.js"); // plural fallback
-    questsRoutes = mod.default;
-    console.log("➡️  Loaded routes/questsRoutes.js");
+    const users = await db.all(`
+      SELECT wallet, twitterHandle, xp, tier
+      FROM users
+      ORDER BY xp DESC
+      LIMIT 20
+    `);
+
+    const top = users.map((u, i) => {
+      const level = getLevelInfo(u.xp || 0);
+      const badgeSlug = level?.name
+        ? `level-${level.name.toLowerCase().replace(/\s+/g, "-")}.png`
+        : "unranked.png";
+      return {
+        rank: i + 1,
+        wallet: u.wallet,
+        twitter: u.twitterHandle || null,
+        xp: u.xp,
+        tier: u.tier || "Free",
+        name: level?.name || "Unranked",
+        progress: level?.progress || 0,
+        badge: `/images/badges/${badgeSlug}`,
+      };
+    });
+
+    res.json({ top });
   } catch (e) {
-    console.error("Failed to load questsRoutes.js:", e.message);
+    console.error("Leaderboard error:", e);
+    res.status(500).json({ error: "Internal server error" });
   }
-}
-
-try {
-  const mod = await import("./routes/leaderboardRoutes.js");
-  leaderboardRoutes = mod.default;
-  console.log("➡️  Loaded routes/leaderboardRoutes.js");
-} catch (e) {
-  console.error("Failed to load leaderboardRoutes.js:", e.message);
-}
-
-try {
-  const mod = await import("./routes/adminRoutes.js");
-  adminRoutes = mod.default;
-  console.log("➡️  Loaded routes/adminRoutes.js");
-} catch (e) {
-  console.warn("Admin routes not loaded (optional):", e.message);
-}
-
-/* =========================
-   SMALL HELPERS
-   ========================= */
-// Bind a wallet to the session so the OAuth links can pick it up
-app.post("/api/session/bind-wallet", (req, res) => {
-  const wallet = String(req.body?.wallet || "").trim();
-  if (!wallet) return res.status(400).json({ error: "Missing wallet" });
-  req.session.wallet = wallet;
-  req.session.state = wallet; // also store as 'state' for convenience
-  res.json({ ok: true, wallet });
 });
 
-// Public referral → redirect to frontend
-app.get("/referrals/:code", (req, res) => {
-  const code = encodeURIComponent(req.params.code || "");
-  return res.redirect(302, `${FRONTEND_URL}/referrals/${code}`);
+/* --- Nice 404 logger so you can spot missing mounts --- */
+app.use((req, res, next) => {
+  if (res.headersSent) return next();
+  console.warn(`404: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: "Not found" });
 });
 
-/* =========================
-   MOUNT
-   ========================= */
-app.use("/", authRoutes);
-app.use("/", telegramAuthRoutes);
-console.log("➡️  Mounted telegramRoutes at /auth/telegram/*");
-
-if (questRoutes) app.use("/api/quest", questRoutes);
-if (questsRoutes) app.use("/api/quests", questsRoutes);
-if (leaderboardRoutes) app.use("/api/leaderboard", leaderboardRoutes);
-if (adminRoutes) app.use("/api/admin", adminRoutes);
-
-// Referrals (public + admin APIs)
-app.use("/api/referrals", referralRoutes);
-app.use("/api/admin/referrals", referralAdminRoutes);
-
-// Profile API (read-only profile & history)
-app.use("/api/profile", profileRoutes);
-
-/* =========================
-   AUTO-SEED ON BOOT
-   ========================= */
-try {
-  const yes = String(process.env.AUTO_SEED || "").toLowerCase();
-  const disable = String(process.env.DISABLE_OLD_QUESTS || "").toLowerCase();
-  if (yes === "1" || yes === "true") {
-    console.log("🌱 AUTO_SEED enabled. Seeding quests...");
-    await seedOnBoot({ disableOthers: disable === "1" || disable === "true" });
-  } else {
-    console.log("ℹ️  AUTO_SEED disabled (set AUTO_SEED=true to enable on boot).");
+/* --- CORS error helper --- */
+app.use((err, _req, res, _next) => {
+  if (err && String(err.message || "").startsWith("CORS blocked for origin:")) {
+    return res.status(401).json({ error: err.message, allowed: ALLOWED });
   }
-} catch (e) {
-  console.error("❌ Auto seed failed:", e);
-}
-
-/* =========================
-   404 + ERROR HANDLERS
-   ========================= */
-app.use((req, res) => {
-  if (req.path === "/favicon.ico") return res.sendStatus(204);
-  console.warn(`404: ${req.method} ${req.path}`);
-  res.status(404).json({ error: "Not Found" });
+  console.error(err);
+  return res.status(500).json({ error: "Server error" });
 });
 
-app.use((err, req, res, _next) => {
-  console.error(`❌ Server error [${req.method} ${req.path}]:`, err.stack || err);
-  const code = err.status || 500;
-  res.status(code).json({ error: err.message || "Server error" });
-});
-
-/* =========================
-   START
-   ========================= */
+/* --- Start server (Render injects PORT) --- */
+const PORT = process.env.PORT || 10000; // Render detected :10000 in your logs
 app.listen(PORT, () => {
   console.log(`✅  7goldencowries backend on :${PORT}`);
-  console.log(`   CORS allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);
-  console.log(`   Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log("   CORS allowed origins:", ALLOWED.join(", "));
+  console.log("   Environment:", process.env.NODE_ENV || "dev");
 });
