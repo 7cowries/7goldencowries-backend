@@ -10,7 +10,7 @@
     "dev": "NODE_ENV=development node server.js",
     "render-start": "node server.js",
     "migrate:quests": "sqlite3 $SQLITE_FILE < scripts/migrate-quests.sql",
-    "test": "node tests/deriveLevel.smoke.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "smoke": "node scripts/smoke.mjs"
   },
   "engines": {
@@ -39,6 +39,11 @@
     "passport-twitter": "^1.0.4",
     "passport-twitter-oauth2": "^2.1.1",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "winston": "^3.10.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
   }
 }

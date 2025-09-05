@@ -1,4 +1,7 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
+import winston from "winston";
 import dotenv from "dotenv";
 import cors from "cors";
 import helmet from "helmet";
@@ -21,6 +24,8 @@ import socialRoutes from "./routes/socialRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 
 dotenv.config();
+const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
+
 
 const app = express();
 app.set("trust proxy", 1);
@@ -35,13 +40,15 @@ const originCheck = (origin, cb) => {
   if (!origin) return cb(null, true);
   const ok = origins.some((o) => {
     if (o.includes("*")) {
-      const re = new RegExp("^" + o.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+      const re = new RegExp("^" + o.replace(/\./g, "\.").replace(/\*/g, ".*") + "$");
       return re.test(origin);
     }
     return o === origin;
   });
+  if (!ok) logger.warn(`CORS blocked: ${origin}`);
   cb(null, ok);
 };
+
 app.use(cors({ origin: originCheck, credentials: true }));
 app.options("*", cors({ origin: originCheck, credentials: true }));
 
@@ -65,14 +72,18 @@ const claimLimiter = rateLimit({
 }); // prevent bulk claiming abuse
 app.use("/api/quests/claim", claimLimiter);
 
+const SESSION_DIR = process.env.SESSIONS_DIR || "/var/data";
+try { fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch (e) { logger.error("Session dir creation failed", e); }
 const MemStore = MemoryStore(session);
+const store = new MemStore({ checkPeriod: 864e5, path: SESSION_DIR });
+store.on("error", (err) => logger.error("Session store error", err));
 app.use(
   session({
     name: process.env.COOKIE_NAME || "7gc.sid",
     secret: process.env.SESSION_SECRET || "change-me",
     resave: false,
     saveUninitialized: false,
-    store: new MemStore({ checkPeriod: 864e5 }),
+    store,
     cookie: {
       httpOnly: true,
       sameSite: "none",
@@ -118,11 +129,14 @@ app.post("/complete", (req, res) => res.redirect(307, "/api/quests/claim"));
 
 // generic error handler
 app.use((err, _req, res, _next) => {
-  console.error(err);
+  logger.error(err);
   res.status(500).json({ error: "Internal error" });
 });
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Listening on ${PORT}`);
-});
+
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`Listening on ${PORT}`);
+  });
+}
+export default app;
