@@ -8,7 +8,9 @@
     "start": "node server.js",
     "start:prod": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development node server.js",
-    "render-start": "node server.js"
+    "render-start": "node server.js",
+    "migrate:quests": "sqlite3 \"$SQLITE_FILE\" < scripts/migrate-quests.sql",
+    "test": "node -e \"console.log('ok')\""
   },
   "engines": {
     "node": ">=18 <23"

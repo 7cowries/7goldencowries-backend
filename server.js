@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import session from "express-session";
 import connectSqlite3 from "connect-sqlite3";
 import fs from "fs";
+import path from "path";
 
 import metaRoutes from "./routes/metaRoutes.js";
 import questRoutes from "./routes/questRoutes.js";
@@ -37,22 +38,42 @@ app.use(cors({
 
 app.use(express.json());
 
-const limiter = rateLimit({ windowMs: 60 * 1000, max: 200 });
-app.use(limiter);
+const globalLimiter = rateLimit({ windowMs: 60_000, max: 200 });
+app.use(globalLimiter);
+
+// Tighter limiter for claims
+const claimLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use("/api/quests/claim", claimLimiter);
+// (comment) If abuse is observed, reduce max to 10/min or add wallet-based keys.
+
+const sessionsDir = process.env.SESSIONS_DIR || "/var/data";
+try {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+} catch (e) {
+  console.error("Failed to ensure sessions dir:", sessionsDir, e);
+}
 
 const SQLiteStore = connectSqlite3(session);
-fs.mkdirSync("/var/data", { recursive: true });
 app.use(session({
-  store: new SQLiteStore({ db: "sessions.sqlite", dir: "/var/data" }),
-  secret: process.env.SESSION_SECRET || "changeme",
+  name: "7gc.sid",
+  secret: process.env.SESSION_SECRET || "change-me",
   resave: false,
   saveUninitialized: false,
+  store: new SQLiteStore({
+    db: "sessions.sqlite",
+    dir: sessionsDir
+  }),
   cookie: {
     httpOnly: true,
     secure: true,
     sameSite: "none",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  },
+    maxAge: 1000 * 60 * 60 * 24 * 7
+  }
 }));
 
 app.get("/healthz", (_req, res) => {
@@ -64,6 +85,9 @@ app.use(questRoutes);
 app.use(userRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
+
+app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
+app.post("/complete", (req, res) => res.redirect(307, "/api/quests/claim"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

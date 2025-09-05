@@ -300,7 +300,6 @@ async function completeHandler(req, res) {
 
 /** PUBLIC: Quests list */
 router.get("/api/quests", listQuestsHandler);   // ✅ modern (frontend hits this)
-router.get("/quests", listQuestsHandler);       // ↩️ legacy (returns flat if ?flat=1)
 
 /** Completed IDs for a wallet */
 router.get("/api/quests/completed/:wallet", completedHandler); // modern
@@ -315,18 +314,17 @@ router.get("/journal/:wallet", journalHandler);            // extra alias
 /** Complete a quest */
 router.post("/api/quests/complete", completeHandler); // modern
 router.post("/api/quest/complete", completeHandler);  // legacy
-router.post("/complete", completeHandler);            // extra alias
 
 // Idempotent quest XP claim
 router.post("/api/quests/claim", async (req, res) => {
   try {
     const wallet = String(req.body?.wallet || req.get("x-wallet") || "").trim();
-    const questId = Number(req.body?.questId);
-    if (!wallet || !Number.isFinite(questId)) {
+    const questIdentifier = req.body?.questId;
+    if (!wallet || questIdentifier === undefined || questIdentifier === null || questIdentifier === "") {
       return res.status(400).json({ ok: false, error: "bad-args" });
     }
 
-    const result = await awardQuest(wallet, questId);
+    const result = await awardQuest(wallet, questIdentifier);
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
@@ -338,7 +336,7 @@ router.post("/api/quests/claim", async (req, res) => {
     return res.json({
       ok: true,
       wallet,
-      questId,
+      questId: result.questId,
       xpAwarded: result.xpGain,
       xpTotal,
       levelName: lvl.levelName,
