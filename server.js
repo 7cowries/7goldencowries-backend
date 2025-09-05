@@ -6,8 +6,6 @@ import rateLimit from "express-rate-limit";
 import session from "express-session";
 import connectSqlite3 from "connect-sqlite3";
 import fs from "fs";
-import path from "path";
-
 import metaRoutes from "./routes/metaRoutes.js";
 import questRoutes from "./routes/questRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -41,22 +39,8 @@ app.use(express.json());
 const globalLimiter = rateLimit({ windowMs: 60_000, max: 200 });
 app.use(globalLimiter);
 
-// Tighter limiter for claims
-const claimLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false
-});
-app.use("/api/quests/claim", claimLimiter);
-// (comment) If abuse is observed, reduce max to 10/min or add wallet-based keys.
-
 const sessionsDir = process.env.SESSIONS_DIR || "/var/data";
-try {
-  fs.mkdirSync(sessionsDir, { recursive: true });
-} catch (e) {
-  console.error("Failed to ensure sessions dir:", sessionsDir, e);
-}
+fs.mkdirSync(sessionsDir, { recursive: true });
 
 const SQLiteStore = connectSqlite3(session);
 app.use(session({
@@ -86,6 +70,7 @@ app.use(userRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 
+// temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
 app.post("/complete", (req, res) => res.redirect(307, "/api/quests/claim"));
 

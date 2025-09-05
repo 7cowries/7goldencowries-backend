@@ -1,30 +1,37 @@
 PRAGMA foreign_keys=off;
 BEGIN TRANSACTION;
 
--- Ensure a quests table exists and normalize schema with a UNIQUE code column
+-- Ensure a quests table exists with required columns
 CREATE TABLE IF NOT EXISTS quests (
   id INTEGER PRIMARY KEY,
   code TEXT UNIQUE,
   title TEXT,
   xp INTEGER,
-  type TEXT
+  type TEXT,
+  active INTEGER DEFAULT 1,
+  requiredTier TEXT,
+  requiresTwitter INTEGER,
+  requirement TEXT,
+  target TEXT
 );
 
--- Rebuild with code column if needed
+-- Rebuild to guarantee schema
 CREATE TABLE IF NOT EXISTS quests_tmp (
   id INTEGER PRIMARY KEY,
   code TEXT UNIQUE,
   title TEXT,
   xp INTEGER,
-  type TEXT
+  type TEXT,
+  active INTEGER DEFAULT 1,
+  requiredTier TEXT,
+  requiresTwitter INTEGER,
+  requirement TEXT,
+  target TEXT
 );
-INSERT OR IGNORE INTO quests_tmp (id, code, title, xp, type)
-  SELECT id, code, title, xp, type FROM quests;
+INSERT OR IGNORE INTO quests_tmp (id, code, title, xp, type, active, requiredTier, requiresTwitter, requirement, target)
+  SELECT id, code, title, xp, type, COALESCE(active,1), requiredTier, requiresTwitter, requirement, target FROM quests;
 DROP TABLE quests;
 ALTER TABLE quests_tmp RENAME TO quests;
-
-ALTER TABLE quests ADD COLUMN active INTEGER DEFAULT 1;
-UPDATE quests SET active=1 WHERE active IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS quests_code_unique ON quests(code);
 

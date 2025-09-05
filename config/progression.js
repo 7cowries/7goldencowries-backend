@@ -36,7 +36,10 @@ export function deriveLevel(total = 0) {
   const next = LEVELS[levelIndex + 1];
   const prevNeed = current.need;
   const nextNeed = next ? next.need : MAX_XP;
-  const progress = Math.max(0, Math.min((xpTotal - prevNeed) / (nextNeed - prevNeed), 1));
+  const denom = nextNeed - prevNeed;
+  const progress = denom > 0
+    ? Math.max(0, Math.min((xpTotal - prevNeed) / denom, 1))
+    : 1;
 
   return {
     levelName: current.key,
