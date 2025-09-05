@@ -36,7 +36,12 @@ app.use(cors({
 
 app.use(express.json());
 
-const globalLimiter = rateLimit({ windowMs: 60_000, max: 200 });
+const globalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use(globalLimiter);
 
 const claimLimiter = rateLimit({
