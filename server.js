@@ -92,6 +92,71 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 
+// --- users table migration (idempotent) ---
+async function hasTable(name) {
+  const row = await db.get(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+    name
+  );
+  return !!row;
+}
+
+async function hasColumn(table, col) {
+  const cols = await db.all(`PRAGMA table_info(${table})`);
+  return cols.some((c) => c.name === col);
+}
+
+async function addTextColumnIfMissing(table, col) {
+  if (!(await hasColumn(table, col))) {
+    console.log(`Migration: adding ${table}.${col}`);
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+  }
+}
+
+if (!(await hasTable("users"))) {
+  await db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT UNIQUE,
+      xp INTEGER DEFAULT 0,
+      level INTEGER DEFAULT 1,
+      levelName TEXT DEFAULT 'Shellborn',
+      levelProgress REAL DEFAULT 0,
+      twitter_username TEXT,
+      twitter_id TEXT,
+      telegram_username TEXT,
+      discord_username TEXT,
+      discord_id TEXT,
+      createdAt TEXT DEFAULT (datetime('now')),
+      updatedAt TEXT DEFAULT (datetime('now'))
+    );
+  `);
+} else {
+  const columns = [
+    "wallet",
+    "xp",
+    "level",
+    "levelName",
+    "levelProgress",
+    "twitter_username",
+    "twitter_id",
+    "telegram_username",
+    "discord_username",
+    "discord_id",
+    "createdAt",
+    "updatedAt",
+  ];
+  for (const col of columns) {
+    await addTextColumnIfMissing("users", col);
+  }
+  await db.exec(
+    "UPDATE users SET createdAt = COALESCE(createdAt, datetime('now'))"
+  );
+  await db.exec(
+    "UPDATE users SET updatedAt = COALESCE(updatedAt, datetime('now'))"
+  );
+}
+
 await ensureQuestsSchema();
 
 app.use(metaRoutes);
