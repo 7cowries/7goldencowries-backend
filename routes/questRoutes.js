@@ -1,19 +1,11 @@
 // routes/questRoutes.js
 import express from "express";
 import fetch from "node-fetch";
-import rateLimit from "express-rate-limit";
 import db from "../db.js";
 import { deriveLevel } from "../config/progression.js";
 import { awardQuest } from "../lib/quests.js";
 
 const router = express.Router();
-
-const claimLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-}); // prevent bulk claiming abuse
 
 /* ========= ENV used for verification ========= */
 const TGBOT = process.env.TELEGRAM_BOT_TOKEN;
@@ -324,7 +316,7 @@ router.post("/api/quests/complete", completeHandler); // modern
 router.post("/api/quest/complete", completeHandler);  // legacy
 
 // Idempotent quest XP claim
-router.post("/api/quests/claim", claimLimiter, async (req, res) => {
+router.post("/api/quests/claim", async (req, res) => {
   try {
     const wallet = String(req.body?.wallet || req.get("x-wallet") || "").trim();
     const questIdentifier = req.body?.questId;
