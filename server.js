@@ -13,6 +13,7 @@ import userRoutes from "./routes/userRoutes.js";
 import profileRoutes from "./routes/profileRoutes.js";
 import leaderboardRoutes from "./routes/leaderboardRoutes.js";
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
+import sessionRoutes from "./routes/sessionRoutes.js";
 
 dotenv.config();
 
@@ -21,23 +22,27 @@ app.set("trust proxy", 1);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const allowedOrigins = [
-  "https://7goldencowries.com",
-  "https://www.7goldencowries.com",
-];
-const vercelPattern = /^https:\/\/.*\.vercel\.app$/;
-const extraOrigins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const corsOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .filter(Boolean);
+const corsMatchers = corsOrigins.map((o) =>
+  o.includes("*")
+    ? new RegExp("^" + o.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$")
+    : o
+);
 
-app.use(cors({
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin) || vercelPattern.test(origin) || extraOrigins.includes(origin)) {
-      return cb(null, true);
-    }
-    return cb(new Error("CORS blocked"), false);
-  },
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true);
+      const ok = corsMatchers.some((m) =>
+        typeof m === "string" ? m === origin : m.test(origin)
+      );
+      return cb(ok ? null : new Error("CORS blocked"), ok);
+    },
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 morgan.token("uid", (req) => req.user?.id || req.session?.userId || "anon");
@@ -62,16 +67,16 @@ app.use("/api/quests/claim", claimLimiter);
 const MemStore = MemoryStore(session);
 app.use(
   session({
-    name: "7gc.sid",
+    name: process.env.SESSION_NAME || "sid",
     secret: process.env.SESSION_SECRET || "change-me",
     resave: false,
     saveUninitialized: false,
     store: new MemStore({ checkPeriod: 86400000 }),
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 7,
+      secure: true,
+      sameSite: "none",
+      maxAge: 1000 * 60 * 60 * 24 * 30,
     },
   })
 );
@@ -94,6 +99,7 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
+app.use("/api/session", sessionRoutes);
 
 // temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
