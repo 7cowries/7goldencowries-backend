@@ -1,0 +1,58 @@
+[
+  {
+    "id": "q_follow_x",
+    "title": "Follow @7goldencowries on X",
+    "description": "Stay updated on quests, drops and XP boosts.",
+    "category": "Insider",
+    "kind": "social",
+    "url": "https://x.com/7goldencowries",
+    "xp": 50,
+    "active": true,
+    "sort": 10
+  },
+  {
+    "id": "q_join_telegram",
+    "title": "Join our Telegram",
+    "description": "Hang out with the Isles and catch early alpha.",
+    "category": "Social",
+    "kind": "social",
+    "url": "https://t.me/GOLDENCOWRIE",
+    "xp": 40,
+    "active": true,
+    "sort": 20
+  },
+  {
+    "id": "q_join_discord",
+    "title": "Join our Discord",
+    "description": "Get roles, badges and partner quests.",
+    "category": "Partner",
+    "kind": "social",
+    "url": "https://discord.gg/wdKntDQf",
+    "xp": 40,
+    "active": true,
+    "sort": 30
+  },
+  {
+    "id": "q_daily_visit",
+    "title": "Daily Visit",
+    "description": "Check in on Isles once per day.",
+    "category": "Daily",
+    "kind": "link",
+    "url": "https://7goldencowries.com/quests",
+    "xp": 10,
+    "active": true,
+    "sort": 5
+  },
+  {
+    "id": "q_tonconnect_bind",
+    "title": "Connect your TON wallet",
+    "description": "Bind your wallet to start earning XP.",
+    "category": "Onchain",
+    "kind": "onchain",
+    "url": "",
+    "xp": 25,
+    "active": true,
+    "sort": 1
+  }
+]
+

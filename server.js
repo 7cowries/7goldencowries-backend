@@ -16,6 +16,7 @@ import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralR
 import sessionRoutes from "./routes/sessionRoutes.js";
 import usersRoutes from "./routes/usersRoutes.js";
 import socialRoutes from "./routes/socialRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
 
 dotenv.config();
 
@@ -100,6 +101,7 @@ app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
 app.use("/api/session", sessionRoutes);
 app.use("/auth", socialRoutes);
+app.use("/api/admin", adminRoutes);
 
 // temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
