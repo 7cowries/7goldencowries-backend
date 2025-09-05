@@ -8,6 +8,7 @@ import MemoryStore from "memorystore";
 import morgan from "morgan";
 import db from "./db.js";
 import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
+import { ensureUsersSchema } from "./lib/ensureUsersSchema.js";
 import metaRoutes from "./routes/metaRoutes.js";
 import questRoutes from "./routes/questRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -92,82 +93,12 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 
-// --- users table migration (idempotent) ---
-async function hasTable(name) {
-  const row = await db.get(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-    name
-  );
-  return !!row;
+async function ensureSchema() {
+  await ensureUsersSchema();
+  await ensureQuestsSchema();
 }
 
-async function columnMap(table) {
-  const cols = await db.all(`PRAGMA table_info(${table})`);
-  return new Set(cols.map((c) => c.name));
-}
-
-async function addColumnIfMissing(table, column, defSql) {
-  const cols = await columnMap(table);
-  if (!cols.has(column)) {
-    console.log(`Migration: adding ${table}.${column}`);
-    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${defSql}`);
-  }
-}
-
-if (!(await hasTable("users"))) {
-  await db.exec(`
-    CREATE TABLE users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT UNIQUE,
-      xp INTEGER DEFAULT 0,
-      level INTEGER DEFAULT 1,
-      levelName TEXT DEFAULT 'Shellborn',
-      levelProgress REAL DEFAULT 0,
-      twitter_username TEXT,
-      twitter_id TEXT,
-      telegram_username TEXT,
-      discord_username TEXT,
-      discord_id TEXT,
-      createdAt TEXT DEFAULT (datetime('now')),
-      updatedAt TEXT DEFAULT (datetime('now'))
-    );
-  `);
-} else {
-  await addColumnIfMissing("users", "xp", "xp INTEGER DEFAULT 0");
-  await addColumnIfMissing("users", "level", "level INTEGER DEFAULT 1");
-  await addColumnIfMissing(
-    "users",
-    "levelName",
-    "levelName TEXT DEFAULT 'Shellborn'"
-  );
-  await addColumnIfMissing(
-    "users",
-    "levelProgress",
-    "levelProgress REAL DEFAULT 0"
-  );
-  await addColumnIfMissing("users", "twitter_username", "twitter_username TEXT");
-  await addColumnIfMissing("users", "twitter_id", "twitter_id TEXT");
-  await addColumnIfMissing(
-    "users",
-    "telegram_username",
-    "telegram_username TEXT"
-  );
-  await addColumnIfMissing("users", "discord_username", "discord_username TEXT");
-  await addColumnIfMissing("users", "discord_id", "discord_id TEXT");
-  // createdAt/updatedAt must be added without defaults, then backfilled
-  await addColumnIfMissing("users", "createdAt", "createdAt TEXT");
-  await addColumnIfMissing("users", "updatedAt", "updatedAt TEXT");
-  await db.exec(`
-    UPDATE users SET xp = COALESCE(xp, 0);
-    UPDATE users SET level = COALESCE(level, 1);
-    UPDATE users SET levelName = COALESCE(levelName, 'Shellborn');
-    UPDATE users SET levelProgress = COALESCE(levelProgress, 0);
-    UPDATE users SET createdAt = COALESCE(createdAt, datetime('now'));
-    UPDATE users SET updatedAt = COALESCE(updatedAt, datetime('now'));
-  `);
-}
-
-await ensureQuestsSchema();
+await ensureSchema();
 
 app.use(metaRoutes);
 app.use(questRoutes);

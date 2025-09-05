@@ -43,7 +43,10 @@ router.post("/api/quests/discord/join/verify", async (req, res) => {
 
     await db.run("BEGIN");
     try {
-      await db.run(`UPDATE users SET xp = COALESCE(xp,0) + ? WHERE wallet=?`, [quest.xp, wallet]);
+      await db.run(
+        `UPDATE users SET xp = COALESCE(xp,0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
+        [quest.xp, wallet]
+      );
       await db.run(
         `INSERT INTO quest_history (wallet, quest_id, title, xp)
          VALUES (?,?,?,?)`,
