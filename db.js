@@ -1,6 +1,8 @@
 // db.js – opens DB and ensures all required tables/columns exist (idempotent)
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
+import fs from "fs";
+import path from "path";
 
 let db;
 
@@ -25,8 +27,11 @@ async function ensureUniqueIndex(name, sql) {
 }
 
 const initDB = async () => {
+  const DB_FILE = process.env.SQLITE_FILE || "/var/data/7gc.sqlite";
+  fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+
   db = await open({
-    filename: "./database.sqlite", // keep in sync with your CLI usage
+    filename: DB_FILE,
     driver: sqlite3.Database,
   });
 
@@ -142,6 +147,7 @@ const initDB = async () => {
   await ensureIndex("idx_quests_active",    "ON quests(active)");
   await ensureIndex("idx_completed_wallet", "ON completed_quests(wallet)");
   await ensureIndex("idx_completed_qid",    "ON completed_quests(questId)");
+  await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, questId)");
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");

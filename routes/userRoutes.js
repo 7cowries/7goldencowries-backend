@@ -1,10 +1,10 @@
 import express from "express";
 import db from "../db.js";
+import { deriveLevel } from "../config/progression.js";
 
 const router = express.Router();
 
-router.get("/users/:wallet", async (req, res) => {
-  const wallet = req.params.wallet;
+async function fetchUser(wallet, res) {
   if (!wallet) return res.status(400).json({ error: "Missing wallet address" });
 
   try {
@@ -19,28 +19,30 @@ router.get("/users/:wallet", async (req, res) => {
       user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
     }
 
-    const { xp, tier, twitterHandle, levelName, levelProgress } = user;
-    const levels = [
-      "Shellborn", "Wave Seeker", "Tide Whisperer", "Current Binder",
-      "Pearl Bearer", "Isle Champion", "Cowrie Ascendant"
-    ];
-    const nextXP = [10000, 30000, 60000, 100000, 170000, 250000];
-    const levelIndex = levels.indexOf(levelName);
-    const next = nextXP[levelIndex] || 100;
-
+    const { xp, tier, twitterHandle } = user;
+    const lvl = deriveLevel(xp);
     res.json({
       xp,
       tier,
       twitter: twitterHandle || null,
-      levelName,
-      levelSymbol: "🐚",
-      levelProgress: levelProgress || 0,
-      nextXP: next
+      levelName: lvl.levelName,
+      levelProgress: lvl.progress,
+      nextXP: lvl.nextNeed,
     });
   } catch (err) {
     console.error("Failed to fetch user:", err);
     res.status(500).json({ error: "Internal server error" });
   }
+}
+
+router.get("/api/users/me", async (req, res) => {
+  const wallet = req.get("x-wallet");
+  await fetchUser(wallet, res);
+});
+
+router.get("/api/users/:wallet", async (req, res) => {
+  const wallet = req.params.wallet;
+  await fetchUser(wallet, res);
 });
 
 export default router;

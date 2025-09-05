@@ -15,6 +15,7 @@ yarn-error.log*
 *.sqlite3
 *.sqlite-shm
 *.sqlite-wal
+/var/data/*
 
 # build/output
 /dist
