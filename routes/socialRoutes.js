@@ -5,6 +5,56 @@ import db from "../db.js";
 const router = express.Router();
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://7goldencowries.com";
 
+function safelyDecodeBase64(value) {
+  if (!value) return null;
+  try {
+    return Buffer.from(String(value), "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function verifyTelegramLogin(query, botToken) {
+  const { hash } = query;
+  if (!hash || !botToken) return false;
+
+  const TELEGRAM_FIELDS = [
+    "id",
+    "first_name",
+    "last_name",
+    "username",
+    "photo_url",
+    "auth_date",
+  ];
+
+  const parts = TELEGRAM_FIELDS
+    .filter((k) => query[k] !== undefined)
+    .map((k) => `${k}=${query[k]}`)
+    .sort();
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[telegram] fields", parts);
+  }
+
+  const dataCheckString = parts.join("\n");
+
+  const secret = crypto.createHash("sha256").update(botToken).digest();
+  const computed = crypto
+    .createHmac("sha256", secret)
+    .update(dataCheckString)
+    .digest("hex");
+
+  const a = Buffer.from(computed, "hex");
+  const b = Buffer.from(String(hash), "hex");
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[telegram] verify", ok ? "success" : "fail");
+  }
+
+  return ok;
+}
+
 /** ---------- Twitter (temporary stub) ---------- */
 router.get("/twitter", (_req, res) => {
   return res.status(501).json({ error: "Twitter OAuth not yet enabled on server" });
@@ -31,16 +81,7 @@ router.get("/telegram/callback", async (req, res) => {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) return res.status(500).send("Missing TELEGRAM_BOT_TOKEN");
 
-    const entries = Object.entries(req.query)
-      .filter(([k]) => k !== "hash")
-      .map(([k, v]) => `${k}=${v}`)
-      .sort();
-    const dataCheckString = entries.join("\n");
-
-    const secret = crypto.createHash("sha256").update(token).digest();
-    const hmac = crypto.createHmac("sha256", secret).update(dataCheckString).digest("hex");
-
-    if (hmac !== String(req.query.hash)) {
+    if (!verifyTelegramLogin(req.query, token)) {
       return res.status(401).send("Invalid Telegram login");
     }
 
@@ -50,28 +91,29 @@ router.get("/telegram/callback", async (req, res) => {
       return res.status(401).send("Telegram login expired");
     }
 
-    const wallet = req.session?.wallet || null;
-    if (!wallet) {
-      req.session.telegram_username = req.query.username || null;
-      return res.redirect(FRONTEND_URL + "/profile?telegram=pending");
-    }
-
+    const wallet =
+      req.session?.wallet || safelyDecodeBase64(req.query.state) || null;
     const username = req.query.username || null;
 
-    try {
-      await db.run(
-        `UPDATE users SET telegram = COALESCE(?, telegram) WHERE wallet = ?`,
-        [username, wallet]
-      );
-    } catch {
-      /* ignore if column doesn't exist */
+    if (wallet) {
+      try {
+        await db.run(
+          `UPDATE users SET telegram = COALESCE(?, telegram) WHERE wallet = ?`,
+          [username, wallet]
+        );
+      } catch {
+        /* ignore if column doesn't exist */
+      }
     }
 
-    req.session.telegram_username = username;
-    return res.redirect(FRONTEND_URL + "/profile?telegram=connected");
+    if (req.session) {
+      req.session.telegram_username = username;
+    }
+
+    return res.redirect(FRONTEND_URL + "/profile");
   } catch (e) {
     console.error("telegram/callback error", e);
-    return res.redirect(FRONTEND_URL + "/profile?telegram=error");
+    return res.redirect(FRONTEND_URL + "/profile");
   }
 });
 
