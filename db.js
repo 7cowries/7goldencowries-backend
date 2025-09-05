@@ -11,7 +11,7 @@ async function addColumnIfMissing(table, column, defSql) {
   const cols = await db.all(`PRAGMA table_info(${table});`);
   const has = cols.some((c) => c.name === column);
   if (!has) {
-    console.log(`Migration: adding ${table}.${column}`);
+    console.log(`Migration: added ${table}.${column}`);
     await db.exec(`ALTER TABLE ${table} ADD COLUMN ${defSql};`);
   }
 }

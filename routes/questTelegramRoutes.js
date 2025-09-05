@@ -60,7 +60,7 @@ async function award(wallet, quest, noteMeta = {}) {
   await db.run("BEGIN");
   try {
     await db.run(
-      `UPDATE users SET xp = COALESCE(xp,0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
+      `UPDATE users SET xp = COALESCE(xp, 0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
       [quest.xp, wallet]
     );
     await db.run(

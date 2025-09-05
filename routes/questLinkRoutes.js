@@ -132,10 +132,10 @@ router.post("/api/quests/:idOrCode/link/finish", async (req, res) => {
     await db.run("BEGIN");
     try {
       await db.run(`UPDATE link_attempts SET finished_at=CURRENT_TIMESTAMP WHERE id=?`, [att.id]);
-      await db.run(
-        `UPDATE users SET xp = COALESCE(xp,0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
-        [quest.xp, wallet]
-      );
+        await db.run(
+          `UPDATE users SET xp = COALESCE(xp, 0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
+          [quest.xp, wallet]
+        );
 
       // keep your existing quest_history format
       await db.run(
