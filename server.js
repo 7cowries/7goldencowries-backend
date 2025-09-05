@@ -14,6 +14,8 @@ import profileRoutes from "./routes/profileRoutes.js";
 import leaderboardRoutes from "./routes/leaderboardRoutes.js";
 import referralRoutes, { admin as referralAdminRoutes } from "./routes/referralRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
+import usersRoutes from "./routes/usersRoutes.js";
+import socialRoutes from "./routes/socialRoutes.js";
 
 dotenv.config();
 
@@ -22,27 +24,23 @@ app.set("trust proxy", 1);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const corsOrigins = (process.env.CORS_ORIGINS || "")
+const origins = (process.env.CORS_ORIGINS || "")
   .split(",")
+  .map((s) => s.trim())
   .filter(Boolean);
-const corsMatchers = corsOrigins.map((o) =>
-  o.includes("*")
-    ? new RegExp("^" + o.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$")
-    : o
-);
-
-app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin) return cb(null, true);
-      const ok = corsMatchers.some((m) =>
-        typeof m === "string" ? m === origin : m.test(origin)
-      );
-      return cb(ok ? null : new Error("CORS blocked"), ok);
-    },
-    credentials: true,
-  })
-);
+const originCheck = (origin, cb) => {
+  if (!origin) return cb(null, true);
+  const ok = origins.some((o) => {
+    if (o.includes("*")) {
+      const re = new RegExp("^" + o.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
+      return re.test(origin);
+    }
+    return o === origin;
+  });
+  cb(null, ok);
+};
+app.use(cors({ origin: originCheck, credentials: true }));
+app.options("*", cors({ origin: originCheck, credentials: true }));
 
 app.use(express.json());
 morgan.token("uid", (req) => req.user?.id || req.session?.userId || "anon");
@@ -67,15 +65,15 @@ app.use("/api/quests/claim", claimLimiter);
 const MemStore = MemoryStore(session);
 app.use(
   session({
-    name: process.env.SESSION_NAME || "sid",
+    name: process.env.COOKIE_NAME || "7gc.sid",
     secret: process.env.SESSION_SECRET || "change-me",
     resave: false,
     saveUninitialized: false,
-    store: new MemStore({ checkPeriod: 86400000 }),
+    store: new MemStore({ checkPeriod: 864e5 }),
     cookie: {
       httpOnly: true,
-      secure: true,
       sameSite: "none",
+      secure: true,
       maxAge: 1000 * 60 * 60 * 24 * 30,
     },
   })
@@ -94,12 +92,14 @@ app.get("/healthz", async (_req, res) => {
 
 app.use(metaRoutes);
 app.use(questRoutes);
+app.use("/api/users", usersRoutes);
 app.use(userRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
 app.use("/api/session", sessionRoutes);
+app.use("/auth", socialRoutes);
 
 // temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
