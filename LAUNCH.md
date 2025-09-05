@@ -24,6 +24,10 @@ npm run migrate:quests
 node server.js
 ```
 
+## Render
+
+Node web service with 1GB persistent disk at `/var/data`.
+
 ## Smoke tests
 
 ```bash
