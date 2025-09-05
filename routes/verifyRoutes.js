@@ -55,7 +55,7 @@ router.post('/subscribe', (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     // Optionally update their tier immediately
-    db.prepare('UPDATE users SET tier = ? WHERE wallet = ?').run(tier, wallet);
+    db.prepare(`UPDATE users SET tier = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`).run(tier, wallet);
 
     // Insert a pending subscription
     db.prepare(`

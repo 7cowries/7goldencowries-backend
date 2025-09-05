@@ -195,7 +195,10 @@ cron.schedule("0 0 * * *", async () => {
     );
 
     for (const { id, wallet } of expired) {
-      await db.run(`UPDATE users SET tier = 'Free' WHERE wallet = ?`, wallet);
+      await db.run(
+        `UPDATE users SET tier = 'Free', updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+        wallet
+      );
       await db.run(`UPDATE subscriptions SET status = 'expired' WHERE id = ?`, id);
       console.log(` → Downgraded ${wallet}, sub#${id}`);
     }

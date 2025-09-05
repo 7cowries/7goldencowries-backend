@@ -11,7 +11,7 @@ import MemoryStore from "memorystore";
 import morgan from "morgan";
 import db from "./db.js";
 import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
-import { ensureUsersSchema } from "./lib/ensureUsersSchema.js";
+import { ensureUsersSchema } from "./db/migrateUsers.js";
 import metaRoutes from "./routes/metaRoutes.js";
 import questRoutes from "./routes/questRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -105,8 +105,18 @@ app.get("/healthz", async (_req, res) => {
 });
 
 async function ensureSchema() {
-  await ensureUsersSchema();
-  await ensureQuestsSchema();
+  try {
+    await ensureUsersSchema(db);
+  } catch (e) {
+    console.error('ensureUsersSchema failed', e);
+    throw e;
+  }
+  try {
+    await ensureQuestsSchema();
+  } catch (e) {
+    console.error('ensureQuestsSchema failed', e);
+    throw e;
+  }
 }
 
 await ensureSchema();
