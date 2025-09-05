@@ -330,7 +330,7 @@ router.post("/api/quest/complete", async (req, res) => {
     const progress = Math.max(0, Math.min(1, newXp / 10000));
 
     await db.run(
-      "UPDATE users SET xp = ?, levelProgress = ? WHERE wallet = ?",
+      "UPDATE users SET xp = COALESCE(?,0), levelProgress = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?",
       newXp,
       progress,
       wallet

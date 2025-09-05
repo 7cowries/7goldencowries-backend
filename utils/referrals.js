@@ -13,7 +13,7 @@ export async function maybeCreditReferral(wallet) {
   try {
     await db.exec("BEGIN");
     await db.run(
-      "UPDATE users SET xp = COALESCE(xp,0) + ? WHERE wallet = ?",
+      "UPDATE users SET xp = COALESCE(xp,0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?",
       REFERRAL_XP,
       link.referrer
     );

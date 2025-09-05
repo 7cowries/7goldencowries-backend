@@ -240,7 +240,7 @@ async function completeHandler(req, res) {
     const xpGain = Math.max(0, Math.round(baseXP * mult));
 
     await db.run(
-      `UPDATE users SET xp = COALESCE(xp, 0) + ? WHERE wallet = ?`,
+      `UPDATE users SET xp = COALESCE(xp, 0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
       xpGain,
       wallet
     );
@@ -250,7 +250,7 @@ async function completeHandler(req, res) {
     const lvl = deriveLevel(xp);
     await db.run(
       `UPDATE users
-         SET levelName = ?, levelProgress = ?, nextXP = ?
+         SET levelName = ?, levelProgress = ?, nextXP = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE wallet = ?`,
       lvl.levelName, lvl.progress, lvl.nextNeed, wallet
     );
@@ -274,7 +274,7 @@ async function completeHandler(req, res) {
       if (ref?.referrer) {
         await db.run(`UPDATE referrals SET completed = 1 WHERE referred = ?`, wallet);
         await db.run(
-          `UPDATE users SET xp = COALESCE(xp, 0) + 50 WHERE wallet = ?`,
+          `UPDATE users SET xp = COALESCE(xp, 0) + 50, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
           ref.referrer
         );
 
@@ -285,7 +285,7 @@ async function completeHandler(req, res) {
         const refLvl = deriveLevel(refXp);
         await db.run(
           `UPDATE users
-              SET levelName = ?, levelProgress = ?, nextXP = ?
+              SET levelName = ?, levelProgress = ?, nextXP = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
             WHERE wallet = ?`,
           refLvl.levelName, refLvl.progress, refLvl.nextNeed, ref.referrer
         );
