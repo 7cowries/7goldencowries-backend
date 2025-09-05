@@ -65,24 +65,23 @@ const initDB = async () => {
     );
 
     CREATE TABLE IF NOT EXISTS quests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
-      type TEXT NOT NULL,         -- daily | social | onchain | etc
-      url TEXT NOT NULL,
-      xp INTEGER NOT NULL,
-      requiredTier TEXT DEFAULT 'Free',
-      requiresTwitter INTEGER NOT NULL DEFAULT 0,
-      -- flexible gating
-      code TEXT UNIQUE,           -- stable code for admin/seed
-      requirement TEXT,           -- e.g. none | x_follow | tg_channel_member | tg_group_member | tg_bot_linked | discord_member
-      target TEXT,                -- e.g. @handle, invite link, group username
-      active INTEGER DEFAULT 1
+      description TEXT DEFAULT '',
+      category TEXT DEFAULT 'All',
+      kind TEXT DEFAULT 'link',            -- 'link' | 'social' | 'onchain' | etc.
+      url TEXT DEFAULT '',
+      xp INTEGER DEFAULT 0,
+      active INTEGER DEFAULT 1,
+      sort INTEGER DEFAULT 0,
+      createdAt INTEGER DEFAULT (strftime('%s','now')),
+      updatedAt INTEGER DEFAULT (strftime('%s','now'))
     );
 
     CREATE TABLE IF NOT EXISTS completed_quests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       wallet TEXT NOT NULL,
-      questId INTEGER NOT NULL,
+      questId TEXT NOT NULL,
       timestamp TEXT NOT NULL,
       UNIQUE(wallet, questId)
     );
@@ -143,7 +142,6 @@ const initDB = async () => {
   `);
 
   // --- Indices (speed up common lookups) ---
-  await ensureIndex("idx_quests_code",      "ON quests(code)");
   await ensureIndex("idx_quests_active",    "ON quests(active)");
   await ensureIndex("idx_completed_wallet", "ON completed_quests(wallet)");
   await ensureIndex("idx_completed_qid",    "ON completed_quests(questId)");
@@ -181,13 +179,6 @@ const initDB = async () => {
   await addColumnIfMissing("users", "discordGuildMember",    `discordGuildMember INTEGER DEFAULT 0`);
   await addColumnIfMissing("users", "created_at",            `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
 
-  // quests
-  await addColumnIfMissing("quests", "requiredTier",         `requiredTier TEXT DEFAULT 'Free'`);
-  await addColumnIfMissing("quests", "requiresTwitter",      `requiresTwitter INTEGER NOT NULL DEFAULT 0`);
-  await addColumnIfMissing("quests", "code",                 `code TEXT UNIQUE`);
-  await addColumnIfMissing("quests", "requirement",          `requirement TEXT`);
-  await addColumnIfMissing("quests", "target",               `target TEXT`);
-  await addColumnIfMissing("quests", "active",               `active INTEGER DEFAULT 1`);
 
   // social_links/referrals extras
   await addColumnIfMissing("social_links", "updated_at",     `updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);

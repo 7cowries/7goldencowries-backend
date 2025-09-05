@@ -19,17 +19,21 @@ const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;           // e.g. 1410268
 // Normalize a quest row so old/new schemas both work
 function normalizeQuestRow(row = {}) {
   return {
-    id: Number(row.id),
+    id: row.id,
     title: row.title || "",
-    type: (row.type || "daily").toLowerCase(),
-    url: row.url || "#",
+    description: row.description || "",
+    category: row.category || "All",
+    type: (row.type || row.kind || "link").toLowerCase(),
+    url: row.url || "",
     xp: Number(row.xp || 0),
+    active: row.active ?? 1,
+    sort: Number(row.sort ?? 0),
 
     // legacy fields
     requiredTier: row.requiredTier || "Free",
     requiresTwitter: !!(row.requiresTwitter || false),
 
-    // new flexible gating
+    // flexible gating
     requirement: row.requirement || (row.requiresTwitter ? "x_follow" : "none"),
     target: row.target || row.target_handle || null,
   };
@@ -82,26 +86,12 @@ async function discordIsMember(accessToken, guildId) {
 
 async function listQuestsHandler(_req, res) {
   try {
-    const rows = await db.all(`SELECT * FROM quests WHERE COALESCE(active,1)=1 ORDER BY id`);
-    const quests = rows.map(normalizeQuestRow).map((q) => ({
-      // keep legacy fields for frontend compatibility
-      id: q.id,
-      title: q.title,
-      type: q.type,
-      url: q.url,
-      xp: q.xp,
-      requiredTier: q.requiredTier,
-      requiresTwitter: q.requiresTwitter,
-      target_handle: q.target, // legacy alias
-      // expose new fields too
-      requirement: q.requirement,
-      target: q.target,
-    }));
+    const rows = await db.all(
+      `SELECT * FROM quests WHERE active=1 ORDER BY sort ASC, createdAt DESC`
+    );
+    const quests = rows.map(normalizeQuestRow);
 
-    // If the client explicitly asks for flat array, serve it (legacy behavior)
     if (String(_req.query.flat || "") === "1") return res.json(quests);
-
-    // Default modern shape
     return res.json({ quests });
   } catch (err) {
     console.error("Failed to fetch quests:", err);
@@ -118,7 +108,7 @@ async function completedHandler(req, res) {
       `SELECT questId FROM completed_quests WHERE wallet = ? ORDER BY timestamp DESC`,
       wallet
     );
-    const completed = rows.map((r) => Number(r.questId)).filter((n) => Number.isFinite(n));
+    const completed = rows.map((r) => r.questId);
     res.json({ completed });
   } catch (err) {
     console.error("Fetch completed error:", err);
@@ -150,8 +140,8 @@ async function journalHandler(req, res) {
 async function completeHandler(req, res) {
   try {
     const wallet = String(req.body?.wallet || "").trim();
-    const questId = Number(req.body?.questId);
-    if (!wallet || !Number.isFinite(questId)) {
+    const questId = String(req.body?.questId || "").trim();
+    if (!wallet || !questId) {
       return res.status(400).json({ success: false, message: "Missing wallet or questId" });
     }
 
