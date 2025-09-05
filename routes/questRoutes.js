@@ -318,9 +318,15 @@ router.post("/api/quest/complete", completeHandler);  // legacy
 // Idempotent quest XP claim
 router.post("/api/quests/claim", async (req, res) => {
   try {
-    const wallet = String(req.body?.wallet || req.get("x-wallet") || "").trim();
+    const wallet =
+      req.session.wallet || (req.query.wallet ? String(req.query.wallet) : null);
     const questIdentifier = req.body?.questId;
-    if (!wallet || questIdentifier === undefined || questIdentifier === null || questIdentifier === "") {
+    if (!wallet) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Missing wallet address" });
+    }
+    if (questIdentifier === undefined || questIdentifier === null || questIdentifier === "") {
       return res.status(400).json({ ok: false, error: "bad-args" });
     }
 
