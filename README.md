@@ -12,6 +12,8 @@ Required variables:
 - `SESSIONS_DIR=/var/data`
 - `CORS_ORIGINS=https://7goldencowries.com,https://www.7goldencowries.com,https://7goldencowries-frontend.vercel.app`
 
+## Disk
+
 Provision a 1GB disk mounted at `/var/data`.
 
 ## Migrations
@@ -26,11 +28,17 @@ npm run migrate:quests
 node server.js
 ```
 
-## Smoke tests
+## Health
 
 ```bash
 BACKEND=https://sevengoldencowries-backend.onrender.com
 curl -s $BACKEND/healthz
+```
+
+## Smoke tests
+
+```bash
+BACKEND=https://sevengoldencowries-backend.onrender.com
 curl -s $BACKEND/api/meta/progression | jq
 curl -s -H "x-wallet: UQTestWallet123" $BACKEND/api/quests | jq
 curl -s -H "x-wallet: UQTestWallet123" -H "Content-Type: application/json" -d '{"questId":"join_telegram"}' $BACKEND/api/quests/claim | jq

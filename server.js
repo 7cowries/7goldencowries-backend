@@ -39,6 +39,14 @@ app.use(express.json());
 const globalLimiter = rateLimit({ windowMs: 60_000, max: 200 });
 app.use(globalLimiter);
 
+const claimLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+}); // prevent bulk claiming abuse
+app.use("/api/quests/claim", claimLimiter);
+
 const sessionsDir = process.env.SESSIONS_DIR || "/var/data";
 fs.mkdirSync(sessionsDir, { recursive: true });
 
