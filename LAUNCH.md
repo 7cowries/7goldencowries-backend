@@ -1,18 +1,16 @@
-# 7 Golden Cowries Backend
+# Launch Checklist
 
-Node/Express backend using SQLite for persistence.
+## Env vars
 
-## Environment
+- NODE_ENV=production
+- SESSION_SECRET
+- SQLITE_FILE=/var/data/7gc.sqlite
+- SESSIONS_DIR=/var/data
+- CORS_ORIGINS=https://7goldencowries.com,https://www.7goldencowries.com,https://7goldencowries-frontend.vercel.app
 
-Required variables:
+## Disk
 
-- `NODE_ENV=production`
-- `SESSION_SECRET`
-- `SQLITE_FILE=/var/data/7gc.sqlite`
-- `SESSIONS_DIR=/var/data`
-- `CORS_ORIGINS=https://7goldencowries.com,https://www.7goldencowries.com,https://7goldencowries-frontend.vercel.app`
-
-Provision a 1GB disk mounted at `/var/data`.
+1GB mounted at `/var/data`
 
 ## Migrations
 
