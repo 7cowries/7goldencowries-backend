@@ -35,11 +35,6 @@ async function fetchUser(wallet, res) {
   }
 }
 
-router.get("/api/users/me", async (req, res) => {
-  const wallet = req.get("x-wallet");
-  await fetchUser(wallet, res);
-});
-
 router.get("/api/users/:wallet", async (req, res) => {
   const wallet = req.params.wallet;
   await fetchUser(wallet, res);
