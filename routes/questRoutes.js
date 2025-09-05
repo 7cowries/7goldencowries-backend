@@ -94,7 +94,7 @@ async function listQuestsHandler(_req, res) {
         COALESCE(category,'All') AS category,
         COALESCE(kind,'link') AS kind,
         COALESCE(url,'') AS url,
-        COALESCE(xp,0) AS xp,
+              COALESCE(xp, 0) AS xp,
         COALESCE(active,1) AS active,
         COALESCE(sort,0) AS sort,
         COALESCE(updatedAt, createdAt, 0) AS updatedAt
