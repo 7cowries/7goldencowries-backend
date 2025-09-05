@@ -23,6 +23,9 @@ INSERT OR IGNORE INTO quests_tmp (id, code, title, xp, type)
 DROP TABLE quests;
 ALTER TABLE quests_tmp RENAME TO quests;
 
+ALTER TABLE quests ADD COLUMN active INTEGER DEFAULT 1;
+UPDATE quests SET active=1 WHERE active IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS quests_code_unique ON quests(code);
 
 -- Seed/Upsert canonical quests by code

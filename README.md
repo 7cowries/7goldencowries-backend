@@ -14,6 +14,10 @@ npm install
 npm start
 ```
 
+## Migrations
+
+Run `npm run migrate:quests` after deploy to ensure the `active` column exists in the `quests` table.
+
 ## Health
 
 `GET /healthz` returns `{ ok: true }`.
