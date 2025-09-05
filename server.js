@@ -101,15 +101,16 @@ async function hasTable(name) {
   return !!row;
 }
 
-async function hasColumn(table, col) {
+async function columnMap(table) {
   const cols = await db.all(`PRAGMA table_info(${table})`);
-  return cols.some((c) => c.name === col);
+  return new Set(cols.map((c) => c.name));
 }
 
-async function addTextColumnIfMissing(table, col) {
-  if (!(await hasColumn(table, col))) {
-    console.log(`Migration: adding ${table}.${col}`);
-    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+async function addColumnIfMissing(table, column, defSql) {
+  const cols = await columnMap(table);
+  if (!cols.has(column)) {
+    console.log(`Migration: adding ${table}.${column}`);
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${defSql}`);
   }
 }
 
@@ -132,29 +133,38 @@ if (!(await hasTable("users"))) {
     );
   `);
 } else {
-  const columns = [
-    "wallet",
-    "xp",
-    "level",
+  await addColumnIfMissing("users", "xp", "xp INTEGER DEFAULT 0");
+  await addColumnIfMissing("users", "level", "level INTEGER DEFAULT 1");
+  await addColumnIfMissing(
+    "users",
     "levelName",
+    "levelName TEXT DEFAULT 'Shellborn'"
+  );
+  await addColumnIfMissing(
+    "users",
     "levelProgress",
-    "twitter_username",
-    "twitter_id",
+    "levelProgress REAL DEFAULT 0"
+  );
+  await addColumnIfMissing("users", "twitter_username", "twitter_username TEXT");
+  await addColumnIfMissing("users", "twitter_id", "twitter_id TEXT");
+  await addColumnIfMissing(
+    "users",
     "telegram_username",
-    "discord_username",
-    "discord_id",
-    "createdAt",
-    "updatedAt",
-  ];
-  for (const col of columns) {
-    await addTextColumnIfMissing("users", col);
-  }
-  await db.exec(
-    "UPDATE users SET createdAt = COALESCE(createdAt, datetime('now'))"
+    "telegram_username TEXT"
   );
-  await db.exec(
-    "UPDATE users SET updatedAt = COALESCE(updatedAt, datetime('now'))"
-  );
+  await addColumnIfMissing("users", "discord_username", "discord_username TEXT");
+  await addColumnIfMissing("users", "discord_id", "discord_id TEXT");
+  // createdAt/updatedAt must be added without defaults, then backfilled
+  await addColumnIfMissing("users", "createdAt", "createdAt TEXT");
+  await addColumnIfMissing("users", "updatedAt", "updatedAt TEXT");
+  await db.exec(`
+    UPDATE users SET xp = COALESCE(xp, 0);
+    UPDATE users SET level = COALESCE(level, 1);
+    UPDATE users SET levelName = COALESCE(levelName, 'Shellborn');
+    UPDATE users SET levelProgress = COALESCE(levelProgress, 0);
+    UPDATE users SET createdAt = COALESCE(createdAt, datetime('now'));
+    UPDATE users SET updatedAt = COALESCE(updatedAt, datetime('now'));
+  `);
 }
 
 await ensureQuestsSchema();
