@@ -178,6 +178,12 @@ const initDB = async () => {
   await addColumnIfMissing("users", "discordTokenExpiresAt", `discordTokenExpiresAt INTEGER`);
   await addColumnIfMissing("users", "discordGuildMember",    `discordGuildMember INTEGER DEFAULT 0`);
   await addColumnIfMissing("users", "created_at",            `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+  await addColumnIfMissing("users", "telegram_username",     `telegram_username TEXT`);
+  await addColumnIfMissing("users", "twitter_username",      `twitter_username TEXT`);
+  await addColumnIfMissing("users", "twitter_id",            `twitter_id TEXT`);
+  await addColumnIfMissing("users", "discord_username",      `discord_username TEXT`);
+  await addColumnIfMissing("users", "discord_id",            `discord_id TEXT`);
+  await addColumnIfMissing("users", "updatedAt",             `updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP`);
 
 
   // social_links/referrals extras

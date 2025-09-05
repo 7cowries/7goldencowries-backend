@@ -1,5 +1,7 @@
 import express from "express";
 import db from "../db.js";
+import { deriveLevel } from "../config/progression.js";
+import { getSessionWallet } from "../utils/session.js";
 
 const router = express.Router();
 
@@ -11,17 +13,49 @@ const router = express.Router();
 router.get("/me", async (req, res) => {
   try {
     const wallet =
-      req.session?.wallet || (req.query.wallet ? String(req.query.wallet) : null);
+      getSessionWallet(req) || (req.query.wallet ? String(req.query.wallet) : null);
     if (!wallet) return res.status(400).json({ error: "Missing wallet address" });
 
-    const profile = await db.get(
-      `SELECT wallet, xp, levelName as level, levelProgress
-         FROM users WHERE wallet = ?`,
-      [wallet]
+    // ensure user row exists
+    await db.run(
+      `INSERT INTO users (wallet, updatedAt) VALUES (?, CURRENT_TIMESTAMP)
+         ON CONFLICT(wallet) DO NOTHING`,
+      wallet
     );
 
-    const data = profile || { wallet, xp: 0, level: "Shellborn", levelProgress: 0 };
-    return res.json(data);
+    const row = await db.get(
+      `SELECT wallet, xp, telegram_username, twitter_username, twitter_id,
+              discord_username, discord_id
+         FROM users WHERE wallet = ?`,
+      wallet
+    );
+
+    const xp = row?.xp || 0;
+    const lvl = deriveLevel(xp);
+    const socials = {
+      telegram: {
+        connected: !!row?.telegram_username,
+        username: row?.telegram_username || null,
+      },
+      twitter: {
+        connected: !!row?.twitter_username,
+        username: row?.twitter_username || null,
+        id: row?.twitter_id || null,
+      },
+      discord: {
+        connected: !!row?.discord_username,
+        username: row?.discord_username || null,
+        id: row?.discord_id || null,
+      },
+    };
+
+    return res.json({
+      wallet,
+      xp,
+      level: lvl.levelName,
+      levelProgress: lvl.progress,
+      socials,
+    });
   } catch (e) {
     console.error("GET /api/users/me error", e);
     return res.status(500).json({ error: "internal" });
