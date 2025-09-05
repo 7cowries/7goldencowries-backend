@@ -39,7 +39,7 @@ router.post("/", (req, res) => {
     // Update user tier and XP
     db.prepare(`
       UPDATE users
-      SET tier = ?, xp = xp + ?
+      SET tier = ?, xp = COALESCE(xp, 0) + ?
       WHERE wallet = ?
     `).run(tier, earnedXP, wallet);
 

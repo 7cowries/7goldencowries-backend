@@ -239,7 +239,11 @@ async function completeHandler(req, res) {
     const mult = multiplierByTier[userTier] ?? 1;
     const xpGain = Math.max(0, Math.round(baseXP * mult));
 
-    await db.run(`UPDATE users SET xp = xp + ? WHERE wallet = ?`, xpGain, wallet);
+    await db.run(
+      `UPDATE users SET xp = COALESCE(xp, 0) + ? WHERE wallet = ?`,
+      xpGain,
+      wallet
+    );
 
     // Recompute level
     const { xp } = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
@@ -269,7 +273,10 @@ async function completeHandler(req, res) {
       );
       if (ref?.referrer) {
         await db.run(`UPDATE referrals SET completed = 1 WHERE referred = ?`, wallet);
-        await db.run(`UPDATE users SET xp = xp + 50 WHERE wallet = ?`, ref.referrer);
+        await db.run(
+          `UPDATE users SET xp = COALESCE(xp, 0) + 50 WHERE wallet = ?`,
+          ref.referrer
+        );
 
         const { xp: refXp } = await db.get(
           `SELECT xp FROM users WHERE wallet = ?`,
