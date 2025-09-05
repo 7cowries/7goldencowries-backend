@@ -10,7 +10,8 @@
     "dev": "NODE_ENV=development node server.js",
     "render-start": "node server.js",
     "migrate:quests": "sqlite3 $SQLITE_FILE < scripts/migrate-quests.sql",
-    "test": "node tests/deriveLevel.smoke.js"
+    "test": "node tests/deriveLevel.smoke.js",
+    "smoke": "node scripts/smoke.mjs"
   },
   "engines": {
     "node": ">=18 <23"
