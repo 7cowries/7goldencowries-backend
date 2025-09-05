@@ -25,10 +25,62 @@ async function ensureIndex(name, sql) {
 async function ensureUniqueIndex(name, sql) {
   await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${name} ${sql};`);
 }
+async function migrateUsersUpdatedAt() {
+  const cols = await db.all(`PRAGMA table_info(users);`);
+  const has = cols.some(c => c.name === "updatedAt");
+  if (!has) {
+    console.log("Migration: rebuild users table with updatedAt");
+    await db.exec("BEGIN");
+    await db.exec(`CREATE TABLE users_new (
+      wallet TEXT PRIMARY KEY,
+      xp INTEGER NOT NULL DEFAULT 0,
+      tier TEXT NOT NULL DEFAULT 'Free',
+      levelName TEXT DEFAULT 'Shellborn',
+      levelSymbol TEXT DEFAULT '🐚',
+      levelProgress REAL DEFAULT 0,
+      nextXP INTEGER DEFAULT 10000,
+      twitterHandle TEXT,
+      telegramId TEXT,
+      telegramHandle TEXT,
+      discordId TEXT,
+      discordHandle TEXT,
+      discordAccessToken TEXT,
+      discordRefreshToken TEXT,
+      discordTokenExpiresAt INTEGER,
+      discordGuildMember INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      telegram_username TEXT,
+      twitter_username TEXT,
+      twitter_id TEXT,
+      discord_username TEXT,
+      discord_id TEXT,
+      referral_code TEXT
+    );`);
+    await db.exec(`INSERT INTO users_new (
+      wallet,xp,tier,levelName,levelSymbol,levelProgress,nextXP,
+      twitterHandle,telegramId,telegramHandle,discordId,discordHandle,
+      discordAccessToken,discordRefreshToken,discordTokenExpiresAt,discordGuildMember,
+      created_at,telegram_username,twitter_username,twitter_id,discord_username,discord_id,referral_code
+    ) SELECT
+      wallet,xp,tier,levelName,levelSymbol,levelProgress,nextXP,
+      twitterHandle,telegramId,telegramHandle,discordId,discordHandle,
+      discordAccessToken,discordRefreshToken,discordTokenExpiresAt,discordGuildMember,
+      created_at,telegram_username,twitter_username,twitter_id,discord_username,discord_id,referral_code
+    FROM users;`);
+    await db.exec("DROP TABLE users;");
+    await db.exec("ALTER TABLE users_new RENAME TO users;");
+    await db.exec("COMMIT");
+  }
+}
 
 const initDB = async () => {
   const DB_FILE = process.env.SQLITE_FILE || "/var/data/7gc.sqlite";
-  fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+  try {
+    fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+  } catch (e) {
+    console.error("DB directory creation failed", e);
+  }
 
   db = await open({
     filename: DB_FILE,
@@ -61,7 +113,8 @@ const initDB = async () => {
       discordRefreshToken TEXT,
       discordTokenExpiresAt INTEGER,
       discordGuildMember INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS quests (
@@ -140,6 +193,7 @@ const initDB = async () => {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  await migrateUsersUpdatedAt();
 
   // --- Indices (speed up common lookups) ---
   await ensureIndex("idx_quests_active",    "ON quests(active)");
@@ -183,7 +237,6 @@ const initDB = async () => {
   await addColumnIfMissing("users", "twitter_id",            `twitter_id TEXT`);
   await addColumnIfMissing("users", "discord_username",      `discord_username TEXT`);
   await addColumnIfMissing("users", "discord_id",            `discord_id TEXT`);
-  await addColumnIfMissing("users", "updatedAt",             `updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP`);
 
 
   // social_links/referrals extras

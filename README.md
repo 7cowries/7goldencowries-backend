@@ -2,19 +2,13 @@
 
 Node/Express backend using SQLite for persistence.
 
-## Environment
+## Setup
 
-Required variables:
-
-- `NODE_ENV=production`
-- `SESSION_SECRET`
-- `SQLITE_FILE=/var/data/7gc.sqlite`
-- `SESSIONS_DIR=/var/data`
-- `CORS_ORIGINS=https://7goldencowries.com,https://www.7goldencowries.com,https://7goldencowries-frontend.vercel.app`
-
-## Disk
-
-Provision a 1GB disk mounted at `/var/data`.
+```bash
+npm install
+cp .env.example .env
+# edit .env values
+```
 
 ## Migrations
 
@@ -28,19 +22,28 @@ npm run migrate:quests
 node server.js
 ```
 
+## API
+
+- `GET /api/meta/progression` – progression levels (cached)
+- `GET /api/users/:wallet` – returns xp, tier, levelName, progress
+- `POST /api/quests/claim?wallet=ADDR` `{ "questId": "..." }` – idempotent claim, responds with `alreadyClaimed` when repeated
+- `GET /api/leaderboard` – top users by XP
+
+Legacy endpoints `/quests` and `/complete` redirect to the new routes and will be removed after **1 Jan 2025**. Update clients before this date.
+
+## Disk
+
+Provision a 1GB disk mounted at `/var/data`.
+
 ## Health
 
 ```bash
-BACKEND=https://sevengoldencowries-backend.onrender.com
 curl -s $BACKEND/healthz
 ```
 
-## Smoke tests
+## Tests
 
 ```bash
-BACKEND=https://sevengoldencowries-backend.onrender.com
-curl -s $BACKEND/api/meta/progression | jq
-curl -s -H "x-wallet: UQTestWallet123" $BACKEND/api/quests | jq
-curl -s -H "x-wallet: UQTestWallet123" -H "Content-Type: application/json" -d '{"questId":"join_telegram"}' $BACKEND/api/quests/claim | jq
-curl -s -H "x-wallet: UQTestWallet123" $BACKEND/api/users/me | jq
+npm test
 ```
+

@@ -3,6 +3,7 @@ import express from "express";
 import fetch from "node-fetch";
 import db from "../db.js";
 import { deriveLevel } from "../config/progression.js";
+import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
 
 const router = express.Router();
@@ -344,6 +345,7 @@ router.post("/api/quests/claim", async (req, res) => {
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
+    delCache(`user:${wallet}`);
 
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
     const xpTotal = row?.xp ?? 0;
