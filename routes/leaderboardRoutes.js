@@ -1,6 +1,7 @@
 // routes/leaderboardRoutes.js
 import express from "express";
 import db from "../db.js";
+import { deriveLevel } from "../config/progression.js";
 
 const router = express.Router();
 
@@ -26,9 +27,6 @@ router.get("/", async (req, res) => {
         u.wallet,
         COALESCE(u.xp, 0)                      AS xp,
         COALESCE(u.tier, 'Free')               AS tier,
-        COALESCE(u.levelName, 'Shellborn')     AS levelName,
-        COALESCE(u.levelProgress, 0.0)         AS levelProgress, -- 0..1
-        COALESCE(u.nextXP, 10000)              AS nextXP,
         COALESCE(sl.twitter, u.twitterHandle)  AS twitter
       FROM users u
       LEFT JOIN social_links sl ON sl.wallet = u.wallet
@@ -40,15 +38,18 @@ router.get("/", async (req, res) => {
       offset
     );
 
-    const top = (rows || []).map((r, i) => ({
-      rank: offset + i + 1,
-      wallet: r.wallet || "",
-      xp: Number(r.xp ?? 0),
-      tier: r.tier || "Free",
-      name: r.levelName || "Shellborn",                       // frontend expects .name
-      progress: Math.round((Number(r.levelProgress ?? 0) || 0) * 100), // 0..100
-      twitter: r.twitter || null,
-    }));
+    const top = (rows || []).map((r, i) => {
+      const lvl = deriveLevel(Number(r.xp ?? 0));
+      return {
+        rank: offset + i + 1,
+        wallet: r.wallet || "",
+        xp: Number(r.xp ?? 0),
+        tier: r.tier || "Free",
+        name: lvl.levelName,
+        progress: Math.round(lvl.progress * 100),
+        twitter: r.twitter || null,
+      };
+    });
 
     res.json({ top });
   } catch (err) {

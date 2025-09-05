@@ -2,7 +2,8 @@
 import express from "express";
 import fetch from "node-fetch";
 import db from "../db.js";
-import { getLevelInfo } from "../utils/levelUtils.js";
+import { deriveLevel } from "../config/progression.js";
+import { awardQuest } from "../lib/quests.js";
 
 const router = express.Router();
 
@@ -239,12 +240,12 @@ async function completeHandler(req, res) {
 
     // Recompute level
     const { xp } = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
-    const lvl = getLevelInfo(xp);
+    const lvl = deriveLevel(xp);
     await db.run(
       `UPDATE users
-         SET levelName = ?, levelSymbol = ?, levelProgress = ?, nextXP = ?
+         SET levelName = ?, levelProgress = ?, nextXP = ?
        WHERE wallet = ?`,
-      lvl.name, lvl.symbol, lvl.progress, lvl.nextXP, wallet
+      lvl.levelName, lvl.progress, lvl.nextNeed, wallet
     );
 
     // Record completion
@@ -271,12 +272,12 @@ async function completeHandler(req, res) {
           `SELECT xp FROM users WHERE wallet = ?`,
           ref.referrer
         );
-        const refLvl = getLevelInfo(refXp);
+        const refLvl = deriveLevel(refXp);
         await db.run(
           `UPDATE users
-              SET levelName = ?, levelSymbol = ?, levelProgress = ?, nextXP = ?
+              SET levelName = ?, levelProgress = ?, nextXP = ?
             WHERE wallet = ?`,
-          refLvl.name, refLvl.symbol, refLvl.progress, refLvl.nextXP, ref.referrer
+          refLvl.levelName, refLvl.progress, refLvl.nextNeed, ref.referrer
         );
         console.log(`✨ Referral XP awarded to ${ref.referrer}`);
       }
@@ -315,5 +316,39 @@ router.get("/journal/:wallet", journalHandler);            // extra alias
 router.post("/api/quests/complete", completeHandler); // modern
 router.post("/api/quest/complete", completeHandler);  // legacy
 router.post("/complete", completeHandler);            // extra alias
+
+// Idempotent quest XP claim
+router.post("/api/quests/claim", async (req, res) => {
+  try {
+    const wallet = String(req.body?.wallet || req.get("x-wallet") || "").trim();
+    const questId = Number(req.body?.questId);
+    if (!wallet || !Number.isFinite(questId)) {
+      return res.status(400).json({ ok: false, error: "bad-args" });
+    }
+
+    const result = await awardQuest(wallet, questId);
+    if (!result.ok) {
+      return res.status(404).json({ ok: false, error: result.error });
+    }
+
+    const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
+    const xpTotal = row?.xp ?? 0;
+    const lvl = deriveLevel(xpTotal);
+
+    return res.json({
+      ok: true,
+      wallet,
+      questId,
+      xpAwarded: result.xpGain,
+      xpTotal,
+      levelName: lvl.levelName,
+      progress: lvl.progress,
+      alreadyClaimed: result.already ? true : undefined,
+    });
+  } catch (err) {
+    console.error("Quest claim error:", err);
+    res.status(500).json({ ok: false, error: "server-error" });
+  }
+});
 
 export default router;

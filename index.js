@@ -13,7 +13,7 @@ import rateLimit from "express-rate-limit";
 
 import "./passport.js";
 import db from "./db.js";
-import { getLevelInfo } from "./utils/levelUtils.js";
+import { deriveLevel } from "./config/progression.js";
 
 // ✅ Core routes already in your repo
 import questRoutes from "./routes/questRoutes.js";
@@ -154,9 +154,9 @@ app.get("/api/leaderboard", async (_req, res) => {
     );
 
     const ranked = users.map((u, i) => {
-      const level = getLevelInfo(u.xp || 0);
-      const badgeSlug = level?.name
-        ? `level-${level.name.toLowerCase().replace(/\s+/g, "-")}.png`
+      const level = deriveLevel(u.xp || 0);
+      const badgeSlug = level.levelName
+        ? `level-${level.levelName.toLowerCase().replace(/\s+/g, "-")}.png`
         : "unranked.png";
 
       return {
@@ -165,8 +165,8 @@ app.get("/api/leaderboard", async (_req, res) => {
         twitter: u.twitterHandle || null,
         xp: u.xp,
         tier: u.tier || "Free",
-        name: level?.name || "Unranked",
-        progress: level?.progress || 0, // 0..1 (frontend multiplies to %)
+        name: level.levelName || "Unranked",
+        progress: level.progress || 0, // 0..1
         badge: `/images/badges/${badgeSlug}`,
       };
     });

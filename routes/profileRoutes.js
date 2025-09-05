@@ -1,7 +1,7 @@
 // routes/profileRoutes.js
 import express from "express";
 import db from "../db.js";
-import { getLevelInfo } from "../utils/levelUtils.js";
+import { deriveLevel } from "../config/progression.js";
 
 const router = express.Router();
 
@@ -100,11 +100,10 @@ async function buildProfile(wallet) {
   );
 
   // Compute level info/fallbacks
-  const lvl = getLevelInfo(u?.xp ?? 0);
-  const levelName     = u?.levelName     || lvl.name;
-  const levelSymbol   = u?.levelSymbol   || lvl.symbol;
-  const levelProgress = typeof u?.levelProgress === "number" ? u.levelProgress : lvl.progress;
-  const nextXP        = typeof u?.nextXP        === "number" ? u.nextXP        : lvl.nextXP;
+  const lvl = deriveLevel(u?.xp ?? 0);
+  const levelName     = lvl.levelName;
+  const levelProgress = lvl.progress;
+  const nextXP        = lvl.nextNeed;
 
   // Merge links: prefer social_links table, then users.*Handle
   const links = {
@@ -121,7 +120,6 @@ async function buildProfile(wallet) {
       xp: u?.xp ?? 0,
       tier: u?.tier || "Free",
       levelName,
-      levelSymbol,
       levelProgress,
       nextXP,
       twitterHandle:  u?.twitterHandle  || null,
