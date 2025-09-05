@@ -147,12 +147,18 @@ const initDB = async () => {
   await ensureIndex("idx_quests_active",    "ON quests(active)");
   await ensureIndex("idx_completed_wallet", "ON completed_quests(wallet)");
   await ensureIndex("idx_completed_qid",    "ON completed_quests(questId)");
+  await ensureIndex("idx_completed_wallet_qid_time", "ON completed_quests(wallet, questId, timestamp)");
   await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, questId)");
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");
+  await ensureUniqueIndex("uq_referrals_referred", "ON referrals(referred)");
   await ensureIndex("idx_subscriptions_wallet_time", "ON subscriptions(wallet, timestamp)");
   await ensureIndex("idx_tokensale_wallet_time", "ON token_sale_contributions(wallet, created_at)");
+
+  await ensureUniqueIndex("uq_users_wallet", "ON users(wallet)");
+  await ensureIndex("idx_users_twitter", "ON users(twitterHandle)");
+  await ensureIndex("idx_users_levelname", "ON users(levelName)");
 
   // Ensure uniqueness for social_links upsert logic
   await ensureUniqueIndex("uq_social_links_wallet", "ON social_links(wallet)");
