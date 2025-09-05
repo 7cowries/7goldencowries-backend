@@ -86,9 +86,22 @@ async function discordIsMember(accessToken, guildId) {
 
 async function listQuestsHandler(_req, res) {
   try {
-    const rows = await db.all(
-      `SELECT * FROM quests WHERE active=1 ORDER BY sort ASC, createdAt DESC`
-    );
+    const rows = await db.all(`
+      SELECT
+        id,
+        title,
+        COALESCE(description,'') AS description,
+        COALESCE(category,'All') AS category,
+        COALESCE(kind,'link') AS kind,
+        COALESCE(url,'') AS url,
+        COALESCE(xp,0) AS xp,
+        COALESCE(active,1) AS active,
+        COALESCE(sort,0) AS sort,
+        COALESCE(updatedAt, createdAt, 0) AS updatedAt
+      FROM quests
+      WHERE COALESCE(active,1) = 1
+      ORDER BY COALESCE(sort,0) ASC, COALESCE(updatedAt, createdAt, 0) DESC
+    `);
     const quests = rows.map(normalizeQuestRow);
 
     if (String(_req.query.flat || "") === "1") return res.json(quests);

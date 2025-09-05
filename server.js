@@ -7,6 +7,7 @@ import session from "express-session";
 import MemoryStore from "memorystore";
 import morgan from "morgan";
 import db from "./db.js";
+import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
 import metaRoutes from "./routes/metaRoutes.js";
 import questRoutes from "./routes/questRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -90,6 +91,8 @@ app.get("/healthz", async (_req, res) => {
     res.status(500).json({ ok: false, db: "error" });
   }
 });
+
+await ensureQuestsSchema();
 
 app.use(metaRoutes);
 app.use(questRoutes);
