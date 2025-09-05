@@ -91,7 +91,7 @@ router.get("/auth/twitter/callback", (req, res, next) => {
 
         await ensureUser(wallet, { twitterHandle });
         await db.run(
-          "UPDATE users SET twitterHandle = ? WHERE wallet = ?",
+          `UPDATE users SET twitterHandle = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
           twitterHandle,
           wallet
         );
@@ -122,7 +122,7 @@ router.post("/link-twitter", async (req, res) => {
   try {
     await ensureUser(wallet, { twitterHandle: twitter });
     await db.run(
-      "UPDATE users SET twitterHandle = ? WHERE wallet = ?",
+      `UPDATE users SET twitterHandle = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
       twitter,
       wallet
     );
@@ -281,7 +281,7 @@ router.get("/auth/discord/callback", async (req, res) => {
     });
     await db.run(
       `UPDATE users
-         SET discordId = ?, discordHandle = ?, discordAccessToken = ?, discordRefreshToken = ?, discordTokenExpiresAt = ?, discordGuildMember = ?
+         SET discordId = ?, discordHandle = ?, discordAccessToken = ?, discordRefreshToken = ?, discordTokenExpiresAt = ?, discordGuildMember = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE wallet = ?`,
       discordId,
       display,
@@ -363,7 +363,11 @@ router.post("/assign-tier", async (req, res) => {
     return res.status(400).json({ error: "Missing wallet or tier" });
   try {
     await ensureUser(wallet);
-    await db.run("UPDATE users SET tier = ? WHERE wallet = ?", tier, wallet);
+    await db.run(
+      `UPDATE users SET tier = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+      tier,
+      wallet
+    );
     res.json({ message: `Tier '${tier}' assigned to ${wallet}` });
   } catch (err) {
     console.error("❌ Assign tier error:", err);
@@ -378,7 +382,11 @@ router.post("/set-subscription", async (req, res) => {
   try {
     const row = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
     if (!row) return res.status(404).json({ error: "User not found" });
-    await db.run("UPDATE users SET tier = ? WHERE wallet = ?", tier, wallet);
+    await db.run(
+      `UPDATE users SET tier = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+      tier,
+      wallet
+    );
     res.json({ message: `Subscription updated to ${tier}` });
   } catch (err) {
     console.error("❌ Subscription update error:", err);

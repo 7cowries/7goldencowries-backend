@@ -213,7 +213,7 @@ router.get("/auth/telegram/callback", async (req, res) => {
 
     await db.run(
       `UPDATE users
-         SET telegramId = ?, telegramHandle = ?
+         SET telegramId = ?, telegramHandle = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE wallet = ?`,
       tgId,
       tgUsername,

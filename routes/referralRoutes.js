@@ -51,7 +51,10 @@ async function getOrCreateReferralCode(userId) {
   const row = await db.get("SELECT referral_code FROM users WHERE id=?", [userId]);
   if (row?.referral_code) return row.referral_code;
   const code = makeRefCode(userId);
-  await db.run("UPDATE users SET referral_code=? WHERE id=?", [code, userId]);
+  await db.run(
+    `UPDATE users SET referral_code=?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+    [code, userId]
+  );
   return code;
 }
 

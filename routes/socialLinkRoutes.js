@@ -17,7 +17,10 @@ router.post('/api/social/:provider/unlink', async (req, res) => {
   if (!cols) return res.status(400).json({ error: 'Unknown provider' });
 
   const sets = cols.map(c => `${c}=NULL`).join(',');
-  await db.run(`UPDATE users SET ${sets} WHERE id=?`, [userId]);
+  await db.run(
+    `UPDATE users SET ${sets}, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+    [userId]
+  );
 
   res.json({ status: 'unlinked', provider: p });
 });

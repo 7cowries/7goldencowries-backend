@@ -25,54 +25,6 @@ async function ensureIndex(name, sql) {
 async function ensureUniqueIndex(name, sql) {
   await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${name} ${sql};`);
 }
-async function migrateUsersUpdatedAt() {
-  const cols = await db.all(`PRAGMA table_info(users);`);
-  const has = cols.some(c => c.name === "updatedAt");
-  if (!has) {
-    console.log("Migration: rebuild users table with updatedAt");
-    await db.exec("BEGIN");
-    await db.exec(`CREATE TABLE users_new (
-      wallet TEXT PRIMARY KEY,
-      xp INTEGER NOT NULL DEFAULT 0,
-      tier TEXT NOT NULL DEFAULT 'Free',
-      levelName TEXT DEFAULT 'Shellborn',
-      levelSymbol TEXT DEFAULT '🐚',
-      levelProgress REAL DEFAULT 0,
-      nextXP INTEGER DEFAULT 10000,
-      twitterHandle TEXT,
-      telegramId TEXT,
-      telegramHandle TEXT,
-      discordId TEXT,
-      discordHandle TEXT,
-      discordAccessToken TEXT,
-      discordRefreshToken TEXT,
-      discordTokenExpiresAt INTEGER,
-      discordGuildMember INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      telegram_username TEXT,
-      twitter_username TEXT,
-      twitter_id TEXT,
-      discord_username TEXT,
-      discord_id TEXT,
-      referral_code TEXT
-    );`);
-    await db.exec(`INSERT INTO users_new (
-      wallet,xp,tier,levelName,levelSymbol,levelProgress,nextXP,
-      twitterHandle,telegramId,telegramHandle,discordId,discordHandle,
-      discordAccessToken,discordRefreshToken,discordTokenExpiresAt,discordGuildMember,
-      created_at,telegram_username,twitter_username,twitter_id,discord_username,discord_id,referral_code
-    ) SELECT
-      wallet,xp,tier,levelName,levelSymbol,levelProgress,nextXP,
-      twitterHandle,telegramId,telegramHandle,discordId,discordHandle,
-      discordAccessToken,discordRefreshToken,discordTokenExpiresAt,discordGuildMember,
-      created_at,telegram_username,twitter_username,twitter_id,discord_username,discord_id,referral_code
-    FROM users;`);
-    await db.exec("DROP TABLE users;");
-    await db.exec("ALTER TABLE users_new RENAME TO users;");
-    await db.exec("COMMIT");
-  }
-}
 
 const initDB = async () => {
   const DB_FILE = process.env.SQLITE_FILE || "/var/data/7gc.sqlite";
@@ -193,7 +145,6 @@ const initDB = async () => {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
-  await migrateUsersUpdatedAt();
 
   // --- Indices (speed up common lookups) ---
   await ensureIndex("idx_quests_active",    "ON quests(active)");
@@ -253,12 +204,12 @@ const initDB = async () => {
 
   // --- Normalize legacy NULLs to defaults ---
   await db.exec(`
-    UPDATE users SET tier='Free'           WHERE tier IS NULL;
-    UPDATE users SET levelName='Shellborn' WHERE levelName IS NULL;
-    UPDATE users SET levelSymbol='🐚'      WHERE levelSymbol IS NULL;
-    UPDATE users SET levelProgress=0       WHERE levelProgress IS NULL;
-    UPDATE users SET nextXP=10000          WHERE nextXP IS NULL;
-    UPDATE users SET discordGuildMember=0  WHERE discordGuildMember IS NULL;
+    UPDATE users SET tier='Free',           updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE tier IS NULL;
+    UPDATE users SET levelName='Shellborn', updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE levelName IS NULL;
+    UPDATE users SET levelSymbol='🐚',      updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE levelSymbol IS NULL;
+    UPDATE users SET levelProgress=0,       updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE levelProgress IS NULL;
+    UPDATE users SET nextXP=10000,          updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE nextXP IS NULL;
+    UPDATE users SET discordGuildMember=0,  updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE discordGuildMember IS NULL;
     UPDATE subscriptions SET status='active' WHERE status IS NULL;
   `);
 };

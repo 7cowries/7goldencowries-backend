@@ -44,7 +44,8 @@ router.post('/ton-webhook', (req, res) => {
     if (newStatus === 'active') {
       db.prepare(`
         UPDATE users
-        SET tier = (SELECT tier FROM subscriptions WHERE id = ?)
+        SET tier = (SELECT tier FROM subscriptions WHERE id = ?),
+            updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE wallet = ?
       `).run(sub.id, sub.wallet);
     }
