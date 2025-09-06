@@ -9,6 +9,16 @@ import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
 
+// Map quest ids to categories without relying on a DB column
+function categoryFor(id) {
+  const qid = Number(id);
+  if ([1, 2, 3].includes(qid)) return "Social";
+  if (qid === 4) return "Partner";
+  if (qid === 5) return "Onchain";
+  if ([41, 42].includes(qid)) return "Daily";
+  return "All";
+}
+
 const router = express.Router();
 
 const proofLimiter = rateLimit({
@@ -35,7 +45,6 @@ function normalizeQuestRow(row = {}) {
     id: row.id,
     title: row.title || "",
     description: row.description || "",
-    category: row.category || "All",
     type: (row.type || row.kind || "link").toLowerCase(),
     url: row.url || "",
     xp: Number(row.xp || 0),
@@ -114,7 +123,11 @@ async function listQuestsHandler(req, res) {
       WHERE COALESCE(active,1) = 1
       ORDER BY COALESCE(sort,0) ASC, COALESCE(updatedAt, createdAt, 0) DESC
     `);
-    let quests = rows.map(normalizeQuestRow);
+    let quests = rows.map((r) => {
+      const q = normalizeQuestRow(r);
+      q.category = categoryFor(q.id);
+      return q;
+    });
     const wallet = req.session?.wallet;
     if (wallet) {
       const completedRows = await db.all(
@@ -292,45 +305,33 @@ router.get("/api/quests/proof-status", async (req, res) => {
 // Simplified proof submission
 router.post("/api/quests/:questId/proofs", async (req, res) => {
   try {
-    const wallet = req.session?.wallet;
-    if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
-
     const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
+    const wallet = String(req.body?.wallet || req.session?.wallet || "").trim();
+    const vendor = String(req.body?.vendor || "").trim();
     const url = String(req.body?.url || "").trim();
-    if (!questId || !url) return res.status(400).json({ ok: false, error: "bad-args" });
-
-    let parsed;
-    try {
-      parsed = normalizeTweetUrl(url);
-    } catch {
-      return res.status(400).json({ ok: false, code: "invalid_url" });
+    if (!questId || !wallet || !vendor || !url) {
+      return res.status(400).json({ ok: false, error: "bad-args" });
     }
 
     const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
 
     await db.run(
-      `INSERT INTO quest_proofs (wallet, quest_id, vendor, url, tweet_id, createdAt, updatedAt)
-       VALUES (?, ?, 'twitter', ?, ?, datetime('now'), datetime('now'))
-       ON CONFLICT(wallet, quest_id, url) DO UPDATE SET vendor='twitter', tweet_id=excluded.tweet_id, updatedAt=datetime('now')`,
-      wallet,
+      `INSERT INTO quest_proofs (quest_id, wallet, vendor, url, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(wallet, quest_id, url) DO UPDATE SET vendor=excluded.vendor, url=excluded.url, updatedAt=datetime('now')`,
       quest.id,
-      parsed.url,
-      parsed.tweetId
+      wallet,
+      vendor,
+      url
     );
 
     const proof = await db.get(
-      `SELECT id, wallet, quest_id, vendor, url, tweet_id, updatedAt FROM quest_proofs WHERE wallet = ? AND quest_id = ? AND url = ?`,
-      wallet,
-      quest.id,
-      parsed.url
-    );
-    const completed = await db.get(
-      `SELECT 1 FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
+      `SELECT id, wallet, quest_id, vendor, url, updatedAt FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
       wallet,
       quest.id
     );
-    return res.json({ ok: true, proof, canClaim: !completed });
+    return res.json({ ok: true, proof });
   } catch (err) {
     console.error("proof submit error", err);
     res.status(500).json({ ok: false, error: "server-error" });
@@ -362,7 +363,8 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
-    return res.json({ ok: true, alreadyClaimed: result.already ? true : undefined });
+    const userRow = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
+    return res.json({ ok: true, xp: userRow?.xp ?? 0, alreadyClaimed: result.already ? true : undefined });
   } catch (err) {
     console.error("claim error", err);
     res.status(500).json({ ok: false, error: "server-error" });

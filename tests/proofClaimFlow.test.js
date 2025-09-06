@@ -23,10 +23,9 @@ describe('proof then claim flow', () => {
     const url = 'https://twitter.com/alice/status/12345';
     let res = await agent
       .post('/api/quests/qpc/proofs')
-      .send({ url });
+      .send({ url, vendor: 'twitter' });
     expect(res.body.ok).toBe(true);
-    expect(res.body.proof.url).toBe('https://x.com/alice/status/12345');
-    expect(res.body.canClaim).toBe(true);
+    expect(res.body.proof.url).toBe(url);
     res = await agent.post('/api/quests/qpc/claim');
     expect(res.status).toBe(200);
     const u1 = await db.get('SELECT xp FROM users WHERE wallet=?', 'w1');
