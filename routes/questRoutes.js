@@ -5,6 +5,7 @@ import db from "../db.js";
 import { deriveLevel } from "../config/progression.js";
 import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
+import { getTierMultiplier } from "../utils/tier.js";
 
 const router = express.Router();
 
@@ -42,7 +43,6 @@ function normalizeQuestRow(row = {}) {
 
 // Tier rules
 const tierOrder = { Free: 0, "Tier 1": 1, "Tier 2": 2, "Tier 3": 3 };
-const multiplierByTier = { Free: 1.0, "Tier 1": 1.25, "Tier 2": 1.5, "Tier 3": 2.0 };
 
 // Telegram: check membership via getChatMember (supports @username or -100... id)
 async function tgIsMember(chatIdOrUn, userTelegramId) {
@@ -237,7 +237,7 @@ async function completeHandler(req, res) {
 
     // Award XP with multiplier
     const baseXP = Number(quest.xp || 0);
-    const mult = multiplierByTier[userTier] ?? 1;
+    const mult = await getTierMultiplier(db, wallet);
     const xpGain = Math.max(0, Math.round(baseXP * mult));
 
     await db.run(
@@ -348,17 +348,18 @@ router.post("/api/quests/claim", async (req, res) => {
     delCache(`user:${wallet}`);
 
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
-    const xpTotal = row?.xp ?? 0;
-    const lvl = deriveLevel(xpTotal);
+    const newTotalXp = row?.xp ?? 0;
+    const lvl = deriveLevel(newTotalXp);
 
     return res.json({
       ok: true,
-      wallet,
       questId: result.questId,
-      xpAwarded: result.xpGain,
-      xpTotal,
-      levelName: lvl.levelName,
-      progress: lvl.progress,
+      baseXp: result.baseXp,
+      multiplier: result.multiplier,
+      effectiveXp: result.xpGain,
+      newTotalXp,
+      level: lvl.levelName,
+      levelProgress: lvl.progress,
       alreadyClaimed: result.already ? true : undefined,
     });
   } catch (err) {

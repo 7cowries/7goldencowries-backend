@@ -38,5 +38,38 @@ router.post("/quests/toggle", mustAuth, async (req, res) => {
   }
 });
 
+// Update a user's tier
+router.post("/users/tier", mustAuth, async (req, res) => {
+  try {
+    const { wallet, tier } = req.body || {};
+    const allowed = new Set(["free", "tier1", "tier2", "tier3"]);
+    if (!wallet || !tier || !allowed.has(String(tier).toLowerCase())) {
+      return res.status(400).json({ error: "wallet and valid tier required" });
+    }
+    await db.run(
+      `UPDATE users SET tier = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+      tier,
+      wallet
+    );
+    return res.json({ ok: true, wallet, tier });
+  } catch (e) {
+    console.error("update user tier error", e);
+    return res.status(500).json({ error: "internal" });
+  }
+});
+
+// List available tiers and multipliers
+router.get("/tiers", mustAuth, async (_req, res) => {
+  try {
+    const tiers = await db.all(
+      `SELECT tier, multiplier, label FROM tier_multipliers ORDER BY tier`
+    );
+    return res.json({ tiers });
+  } catch (e) {
+    console.error("list tiers error", e);
+    return res.status(500).json({ error: "internal" });
+  }
+});
+
 export default router;
 

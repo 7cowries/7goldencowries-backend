@@ -24,9 +24,14 @@ router.get("/me", async (req, res) => {
     );
 
     const row = await db.get(
-      `SELECT wallet, xp, telegram_username, twitter_username, twitter_id,
-              discord_username, discord_id
-         FROM users WHERE wallet = ?`,
+      `SELECT u.wallet, u.xp, u.tier,
+              COALESCE(m.label, u.tier, 'Free') AS tierLabel,
+              COALESCE(m.multiplier, 1.0) AS multiplier,
+              u.telegram_username, u.twitter_username, u.twitter_id,
+              u.discord_username, u.discord_id
+         FROM users u
+         LEFT JOIN tier_multipliers m ON m.tier = u.tier
+        WHERE u.wallet = ?`,
       wallet
     );
 
@@ -54,6 +59,9 @@ router.get("/me", async (req, res) => {
       xp,
       level: lvl.levelName,
       levelProgress: lvl.progress,
+      tier: row?.tier || 'Free',
+      tierLabel: row?.tierLabel || (row?.tier || 'Free'),
+      multiplier: row?.multiplier ?? 1.0,
       socials,
     });
   } catch (e) {
