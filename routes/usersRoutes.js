@@ -24,13 +24,10 @@ router.get("/me", async (req, res) => {
     );
 
     const row = await db.get(
-      `SELECT u.wallet, u.xp, u.tier,
-              COALESCE(m.label, u.tier, 'Free') AS tierLabel,
-              COALESCE(m.multiplier, 1.0) AS multiplier,
-              u.telegram_username, u.twitter_username, u.twitter_id,
-              u.discord_username, u.discord_id
+      `SELECT u.wallet, u.xp, u.tier, u.levelSymbol, u.nextXP,
+              u.telegramId, u.discordId, u.discordGuildMember, u.referral_code,
+              u.twitterHandle
          FROM users u
-         LEFT JOIN tier_multipliers m ON m.tier = u.tier
         WHERE u.wallet = ?`,
       wallet
     );
@@ -38,31 +35,21 @@ router.get("/me", async (req, res) => {
     const xp = row?.xp || 0;
     const lvl = deriveLevel(xp);
     const socials = {
-      telegram: {
-        connected: !!row?.telegram_username,
-        username: row?.telegram_username || null,
-      },
-      twitter: {
-        connected: !!row?.twitter_username,
-        username: row?.twitter_username || null,
-        id: row?.twitter_id || null,
-      },
-      discord: {
-        connected: !!row?.discord_username,
-        username: row?.discord_username || null,
-        id: row?.discord_id || null,
-      },
+      twitter: row?.twitterHandle || null,
+      telegramId: row?.telegramId || null,
+      discordId: row?.discordId || null,
+      discordGuildMember: !!row?.discordGuildMember,
     };
 
     return res.json({
       wallet,
       xp,
       level: lvl.levelName,
-      levelProgress: lvl.progress,
-      tier: row?.tier || 'Free',
-      tierLabel: row?.tierLabel || (row?.tier || 'Free'),
-      multiplier: row?.multiplier ?? 1.0,
+      levelSymbol: row?.levelSymbol || '🐚',
+      nextXP: lvl.nextNeed,
+      subscriptionTier: row?.tier || 'Free',
       socials,
+      referral_code: row?.referral_code || null,
     });
   } catch (e) {
     console.error("GET /api/users/me error", e);
