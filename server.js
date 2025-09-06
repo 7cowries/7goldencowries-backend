@@ -31,6 +31,7 @@ const logger = winston.createLogger({ level: "info", transports: [new winston.tr
 
 const app = express();
 app.set("trust proxy", 1);
+app.set("etag", false);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
@@ -55,6 +56,10 @@ app.use(cors({ origin: originCheck, credentials: true }));
 app.options("*", cors({ origin: originCheck, credentials: true }));
 
 app.use(express.json());
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 morgan.token("uid", (req) => req.user?.id || req.session?.userId || "anon");
 app.use(morgan(":method :url :status :res[content-length] - :response-time ms uid=:uid"));
 
@@ -141,6 +146,16 @@ app.use("/api/admin/referrals", referralAdminRoutes);
 app.use("/api/session", sessionRoutes);
 app.use("/auth", socialRoutes);
 app.use("/api/admin", adminRoutes);
+
+const FRONTEND_URL =
+  process.env.FRONTEND_URL ||
+  process.env.CLIENT_URL ||
+  "https://7goldencowries.com";
+
+app.get("/referrals/:code", (req, res) => {
+  const { code } = req.params;
+  res.redirect(302, `${FRONTEND_URL}/?ref=${encodeURIComponent(code)}`);
+});
 
 // temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
