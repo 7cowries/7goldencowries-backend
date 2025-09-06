@@ -182,6 +182,7 @@ const initDB = async () => {
   await addColumnIfMissing("users", "discordRefreshToken",   `discordRefreshToken TEXT`);
   await addColumnIfMissing("users", "discordTokenExpiresAt", `discordTokenExpiresAt INTEGER`);
   await addColumnIfMissing("users", "discordGuildMember",    `discordGuildMember INTEGER DEFAULT 0`);
+  await addColumnIfMissing("users", "updatedAt",             `updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP`);
   await addColumnIfMissing("users", "created_at",            `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
   await addColumnIfMissing("users", "telegram_username",     `telegram_username TEXT`);
   await addColumnIfMissing("users", "twitter_username",      `twitter_username TEXT`);
