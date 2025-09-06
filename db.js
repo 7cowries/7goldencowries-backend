@@ -139,6 +139,7 @@ const initDB = async () => {
       quest_id INTEGER,
       vendor TEXT,
       url TEXT,
+      tweet_id TEXT,
       status TEXT,
       details TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
@@ -222,6 +223,7 @@ const initDB = async () => {
   await addColumnIfMissing("quest_proofs", "vendor", "TEXT");
   await addColumnIfMissing("quest_proofs", "updatedAt", "TEXT");
   await addColumnIfMissing("quest_proofs", "quest_id", "INTEGER");
+  await addColumnIfMissing("quest_proofs", "tweet_id", "TEXT");
   try {
     await db.exec(
       "UPDATE quest_proofs SET quest_id = questId WHERE quest_id IS NULL AND questId IS NOT NULL"
