@@ -6,14 +6,24 @@ import path from "path";
 
 let db;
 
-// Add a column if it doesn't exist yet (defSql MUST include the column name)
-async function addColumnIfMissing(table, column, defSql) {
+// Add a column if it doesn't exist yet. "type" may include constraints but
+// any DEFAULT expressions are stripped to keep migrations idempotent.
+async function addColumnIfMissing(table, column, type) {
   const cols = await db.all(`PRAGMA table_info(${table});`);
   const has = cols.some((c) => c.name === column);
   if (!has) {
-    console.log(`Migration: added ${table}.${column}`);
-    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${defSql};`);
+    let t = String(type || "");
+    if (t.toUpperCase().startsWith(column.toUpperCase())) {
+      t = t.slice(column.length).trim();
+    }
+    t = t.replace(/DEFAULT.+$/i, "").trim();
+    if (process.env.NODE_ENV !== 'test') {
+      console.log(`Migration: added ${table}.${column}`);
+    }
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${t};`);
+    return true;
   }
+  return false;
 }
 
 // Create an index if it doesn't exist
@@ -126,13 +136,15 @@ const initDB = async () => {
     CREATE TABLE IF NOT EXISTS quest_proofs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       wallet TEXT NOT NULL,
-      quest_id TEXT NOT NULL,
-      url TEXT NOT NULL,
-      status TEXT DEFAULT 'pending',         -- pending | verified | rejected
+      questId INTEGER,
+      vendor TEXT,
+      url TEXT,
+      status TEXT,
       details TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
-      verifiedAt TEXT,
-      UNIQUE(wallet, quest_id)
+      updatedAt TEXT DEFAULT (datetime('now')),
+      quest_id TEXT, -- legacy column
+      UNIQUE(wallet, questId)
     );
 
     -- Subscriptions (used by daily expiry cron in index.js)
@@ -171,9 +183,9 @@ const initDB = async () => {
   await ensureIndex("idx_completed_qid",    "ON completed_quests(questId)");
   await ensureIndex("idx_completed_wallet_qid_time", "ON completed_quests(wallet, questId, timestamp)");
   await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, questId)");
-  await ensureIndex("idx_proofs_wallet",    "ON quest_proofs(wallet)");
+  await ensureIndex("idx_proofs_wallet_quest", "ON quest_proofs(wallet, questId)");
   await ensureIndex("idx_proofs_status",    "ON quest_proofs(status)");
-  await ensureUniqueIndex("uq_proofs_wallet_quest", "ON quest_proofs(wallet, quest_id)");
+  await ensureUniqueIndex("uq_proofs_wallet_quest", "ON quest_proofs(wallet, questId)");
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");
@@ -189,6 +201,23 @@ const initDB = async () => {
   await ensureUniqueIndex("uq_social_links_wallet", "ON social_links(wallet)");
 
   // --- Backward-compatible column migrations (safe) ---
+  // quests
+  await addColumnIfMissing("quests", "requirement", "TEXT");
+  await db.exec(`
+    UPDATE quests SET requirement='none' WHERE requirement IS NULL;
+    UPDATE quests SET requirement='x_follow'   WHERE title LIKE 'Follow @% on X%';
+    UPDATE quests SET requirement='x_retweet'  WHERE title LIKE 'Retweet%';
+    UPDATE quests SET requirement='x_quote'    WHERE title LIKE 'Quote%';
+  `);
+
+  // quest_proofs legacy additions
+  await addColumnIfMissing("quest_proofs", "vendor", "TEXT");
+  await addColumnIfMissing("quest_proofs", "updatedAt", "TEXT");
+  await addColumnIfMissing("quest_proofs", "questId", "INTEGER");
+  await db.exec(
+    "UPDATE quest_proofs SET questId = quest_id WHERE questId IS NULL AND quest_id IS NOT NULL"
+  );
+
   // users
   await addColumnIfMissing("users", "tier",                  `tier TEXT NOT NULL DEFAULT 'Free'`);
   await addColumnIfMissing("users", "levelName",             `levelName TEXT DEFAULT 'Shellborn'`);

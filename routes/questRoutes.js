@@ -7,7 +7,7 @@ import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
 import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { verifyTwitterProof } from "../lib/twitterProof.js";
+import { parseTweetUrl } from "../lib/twitterProof.js";
 
 const router = express.Router();
 
@@ -180,161 +180,7 @@ async function journalHandler(req, res) {
   }
 }
 
-async function completeHandler(req, res) {
-  try {
-    const wallet = String(req.body?.wallet || "").trim();
-    const questId = String(req.body?.questId || "").trim();
-    if (!wallet || !questId) {
-      return res.status(400).json({ success: false, message: "Missing wallet or questId" });
-    }
-
-    // Prevent double-claim
-    const dup = await db.get(
-      `SELECT 1 FROM completed_quests WHERE wallet = ? AND questId = ?`,
-      wallet,
-      questId
-    );
-    if (dup) {
-      return res.status(400).json({ success: false, message: "Quest already completed" });
-    }
-
-    // Load user & quest
-    const user =
-      (await db.get(
-        `SELECT wallet, xp, tier, twitterHandle, telegramId, telegramHandle, discordId, discordHandle, discordAccessToken
-           FROM users WHERE wallet = ?`,
-        wallet
-      )) || {};
-    if (!user.wallet) return res.status(404).json({ success: false, message: "User not found" });
-
-    const rawQuest = await db.get(`SELECT * FROM quests WHERE id = ?`, questId);
-    if (!rawQuest) return res.status(404).json({ success: false, message: "Quest not found" });
-    const quest = normalizeQuestRow(rawQuest);
-
-    // --- Gating: Tier ---
-    const userTier = user.tier || "Free";
-    const requiredTier = quest.requiredTier || "Free";
-    if ((tierOrder[userTier] ?? 0) < (tierOrder[requiredTier] ?? 0)) {
-      return res.status(403).json({ success: false, message: `This quest requires ${requiredTier}` });
-    }
-
-    // --- Gating: Socials ---
-    const hasX  = !!(user.twitterHandle);
-    const hasTG = !!(user.telegramId || user.telegramHandle);
-    const hasDC = !!(user.discordId || user.discordHandle);
-
-    const tgGroupChat = TG_GROUP_UN ? `@${TG_GROUP_UN}` : TG_GROUP_ID;
-    switch (quest.requirement) {
-      case "x_follow": {
-        if (!(hasX || quest.requiresTwitter)) {
-          return res.status(403).json({ success: false, message: "This quest requires a linked X (Twitter) account." });
-        }
-        // TODO: optional real follow check using user OAuth tokens
-        break;
-      }
-      case "tg_channel_member": {
-        if (!hasTG) return res.status(403).json({ success: false, message: "Link Telegram first." });
-        if (!TG_CHANNEL_UN) return res.status(500).json({ success: false, message: "Telegram channel handle not configured." });
-        const ok = await tgIsMember(`@${TG_CHANNEL_UN}`, user.telegramId);
-        if (!ok) return res.status(403).json({ success: false, message: "Join the official Telegram channel first." });
-        break;
-      }
-      case "tg_bot_linked": {
-        if (!hasTG) return res.status(403).json({ success: false, message: "Start the Telegram bot first." });
-        // (Optional) Add a 'tg_started' flag once your bot sets it.
-        break;
-      }
-      case "tg_group_member": {
-        if (!hasTG) return res.status(403).json({ success: false, message: "Link Telegram first." });
-        if (!tgGroupChat) return res.status(500).json({ success: false, message: "Telegram group not configured." });
-        const ok = await tgIsMember(tgGroupChat, user.telegramId);
-        if (!ok) return res.status(403).json({ success: false, message: "Join the community group first." });
-        break;
-      }
-      case "discord_member": {
-        if (!hasDC) return res.status(403).json({ success: false, message: "Link Discord first." });
-        if (!DISCORD_GUILD_ID) return res.status(500).json({ success: false, message: "Discord guild not configured." });
-        const ok = await discordIsMember(user.discordAccessToken, DISCORD_GUILD_ID);
-        if (!ok) return res.status(403).json({ success: false, message: "Join the Discord server first." });
-        break;
-      }
-      case "none":
-      default:
-        // no gating
-        break;
-    }
-
-    // Award XP with multiplier
-    const baseXP = Number(quest.xp || 0);
-    const mult = await getTierMultiplier(db, wallet);
-    const xpGain = Math.max(0, Math.round(baseXP * mult));
-
-    await db.run(
-      `UPDATE users SET xp = COALESCE(xp, 0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
-      xpGain,
-      wallet
-    );
-
-    // Recompute level
-    const { xp } = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
-    const lvl = deriveLevel(xp);
-    await db.run(
-      `UPDATE users
-         SET levelName = ?, levelProgress = ?, nextXP = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE wallet = ?`,
-      lvl.levelName, lvl.progress, lvl.nextNeed, wallet
-    );
-
-    // Record completion
-    await db.run(
-      `INSERT INTO completed_quests (wallet, questId, timestamp) VALUES (?, ?, ?)`,
-      wallet, questId, new Date().toISOString()
-    );
-
-    // Referral bonus on first completion (+50 XP to referrer)
-    const { count } = await db.get(
-      `SELECT COUNT(*) AS count FROM completed_quests WHERE wallet = ?`,
-      wallet
-    );
-    if (Number(count) === 1) {
-      const ref = await db.get(
-        `SELECT referrer FROM referrals WHERE referred = ? AND completed = 0`,
-        wallet
-      );
-      if (ref?.referrer) {
-        await db.run(`UPDATE referrals SET completed = 1 WHERE referred = ?`, wallet);
-        await db.run(
-          `UPDATE users SET xp = COALESCE(xp, 0) + 50, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
-          ref.referrer
-        );
-
-        const { xp: refXp } = await db.get(
-          `SELECT xp FROM users WHERE wallet = ?`,
-          ref.referrer
-        );
-        const refLvl = deriveLevel(refXp);
-        await db.run(
-          `UPDATE users
-              SET levelName = ?, levelProgress = ?, nextXP = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-            WHERE wallet = ?`,
-          refLvl.levelName, refLvl.progress, refLvl.nextNeed, ref.referrer
-        );
-        console.log(`✨ Referral XP awarded to ${ref.referrer}`);
-      }
-    }
-
-    return res.json({
-      success: true,
-      message: `+${xpGain} XP gained!`,
-      xpGain,
-      baseXP,
-      multiplier: mult,
-    });
-  } catch (err) {
-    console.error("Quest complete error:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
-}
+// legacy complete handler removed (proof-based claim is used instead)
 
 /* ========= Routes (primary + legacy aliases) ========= */
 
@@ -354,51 +200,100 @@ router.get("/journal/:wallet", journalHandler);            // extra alias
 /** Submit a Twitter/X proof URL */
 router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
   try {
-    const wallet = req.session?.wallet || (req.query.wallet ? String(req.query.wallet) : null);
-    if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
+    const sessionWallet = req.session?.wallet || null;
+    const walletParam = String(req.body?.wallet || req.query.wallet || "").trim();
+    const wallet = sessionWallet || walletParam;
+    if (!wallet || (sessionWallet && walletParam && walletParam !== sessionWallet)) {
+      return res.status(403).json({ status: "rejected", reason: "auth-required" });
+    }
     const questId = String(req.body?.questId || "").trim();
-    const url = String(req.body?.url || "").trim();
-    if (!questId || !url) return res.status(400).json({ ok: false, error: "bad-args" });
-    if (!/^https:\/\/(x|twitter)\.com\/[^/]+\/status\/\d+/.test(url)) {
-      return res.status(400).json({ ok: false, error: "invalid-url" });
+    let url = String(req.body?.url || "").trim();
+    if (!questId || !url) return res.status(400).json({ status: "rejected", reason: "bad-args" });
+    url = url.slice(0, 500);
+
+    const quest = await db.get(`SELECT requirement FROM quests WHERE id = ?`, questId);
+    if (!quest) return res.status(404).json({ status: "rejected", reason: "quest-not-found" });
+
+    const requirement = quest.requirement || "none";
+    const vendor = /^https?:\/\/(?:x|twitter)\.com\//i.test(url) ? "x" : "unknown";
+    if (requirement.startsWith("x_") && vendor !== "x") {
+      return res.status(400).json({ status: "rejected", reason: "vendor-mismatch" });
     }
 
+    let parsed = null;
+    let normUrl = url;
+    if (vendor === "x") {
+      parsed = parseTweetUrl(url);
+      if (!parsed) return res.json({ status: "rejected", reason: "invalid-url" });
+      normUrl = `https://x.com/${parsed.username}/status/${parsed.tweetId}`;
+    }
+
+    const f = global.fetch || fetch;
+    let verified = false;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const r = await f(`https://publish.twitter.com/oembed?url=${encodeURIComponent(normUrl)}`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (r.ok) {
+        const data = await r.json();
+        if (typeof data.html === "string" && data.html.includes("twitter-tweet")) verified = true;
+      }
+    } catch {}
+    if (!verified) {
+      try {
+        const r2 = await f(normUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+        if (r2.ok) {
+          const html = await r2.text();
+          if (/twitter-tweet/.test(html) || /<meta[^>]+property="og:type"[^>]+content="article"/i.test(html)) {
+            verified = true;
+          }
+        }
+      } catch {}
+    }
+
+    const status = verified ? "verified" : "rejected";
+    const details = verified && parsed ? JSON.stringify({ tweetId: parsed.tweetId, author: parsed.username }) : null;
+    const reason = verified ? null : "verification-failed";
     await db.run(
-      `INSERT INTO quest_proofs (wallet, quest_id, url, status, createdAt)
-       VALUES (?, ?, ?, 'pending', datetime('now'))
-       ON CONFLICT(wallet, quest_id) DO UPDATE SET url=excluded.url, status='pending', details=NULL, verifiedAt=NULL, createdAt=datetime('now')`,
+      `INSERT INTO quest_proofs (wallet, questId, quest_id, vendor, url, status, details, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+         ON CONFLICT(wallet, questId) DO UPDATE SET url=excluded.url, status=excluded.status, details=excluded.details, vendor=excluded.vendor, updatedAt=datetime('now')`,
       wallet,
       questId,
-      url
-    );
-
-    const user = await db.get(
-      `SELECT wallet, twitter_username, twitterHandle FROM users WHERE wallet = ?`,
-      wallet
-    );
-    const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
-    const vr = await verifyTwitterProof({ user, quest, url });
-    const status = vr.ok ? "verified" : "rejected";
-    const verifiedAt = vr.ok ? new Date().toISOString() : null;
-    await db.run(
-      `UPDATE quest_proofs SET status = ?, details = ?, verifiedAt = ? WHERE wallet = ? AND quest_id = ?`,
+      questId,
+      vendor,
+      normUrl,
       status,
-      vr.details || null,
-      verifiedAt,
-      wallet,
-      questId
+      details || reason
     );
 
-    return res.json({ ok: true, status, message: vr.details || status });
+    console.log("proof", { questId, wallet, vendor, tweetId: parsed?.tweetId, status, reason });
+    return res.json(reason ? { status, reason } : { status });
   } catch (err) {
     console.error("submit-proof error", err);
-    res.status(500).json({ ok: false, error: "server-error" });
+    res.status(500).json({ status: "rejected", reason: "server-error" });
   }
 });
 
-/** Complete a quest */
-router.post("/api/quests/complete", completeHandler); // modern
-router.post("/api/quest/complete", completeHandler);  // legacy
+// Read latest proof status for a wallet+quest
+router.get("/api/quests/proof-status", async (req, res) => {
+  try {
+    const wallet = String(req.query.wallet || "").trim();
+    const questId = String(req.query.questId || "").trim();
+    if (!wallet || !questId) return res.status(400).json({ error: "bad-args" });
+    const row = await db.get(
+      `SELECT status, url, vendor, details, updatedAt FROM quest_proofs WHERE wallet = ? AND questId = ?`,
+      wallet,
+      questId
+    );
+    if (!row) return res.json({ status: "missing" });
+    return res.json(row);
+  } catch (err) {
+    console.error("proof-status error", err);
+    res.status(500).json({ error: "server-error" });
+  }
+});
 
 // Idempotent quest XP claim
 router.post("/api/quests/claim", async (req, res) => {
@@ -426,12 +321,12 @@ router.post("/api/quests/claim", async (req, res) => {
     }
     if (qrow.requirement && qrow.requirement.startsWith("x_")) {
       const proof = await db.get(
-        `SELECT status FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
+        `SELECT status FROM quest_proofs WHERE wallet = ? AND questId = ?`,
         wallet,
         qrow.id
       );
       if (!proof || proof.status !== "verified") {
-        return res.status(400).json({ ok: false, needProof: true });
+        return res.status(403).json({ ok: false, error: "proof-required", message: "Submit a valid proof first." });
       }
     }
 
