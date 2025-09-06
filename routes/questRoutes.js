@@ -117,10 +117,10 @@ async function listQuestsHandler(req, res) {
     const wallet = req.session?.wallet;
     if (wallet) {
       const completedRows = await db.all(
-        `SELECT questId FROM completed_quests WHERE wallet = ?`,
+        `SELECT quest_id FROM completed_quests WHERE wallet = ?`,
         wallet
       );
-      const completedSet = new Set(completedRows.map((r) => String(r.questId)));
+      const completedSet = new Set(completedRows.map((r) => String(r.quest_id)));
       const proofRows = await db.all(
         `SELECT quest_id, status FROM proofs WHERE wallet = ?`,
         wallet
@@ -148,10 +148,10 @@ async function completedHandler(req, res) {
 
   try {
     const rows = await db.all(
-      `SELECT questId FROM completed_quests WHERE wallet = ? ORDER BY timestamp DESC`,
+      `SELECT quest_id FROM completed_quests WHERE wallet = ? ORDER BY timestamp DESC`,
       wallet
     );
-    const completed = rows.map((r) => r.questId);
+    const completed = rows.map((r) => r.quest_id);
     res.json({ completed });
   } catch (err) {
     console.error("Fetch completed error:", err);
@@ -167,7 +167,7 @@ async function journalHandler(req, res) {
     const journal = await db.all(
       `SELECT q.title, q.xp, c.timestamp
          FROM completed_quests c
-         JOIN quests q ON q.id = c.questId
+         JOIN quests q ON q.id = c.quest_id
         WHERE c.wallet = ?
         ORDER BY c.timestamp DESC
         LIMIT 200`,
@@ -206,7 +206,9 @@ router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
     if (!wallet || (sessionWallet && walletParam && walletParam !== sessionWallet)) {
       return res.status(403).json({ status: "rejected", reason: "auth-required" });
     }
-    const questId = String(req.body?.questId || "").trim();
+    const questId = String(
+      req.body?.questId ?? req.body?.quest_id ?? ""
+    ).trim();
     const url = String(req.body?.url || "").trim();
     if (!questId || !url) return res.status(400).json({ status: "rejected", reason: "bad-args" });
 
@@ -269,7 +271,9 @@ router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
 router.get("/api/quests/proof-status", async (req, res) => {
   try {
     const wallet = String(req.query.wallet || "").trim();
-    const questId = String(req.query.questId || "").trim();
+    const questId = String(
+      req.query.questId ?? req.query.quest_id ?? ""
+    ).trim();
     if (!wallet || !questId) return res.status(400).json({ error: "bad-args" });
     const row = await db.get(
       `SELECT status, reason FROM proofs WHERE wallet = ? AND quest_id = ?`,
@@ -289,7 +293,7 @@ router.post("/api/quests/claim", async (req, res) => {
   try {
     const wallet =
       req.session.wallet || (req.query.wallet ? String(req.query.wallet) : null);
-    const questIdentifier = req.body?.questId;
+    const questIdentifier = req.body?.questId ?? req.body?.quest_id;
     if (!wallet) {
       return res
         .status(400)

@@ -59,12 +59,12 @@ async function fetchHistory(wallet) {
     const rows = await db.all(
       `SELECT
           c.rowid AS id,               -- use rowid to be schema-safe
-          c.questId AS questId,
+          c.quest_id AS questId,
           q.title AS title,
           q.xp     AS xp,
           c.timestamp AS completed_at
          FROM completed_quests c
-         JOIN quests q ON q.id = c.questId
+         JOIN quests q ON q.id = c.quest_id
         WHERE c.wallet = ?
         ORDER BY c.timestamp DESC
         LIMIT 50`,

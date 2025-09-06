@@ -18,7 +18,7 @@ r.post('/nonce', async (req, res) => {
     const wallet = req.session?.wallet;
     if (!wallet) return res.status(401).json({ error: 'Login & bind wallet first' });
 
-    const questId = Number(req.body?.questId);
+    const questId = Number(req.body?.questId ?? req.body?.quest_id);
     if (!Number.isFinite(questId)) return res.status(400).json({ error: 'Invalid questId' });
 
     // Optional: ensure quest type is 'x_nonce'
@@ -27,7 +27,7 @@ r.post('/nonce', async (req, res) => {
 
     const nonce = makeNonce();
     await db.run(
-      `INSERT INTO x_nonces (wallet, questId, nonce, status, createdAt)
+      `INSERT INTO x_nonces (wallet, quest_id, nonce, status, createdAt)
        VALUES (?, ?, ?, 'issued', ?)`,
       wallet, questId, nonce, Date.now()
     );
@@ -51,7 +51,7 @@ r.post('/submit', async (req, res) => {
     const wallet = req.session?.wallet;
     if (!wallet) return res.status(401).json({ error: 'Login & bind wallet first' });
 
-    const questId = Number(req.body?.questId);
+    const questId = Number(req.body?.questId ?? req.body?.quest_id);
     const tweetUrl = String(req.body?.tweetUrl || '').trim();
     if (!Number.isFinite(questId)) return res.status(400).json({ error: 'Invalid questId' });
     if (!/^https:\/\/(x|twitter)\.com\/[^/]+\/status\/\d+/.test(tweetUrl))
@@ -59,7 +59,7 @@ r.post('/submit', async (req, res) => {
 
     const last = await db.get(
       `SELECT id, nonce FROM x_nonces
-       WHERE wallet = ? AND questId = ? AND status = 'issued'
+       WHERE wallet = ? AND quest_id = ? AND status = 'issued'
        ORDER BY createdAt DESC LIMIT 1`,
       wallet, questId
     );

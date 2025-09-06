@@ -21,7 +21,7 @@ r.get('/pending', async (req, res) => {
   if (!assertAdmin(req, res)) return;
   try {
     const rows = await db.all(
-      `SELECT id, wallet, questId, nonce, tweetUrl, createdAt, submittedAt
+      `SELECT id, wallet, quest_id AS questId, nonce, tweetUrl, createdAt, submittedAt
          FROM x_nonces
         WHERE status = 'submitted'
         ORDER BY submittedAt ASC
@@ -40,7 +40,7 @@ r.post('/approve', async (req, res) => {
   if (!assertAdmin(req, res)) return;
   try {
     const wallet = String(req.body?.wallet || '').trim();
-    const questId = Number(req.body?.questId);
+    const questId = Number(req.body?.questId ?? req.body?.quest_id);
     const reviewer = req.get('x-admin-user') || 'admin';
 
     if (!wallet || !Number.isFinite(questId))
@@ -49,7 +49,7 @@ r.post('/approve', async (req, res) => {
     // find most recent submitted nonce for this wallet+quest
     const row = await db.get(
       `SELECT id FROM x_nonces
-        WHERE wallet = ? AND questId = ? AND status = 'submitted'
+        WHERE wallet = ? AND quest_id = ? AND status = 'submitted'
         ORDER BY submittedAt DESC LIMIT 1`,
       wallet, questId
     );
@@ -81,13 +81,13 @@ r.post('/reject', async (req, res) => {
   if (!assertAdmin(req, res)) return;
   try {
     const wallet = String(req.body?.wallet || '').trim();
-    const questId = Number(req.body?.questId);
+    const questId = Number(req.body?.questId ?? req.body?.quest_id);
     if (!wallet || !Number.isFinite(questId))
       return res.status(400).json({ error: 'Bad args' });
 
     const row = await db.get(
       `SELECT id FROM x_nonces
-        WHERE wallet = ? AND questId = ? AND status = 'submitted'
+        WHERE wallet = ? AND quest_id = ? AND status = 'submitted'
         ORDER BY submittedAt DESC LIMIT 1`,
       wallet, questId
     );
