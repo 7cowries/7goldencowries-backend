@@ -42,16 +42,22 @@ router.post("/quests/toggle", mustAuth, async (req, res) => {
 router.post("/users/tier", mustAuth, async (req, res) => {
   try {
     const { wallet, tier } = req.body || {};
-    const allowed = new Set(["free", "tier1", "tier2", "tier3"]);
-    if (!wallet || !tier || !allowed.has(String(tier).toLowerCase())) {
+    const map = {
+      free: "Free",
+      tier1: "Tier 1",
+      tier2: "Tier 2",
+      tier3: "Tier 3",
+    };
+    const normalized = map[String(tier).toLowerCase()];
+    if (!wallet || !normalized) {
       return res.status(400).json({ error: "wallet and valid tier required" });
     }
     await db.run(
       `UPDATE users SET tier = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
-      tier,
+      normalized,
       wallet
     );
-    return res.json({ ok: true, wallet, tier });
+    return res.json({ ok: true, wallet, tier: normalized });
   } catch (e) {
     console.error("update user tier error", e);
     return res.status(500).json({ error: "internal" });
