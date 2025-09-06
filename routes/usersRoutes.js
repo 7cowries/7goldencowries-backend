@@ -14,7 +14,7 @@ router.get("/me", async (req, res) => {
   try {
     const wallet =
       getSessionWallet(req) || (req.query.wallet ? String(req.query.wallet) : null);
-    if (!wallet) return res.status(400).json({ error: "Missing wallet address" });
+    if (!wallet) return res.json({ anon: true });
 
     // ensure user row exists
     await db.run(
