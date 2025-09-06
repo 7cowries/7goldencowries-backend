@@ -23,6 +23,7 @@ import usersRoutes from "./routes/usersRoutes.js";
 import socialRoutes from "./routes/socialRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import runSqliteMigrations from "./db/migrateProofs.js";
+import proofRoutes from "./routes/proofRoutes.js";
 
 dotenv.config();
 const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
@@ -130,6 +131,7 @@ await ensureSchema();
 
 app.use(metaRoutes);
 app.use(questRoutes);
+app.use("/api/proofs", proofRoutes);
 app.use("/api/users", usersRoutes);
 app.use(userRoutes);
 app.use("/api/profile", profileRoutes);
