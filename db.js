@@ -145,7 +145,7 @@ const initDB = async () => {
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       questId TEXT, -- legacy column
-      UNIQUE(wallet, quest_id)
+      UNIQUE(wallet, quest_id, url)
     );
 
     -- Subscriptions (used by daily expiry cron in index.js)
@@ -186,7 +186,7 @@ const initDB = async () => {
   await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, quest_id)");
   await ensureIndex("idx_proofs_wallet_quest", "ON quest_proofs(wallet, quest_id)");
   await ensureIndex("idx_proofs_status",    "ON quest_proofs(status)");
-  await ensureUniqueIndex("uq_proofs_wallet_quest", "ON quest_proofs(wallet, quest_id)");
+  await ensureUniqueIndex("uq_proofs_wallet_quest_url", "ON quest_proofs(wallet, quest_id, url)");
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");
@@ -229,6 +229,37 @@ const initDB = async () => {
       "UPDATE quest_proofs SET quest_id = questId WHERE quest_id IS NULL AND questId IS NOT NULL"
     );
   } catch {}
+
+  // ensure quest_proofs has new unique constraint on (wallet, quest_id, url)
+  try {
+    const indexes = await db.all("PRAGMA index_list('quest_proofs')");
+    const hasNewIndex = indexes.some((i) => i.name === 'uq_proofs_wallet_quest_url');
+    if (!hasNewIndex) {
+      await db.exec(`
+        ALTER TABLE quest_proofs RENAME TO quest_proofs_old;
+        CREATE TABLE quest_proofs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          wallet TEXT NOT NULL,
+          quest_id INTEGER,
+          vendor TEXT,
+          url TEXT,
+          tweet_id TEXT,
+          status TEXT,
+          details TEXT,
+          createdAt TEXT DEFAULT (datetime('now')),
+          updatedAt TEXT DEFAULT (datetime('now')),
+          questId TEXT,
+          UNIQUE(wallet, quest_id, url)
+        );
+        INSERT INTO quest_proofs (id, wallet, quest_id, vendor, url, tweet_id, status, details, createdAt, updatedAt, questId)
+        SELECT id, wallet, quest_id, vendor, url, tweet_id, status, details, createdAt, updatedAt, questId FROM quest_proofs_old;
+        DROP TABLE quest_proofs_old;
+      `);
+      await ensureUniqueIndex('uq_proofs_wallet_quest_url', 'ON quest_proofs(wallet, quest_id, url)');
+    }
+  } catch (e) {
+    console.error('quest_proofs migration failed', e);
+  }
 
   // users
   await addColumnIfMissing("users", "tier",                  `tier TEXT NOT NULL DEFAULT 'Free'`);

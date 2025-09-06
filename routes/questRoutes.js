@@ -19,8 +19,6 @@ const proofLimiter = rateLimit({
   keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
 });
 
-// simple twitter url regex
-const TWITTER_STATUS_RE = /^https:\/\/(x|twitter)\.com\/[^/]+\/status\/(\d+)/i;
 
 /* ========= ENV used for verification ========= */
 const TGBOT = process.env.TELEGRAM_BOT_TOKEN;
@@ -298,15 +296,14 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
     if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
 
     const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
-    const vendor = String(req.body?.vendor || "").trim() || null;
     const url = String(req.body?.url || "").trim();
     if (!questId || !url) return res.status(400).json({ ok: false, error: "bad-args" });
 
-    let tweetId = null;
-    if (vendor === "twitter") {
-      const m = TWITTER_STATUS_RE.exec(url);
-      if (!m) return res.status(400).json({ ok: false, error: "invalid-url" });
-      tweetId = m[2];
+    let parsed;
+    try {
+      parsed = normalizeTweetUrl(url);
+    } catch {
+      return res.status(400).json({ ok: false, code: "invalid_url" });
     }
 
     const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
@@ -314,19 +311,19 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
 
     await db.run(
       `INSERT INTO quest_proofs (wallet, quest_id, vendor, url, tweet_id, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-       ON CONFLICT(wallet, quest_id) DO UPDATE SET vendor=excluded.vendor, url=excluded.url, tweet_id=excluded.tweet_id, updatedAt=datetime('now')`,
+       VALUES (?, ?, 'twitter', ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(wallet, quest_id, url) DO UPDATE SET vendor='twitter', tweet_id=excluded.tweet_id, updatedAt=datetime('now')`,
       wallet,
       quest.id,
-      vendor,
-      url,
-      tweetId
+      parsed.url,
+      parsed.tweetId
     );
 
     const proof = await db.get(
-      `SELECT id, wallet, quest_id, vendor, url, tweet_id, updatedAt FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
+      `SELECT id, wallet, quest_id, vendor, url, tweet_id, updatedAt FROM quest_proofs WHERE wallet = ? AND quest_id = ? AND url = ?`,
       wallet,
-      quest.id
+      quest.id,
+      parsed.url
     );
     const completed = await db.get(
       `SELECT 1 FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
