@@ -178,6 +178,12 @@ const initDB = async () => {
     );
   `);
 
+  // Ensure critical columns exist before creating indices (for older DBs)
+  await addColumnIfMissing("completed_quests", "timestamp", "TEXT");
+  await db.exec("UPDATE completed_quests SET timestamp = COALESCE(timestamp, datetime('now'))");
+  await addColumnIfMissing("subscriptions", "timestamp", "TEXT");
+  await db.exec("UPDATE subscriptions SET timestamp = COALESCE(timestamp, datetime('now'))");
+
   // --- Indices (speed up common lookups) ---
   await ensureIndex("idx_quests_active",    "ON quests(active)");
   await ensureIndex("idx_completed_wallet", "ON completed_quests(wallet)");
