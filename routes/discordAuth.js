@@ -66,14 +66,15 @@ router.get("/discord/callback", async (req, res) => {
     const discordHandle = me.username ? `${me.username}${discriminator}` : "";
 
     await db.run(
-      `INSERT INTO users (wallet, discordId, discordHandle, discordAccessToken, discordRefreshToken, discordTokenExpiresAt)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO users (wallet, discordId, discordHandle, discordAccessToken, discordRefreshToken, discordTokenExpiresAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        ON CONFLICT(wallet) DO UPDATE SET
          discordId=excluded.discordId,
          discordHandle=excluded.discordHandle,
          discordAccessToken=excluded.discordAccessToken,
          discordRefreshToken=excluded.discordRefreshToken,
-         discordTokenExpiresAt=excluded.discordTokenExpiresAt`,
+         discordTokenExpiresAt=excluded.discordTokenExpiresAt,
+         updatedAt=excluded.updatedAt`,
       wallet, discordId, discordHandle, accessToken, refreshToken, tokenExpiresAt
     );
 

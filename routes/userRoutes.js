@@ -18,7 +18,7 @@ async function fetchUser(wallet, res) {
 
     if (!user) {
       await db.run(
-        `INSERT INTO users (wallet, xp, tier, levelName, levelProgress)\n         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO users (wallet, xp, tier, levelName, levelProgress, updatedAt)\n         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
         wallet, 0, "Free", "Shellborn", 0
       );
       user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);

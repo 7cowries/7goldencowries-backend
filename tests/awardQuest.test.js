@@ -6,8 +6,8 @@ beforeAll(async () => {
   ({ awardQuest } = await import('../lib/quests.js'));
   try { await db.exec("ALTER TABLE quests ADD COLUMN code TEXT;"); } catch {}
   await db.run("INSERT INTO quests (id, code, title, xp, active) VALUES ('q1','Q1','Test Quest',10,1)");
-  await db.run("INSERT INTO users (wallet) VALUES ('wallet1')");
-  await db.run("INSERT INTO users (wallet) VALUES ('wallet2')");
+  await db.run("INSERT INTO users (wallet, updatedAt) VALUES ('wallet1', CURRENT_TIMESTAMP)");
+  await db.run("INSERT INTO users (wallet, updatedAt) VALUES ('wallet2', CURRENT_TIMESTAMP)");
 });
 
 afterAll(async () => {
