@@ -96,9 +96,9 @@ const initDB = async () => {
     CREATE TABLE IF NOT EXISTS completed_quests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       wallet TEXT NOT NULL,
-      questId TEXT NOT NULL,
+      quest_id TEXT NOT NULL,
       timestamp TEXT NOT NULL,
-      UNIQUE(wallet, questId)
+      UNIQUE(wallet, quest_id)
     );
 
     /* Referrals:
@@ -136,15 +136,15 @@ const initDB = async () => {
     CREATE TABLE IF NOT EXISTS quest_proofs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       wallet TEXT NOT NULL,
-      questId INTEGER,
+      quest_id INTEGER,
       vendor TEXT,
       url TEXT,
       status TEXT,
       details TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
-      quest_id TEXT, -- legacy column
-      UNIQUE(wallet, questId)
+      questId TEXT, -- legacy column
+      UNIQUE(wallet, quest_id)
     );
 
     -- Subscriptions (used by daily expiry cron in index.js)
@@ -180,12 +180,12 @@ const initDB = async () => {
   // --- Indices (speed up common lookups) ---
   await ensureIndex("idx_quests_active",    "ON quests(active)");
   await ensureIndex("idx_completed_wallet", "ON completed_quests(wallet)");
-  await ensureIndex("idx_completed_qid",    "ON completed_quests(questId)");
-  await ensureIndex("idx_completed_wallet_qid_time", "ON completed_quests(wallet, questId, timestamp)");
-  await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, questId)");
-  await ensureIndex("idx_proofs_wallet_quest", "ON quest_proofs(wallet, questId)");
+  await ensureIndex("idx_completed_qid",    "ON completed_quests(quest_id)");
+  await ensureIndex("idx_completed_wallet_qid_time", "ON completed_quests(wallet, quest_id, timestamp)");
+  await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, quest_id)");
+  await ensureIndex("idx_proofs_wallet_quest", "ON quest_proofs(wallet, quest_id)");
   await ensureIndex("idx_proofs_status",    "ON quest_proofs(status)");
-  await ensureUniqueIndex("uq_proofs_wallet_quest", "ON quest_proofs(wallet, questId)");
+  await ensureUniqueIndex("uq_proofs_wallet_quest", "ON quest_proofs(wallet, quest_id)");
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");
@@ -210,13 +210,23 @@ const initDB = async () => {
     UPDATE quests SET requirement='x_quote'    WHERE title LIKE 'Quote%';
   `);
 
+  // completed_quests legacy additions
+  await addColumnIfMissing("completed_quests", "quest_id", "TEXT");
+  try {
+    await db.exec(
+      "UPDATE completed_quests SET quest_id = questId WHERE quest_id IS NULL AND questId IS NOT NULL"
+    );
+  } catch {}
+
   // quest_proofs legacy additions
   await addColumnIfMissing("quest_proofs", "vendor", "TEXT");
   await addColumnIfMissing("quest_proofs", "updatedAt", "TEXT");
-  await addColumnIfMissing("quest_proofs", "questId", "INTEGER");
-  await db.exec(
-    "UPDATE quest_proofs SET questId = quest_id WHERE questId IS NULL AND quest_id IS NOT NULL"
-  );
+  await addColumnIfMissing("quest_proofs", "quest_id", "INTEGER");
+  try {
+    await db.exec(
+      "UPDATE quest_proofs SET quest_id = questId WHERE quest_id IS NULL AND questId IS NOT NULL"
+    );
+  } catch {}
 
   // users
   await addColumnIfMissing("users", "tier",                  `tier TEXT NOT NULL DEFAULT 'Free'`);

@@ -318,7 +318,9 @@ router.post("/api/quest/complete", async (req, res) => {
   if (!DEV_COMPLETE_ENABLED) {
     return res.status(403).json({ error: "Disabled on this deployment" });
   }
-  const { wallet, questId, title, xp } = req.body || {};
+  const wallet = req.body?.wallet;
+  const questId = req.body?.questId ?? req.body?.quest_id;
+  const { title, xp } = req.body || {};
   if (!wallet || !questId || xp == null) {
     return res.status(400).json({ error: "Missing wallet, questId, or xp" });
   }
@@ -344,7 +346,7 @@ router.post("/api/quest/complete", async (req, res) => {
       xpInt
     );
     await db.run(
-      "INSERT OR IGNORE INTO completed_quests (wallet, questId, timestamp) VALUES (?, ?, ?)",
+      "INSERT OR IGNORE INTO completed_quests (wallet, quest_id, timestamp) VALUES (?, ?, ?)",
       wallet,
       questId,
       new Date().toISOString()

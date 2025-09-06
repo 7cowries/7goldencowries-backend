@@ -84,9 +84,9 @@ app.get('/api/profile', async (req, res) => {
     };
 
     const history = await db.all(
-      `SELECT c.questId AS id, q.title, q.xp, c.timestamp
+      `SELECT c.quest_id AS id, q.title, q.xp, c.timestamp
          FROM completed_quests c
-         JOIN quests q ON q.id = c.questId
+         JOIN quests q ON q.id = c.quest_id
         WHERE c.wallet = ?
         ORDER BY c.timestamp DESC
         LIMIT 200`,
