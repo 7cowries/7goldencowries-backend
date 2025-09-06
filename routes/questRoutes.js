@@ -8,6 +8,7 @@ import { awardQuest } from "../lib/quests.js";
 import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
+import { parseTweetId, isValidTweetUrl } from "../utils/tweet.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -313,25 +314,44 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
       return res.status(400).json({ ok: false, error: "bad-args" });
     }
 
-    const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
+    const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
 
-    await db.run(
-      `INSERT INTO quest_proofs (quest_id, wallet, vendor, url, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-       ON CONFLICT(wallet, quest_id, url) DO UPDATE SET vendor=excluded.vendor, url=excluded.url, updatedAt=datetime('now')`,
-      quest.id,
-      wallet,
-      vendor,
-      url
-    );
+    let tweetId = null;
+    let status = "pending";
+    if (quest.requirement === "tweet_link" && isValidTweetUrl(url)) {
+      tweetId = parseTweetId(url);
+      status = "approved";
+    }
 
-    const proof = await db.get(
-      `SELECT id, wallet, quest_id, vendor, url, updatedAt FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
+    const existing = await db.get(
+      `SELECT id FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
       wallet,
       quest.id
     );
-    return res.json({ ok: true, proof });
+    if (existing) {
+      await db.run(
+        `UPDATE quest_proofs SET vendor=?, url=?, tweet_id=?, status=?, updatedAt=datetime('now') WHERE id=?`,
+        vendor,
+        url,
+        tweetId,
+        status,
+        existing.id
+      );
+    } else {
+      await db.run(
+        `INSERT INTO quest_proofs (quest_id, wallet, vendor, url, tweet_id, status, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        quest.id,
+        wallet,
+        vendor,
+        url,
+        tweetId,
+        status
+      );
+    }
+
+    return res.json({ ok: true, proofStatus: status });
   } catch (err) {
     console.error("proof submit error", err);
     res.status(500).json({ ok: false, error: "server-error" });

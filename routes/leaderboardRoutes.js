@@ -1,7 +1,6 @@
 // routes/leaderboardRoutes.js
 import express from "express";
 import db from "../db.js";
-import { deriveLevel } from "../config/progression.js";
 
 const router = express.Router();
 
@@ -13,7 +12,6 @@ const router = express.Router();
  */
 router.get("/", async (req, res) => {
   try {
-    // sanitize pagination
     const maxLimit = 100;
     const limit = Math.min(
       maxLimit,
@@ -22,39 +20,28 @@ router.get("/", async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset ?? "0", 10) || 0);
 
     const rows = await db.all(
-      `
-      SELECT
-        u.wallet,
-        COALESCE(u.xp, 0)                      AS xp,
-        COALESCE(u.tier, 'Free')               AS tier,
-        COALESCE(sl.twitter, u.twitterHandle)  AS twitter
-      FROM users u
-      LEFT JOIN social_links sl ON sl.wallet = u.wallet
-      WHERE u.wallet IS NOT NULL
-      ORDER BY COALESCE(u.xp, 0) DESC, u.wallet ASC
-      LIMIT ? OFFSET ?
-      `,
+      `SELECT u.wallet, COALESCE(u.xp,0) AS xp
+         FROM users u
+        WHERE u.wallet IS NOT NULL
+        ORDER BY COALESCE(u.xp,0) DESC, u.wallet ASC
+        LIMIT ? OFFSET ?`,
       limit,
       offset
     );
 
-    const top = (rows || []).map((r, i) => {
-      const lvl = deriveLevel(Number(r.xp ?? 0));
-      return {
-        rank: offset + i + 1,
-        wallet: r.wallet || "",
-        xp: Number(r.xp ?? 0),
-        tier: r.tier || "Free",
-        name: lvl.levelName,
-        progress: Math.round(lvl.progress * 100),
-        twitter: r.twitter || null,
-      };
-    });
+    const totalRow = await db.get(
+      `SELECT COUNT(*) AS c FROM users WHERE wallet IS NOT NULL`
+    );
+    const entries = (rows || []).map((r, i) => ({
+      wallet: r.wallet || "",
+      xp: Number(r.xp ?? 0),
+      rank: offset + i + 1,
+    }));
 
-    res.json({ top });
+    res.json({ entries, total: totalRow?.c ?? 0 });
   } catch (err) {
     console.error("Leaderboard error:", err);
-    res.status(500).json({ top: [] });
+    res.status(500).json({ entries: [], total: 0 });
   }
 });
 

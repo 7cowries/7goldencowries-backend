@@ -44,18 +44,25 @@ describe('API routes', () => {
 
   test('leaderboard shows users', async () => {
     const res = await request(app).get('/api/leaderboard');
-    expect(res.body.top[0].wallet).toBe('w1');
+    expect(res.body.entries[0].wallet).toBe('w1');
+    expect(res.body.total).toBeGreaterThan(0);
   });
 
-  test('/api/users/me exposes tier and multiplier', async () => {
+  test('/api/users/me exposes subscription tier and socials', async () => {
     const res = await request(app).get('/api/users/me?wallet=w1');
-    expect(res.body.tier).toBe('tier1');
-    expect(res.body.tierLabel).toBe('Tier 1');
-    expect(res.body.multiplier).toBeCloseTo(1.1);
+    expect(res.body.subscriptionTier).toBe('tier1');
+    expect(res.body.level).toBeDefined();
+    expect(res.body.nextXP).toBeGreaterThan(0);
+    expect(res.body.socials).toBeDefined();
   });
 
   test('/api/users/me returns anon when wallet missing', async () => {
     const res = await request(app).get('/api/users/me');
     expect(res.body.anon).toBe(true);
+  });
+
+  test('health db endpoint works', async () => {
+    const res = await request(app).get('/api/health/db');
+    expect(res.body.ok).toBe(true);
   });
 });

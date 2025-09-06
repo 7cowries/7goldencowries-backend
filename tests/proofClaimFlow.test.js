@@ -25,7 +25,7 @@ describe('proof then claim flow', () => {
       .post('/api/quests/qpc/proofs')
       .send({ url, vendor: 'twitter' });
     expect(res.body.ok).toBe(true);
-    expect(res.body.proof.url).toBe(url);
+    expect(res.body.proofStatus).toBe('pending');
     res = await agent.post('/api/quests/qpc/claim');
     expect(res.status).toBe(200);
     const u1 = await db.get('SELECT xp FROM users WHERE wallet=?', 'w1');
