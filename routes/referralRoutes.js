@@ -90,9 +90,10 @@ publicRouter.post("/accept", requireAuth, async (req, res) => {
     if (exists) return res.json({ status: "already_linked" });
 
     // link
+    const now = new Date().toISOString();
     await db.run(
-      "INSERT INTO referrals (referrer_user_id, referee_user_id, code) VALUES (?,?,?)",
-      [referrer.id, refereeId, code]
+      "INSERT INTO referrals (referrer_user_id, referee_user_id, code, created_at) VALUES (?,?,?,?)",
+      [referrer.id, refereeId, code, now]
     );
 
     res.json({ status: "linked", referrer_user_id: referrer.id, referee_user_id: refereeId });
@@ -173,9 +174,10 @@ adminRouter.post("/create", requireAdmin, async (req, res) => {
     const exists = await db.get("SELECT 1 FROM referrals WHERE referee_user_id=?", [referee_id]);
     if (exists) return res.json({ ok: true, status: "already_linked" });
 
+    const now = new Date().toISOString();
     await db.run(
-      "INSERT INTO referrals (referrer_user_id, referee_user_id, code) VALUES (?,?,?)",
-      [referrer_id, referee_id, code]
+      "INSERT INTO referrals (referrer_user_id, referee_user_id, code, created_at) VALUES (?,?,?,?)",
+      [referrer_id, referee_id, code, now]
     );
 
     res.json({ ok: true, status: "linked", referrer_user_id: referrer_id, referee_user_id: referee_id, code });
