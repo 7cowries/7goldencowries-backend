@@ -66,7 +66,7 @@ const initDB = async () => {
       discordTokenExpiresAt INTEGER,
       discordGuildMember INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      updatedAt DATETIME
     );
 
     CREATE TABLE IF NOT EXISTS quests (
@@ -182,7 +182,10 @@ const initDB = async () => {
   await addColumnIfMissing("users", "discordRefreshToken",   `discordRefreshToken TEXT`);
   await addColumnIfMissing("users", "discordTokenExpiresAt", `discordTokenExpiresAt INTEGER`);
   await addColumnIfMissing("users", "discordGuildMember",    `discordGuildMember INTEGER DEFAULT 0`);
-  await addColumnIfMissing("users", "updatedAt",             `updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP`);
+  await addColumnIfMissing("users", "updatedAt",             `updatedAt DATETIME`);
+  await db.exec(
+    "UPDATE users SET updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE updatedAt IS NULL"
+  );
   await addColumnIfMissing("users", "created_at",            `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
   await addColumnIfMissing("users", "telegram_username",     `telegram_username TEXT`);
   await addColumnIfMissing("users", "twitter_username",      `twitter_username TEXT`);

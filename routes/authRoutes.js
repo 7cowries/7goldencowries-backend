@@ -33,9 +33,10 @@ async function ensureUser(wallet, extra = {}) {
       `INSERT INTO users (
          wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP,
          twitterHandle, telegramId, telegramHandle,
-         discordId, discordHandle, discordGuildMember
+         discordId, discordHandle, discordGuildMember,
+         updatedAt
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
       wallet,
       extra.xp ?? 0,
       extra.tier ?? "Free",

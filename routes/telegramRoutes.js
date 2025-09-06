@@ -83,8 +83,8 @@ async function ensureUser(wallet) {
   const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
   if (!row) {
     await db.run(
-      `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP)
-       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000)`,
+      `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
       wallet
     );
   }
