@@ -144,6 +144,12 @@ const initDB = async () => {
       tx_hash TEXT,                        -- optional onchain tx id
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS tier_multipliers (
+      tier TEXT PRIMARY KEY,
+      multiplier REAL DEFAULT 1.0,
+      label TEXT
+    );
   `);
 
   // --- Indices (speed up common lookups) ---
