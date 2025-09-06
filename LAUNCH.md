@@ -4,7 +4,7 @@
 
 - NODE_ENV=production
 - SESSION_SECRET
-- SQLITE_FILE=/var/data/7gc.sqlite
+- DATABASE_URL=/var/data/7go.sqlite
 - SESSIONS_DIR=/var/data
 - CORS_ORIGINS=https://7goldencowries.com,https://www.7goldencowries.com,https://7goldencowries-frontend.vercel.app
 

@@ -1,7 +1,7 @@
 let db, awardQuest;
 
 beforeAll(async () => {
-  process.env.SQLITE_FILE = ':memory:';
+  process.env.DATABASE_URL = ':memory:';
   ({ default: db } = await import('../db.js'));
   ({ awardQuest } = await import('../lib/quests.js'));
   try { await db.exec("ALTER TABLE quests ADD COLUMN code TEXT;"); } catch {}

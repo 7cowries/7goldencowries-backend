@@ -3,7 +3,7 @@ import request from 'supertest';
 let app, db;
 
 beforeAll(async () => {
-  process.env.SQLITE_FILE = ':memory:';
+  process.env.DATABASE_URL = ':memory:';
   process.env.NODE_ENV = 'test';
   process.env.TWITTER_CONSUMER_KEY = 'x';
   process.env.TWITTER_CONSUMER_SECRET = 'y';

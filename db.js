@@ -37,7 +37,7 @@ async function ensureUniqueIndex(name, sql) {
 }
 
 const initDB = async () => {
-  const DB_FILE = process.env.SQLITE_FILE || "/var/data/7gc.sqlite";
+  const DB_FILE = process.env.DATABASE_URL || "/var/data/7go.sqlite";
   try {
     fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
   } catch (e) {

@@ -4,7 +4,7 @@ import { jest } from '@jest/globals';
 let app, db, proofToken, mockFetch;
 
 beforeAll(async () => {
-  process.env.SQLITE_FILE = ':memory:';
+  process.env.DATABASE_URL = ':memory:';
   process.env.NODE_ENV = 'test';
   process.env.PROOF_SECRET = 'secret';
   process.env.TWITTER_CONSUMER_KEY = 'x';
