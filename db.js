@@ -65,7 +65,7 @@ const initDB = async () => {
       discordRefreshToken TEXT,
       discordTokenExpiresAt INTEGER,
       discordGuildMember INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME,
       updatedAt DATETIME
     );
 
@@ -100,7 +100,7 @@ const initDB = async () => {
       referrer TEXT NOT NULL,
       referred TEXT NOT NULL,
       completed INTEGER NOT NULL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME
     );
 
     -- Social links per wallet (used by Profile page)
@@ -109,7 +109,7 @@ const initDB = async () => {
       twitter TEXT,
       telegram TEXT,
       discord TEXT,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      updated_at DATETIME
     );
 
     -- Quest history feed for Profile page (optional convenience log)
@@ -186,7 +186,10 @@ const initDB = async () => {
   await db.exec(
     "UPDATE users SET updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE updatedAt IS NULL"
   );
-  await addColumnIfMissing("users", "created_at",            `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+  await addColumnIfMissing("users", "created_at",            `created_at DATETIME`);
+  await db.exec(
+    "UPDATE users SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE created_at IS NULL"
+  );
   await addColumnIfMissing("users", "telegram_username",     `telegram_username TEXT`);
   await addColumnIfMissing("users", "twitter_username",      `twitter_username TEXT`);
   await addColumnIfMissing("users", "twitter_id",            `twitter_id TEXT`);
@@ -195,8 +198,14 @@ const initDB = async () => {
 
 
   // social_links/referrals extras
-  await addColumnIfMissing("social_links", "updated_at",     `updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-  await addColumnIfMissing("referrals",    "created_at",     `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+  await addColumnIfMissing("social_links", "updated_at",     `updated_at DATETIME`);
+  await db.exec(
+    "UPDATE social_links SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE updated_at IS NULL"
+  );
+  await addColumnIfMissing("referrals",    "created_at",     `created_at DATETIME`);
+  await db.exec(
+    "UPDATE referrals SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE created_at IS NULL"
+  );
 
   // subscriptions (ensure any missing columns on older DBs)
   await addColumnIfMissing("subscriptions", "tonAmount",     `tonAmount REAL DEFAULT 0`);
