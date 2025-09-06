@@ -11,6 +11,7 @@ import db from './db.js';
 import discordAuth from './routes/discordAuth.js';
 import questRoutes from './routes/questRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import proofRoutes from './routes/proofRoutes.js';
 
 const app = express();
 
@@ -202,6 +203,7 @@ app.get('/api/profile', async (req, res) => {
 /* ---------- Routes ---------- */
 app.use('/auth', discordAuth);
 app.use('/api/quest', questRoutes);
+app.use('/api/proofs', proofRoutes);
 app.use('/api/admin', adminRoutes); // seeding utilities
 
 /* ---------- Start ---------- */
