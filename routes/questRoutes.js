@@ -360,25 +360,12 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
       if (!proof) return res.status(403).json({ ok: false, error: "proof-required" });
     }
 
-    const existing = await db.get(
-      `SELECT id FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
-      wallet,
-      quest.id
-    );
-    if (existing) return res.json({ ok: true, alreadyClaimed: true });
-
-    await db.run(
-      `INSERT INTO completed_quests (wallet, quest_id, timestamp) VALUES (?, ?, ?)`,
-      wallet,
-      quest.id,
-      Date.now()
-    );
-    await db.run(
-      "UPDATE users SET xp = COALESCE(xp, 0) + ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?",
-      quest.xp || 0,
-      wallet
-    );
-    return res.json({ ok: true });
+    const result = await awardQuest(wallet, quest.id);
+    delCache(`user:${wallet}`);
+    if (!result.ok) {
+      return res.status(404).json({ ok: false, error: result.error });
+    }
+    return res.json({ ok: true, alreadyClaimed: result.already ? true : undefined });
   } catch (err) {
     console.error("claim error", err);
     res.status(500).json({ ok: false, error: "server-error" });
