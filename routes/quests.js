@@ -1,6 +1,7 @@
 // routes/quests.js
 import express from 'express';
 import db from '../db.js';
+import { deriveCategory } from '../utils/quests.js';
 
 const router = express.Router();
 
@@ -12,9 +13,13 @@ router.get('/quests', async (req, res) => {
     const quests = rows.map(row => ({
       id: row.id,
       title: row.title,
-      type: row.type,
-      url: row.url, // Ensure this matches the DB column exactly
-      xp: row.xp
+      description: row.description || '',
+      type: row.type || 'link',
+      url: row.url || '',
+      xp: row.xp || 0,
+      active: row.active ?? 1,
+      sort: row.sort ?? 0,
+      category: deriveCategory(row)
     }));
 
     res.json(quests);
