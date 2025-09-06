@@ -122,6 +122,19 @@ const initDB = async () => {
       completed_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- User submitted proofs for off-chain verification
+    CREATE TABLE IF NOT EXISTS quest_proofs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL,
+      quest_id TEXT NOT NULL,
+      url TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',         -- pending | verified | rejected
+      details TEXT,
+      createdAt TEXT DEFAULT (datetime('now')),
+      verifiedAt TEXT,
+      UNIQUE(wallet, quest_id)
+    );
+
     -- Subscriptions (used by daily expiry cron in index.js)
     -- status: active | expired | canceled
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -158,6 +171,9 @@ const initDB = async () => {
   await ensureIndex("idx_completed_qid",    "ON completed_quests(questId)");
   await ensureIndex("idx_completed_wallet_qid_time", "ON completed_quests(wallet, questId, timestamp)");
   await ensureUniqueIndex("uq_completed_wallet_quest", "ON completed_quests(wallet, questId)");
+  await ensureIndex("idx_proofs_wallet",    "ON quest_proofs(wallet)");
+  await ensureIndex("idx_proofs_status",    "ON quest_proofs(status)");
+  await ensureUniqueIndex("uq_proofs_wallet_quest", "ON quest_proofs(wallet, quest_id)");
   await ensureIndex("idx_history_wallet",   "ON quest_history(wallet)");
   await ensureIndex("idx_referrals_ref",    "ON referrals(referrer)");
   await ensureIndex("idx_referrals_red",    "ON referrals(referred)");

@@ -10,6 +10,7 @@ beforeAll(async () => {
   ({ default: app } = await import('../server.js'));
   ({ default: db } = await import('../db.js'));
   try { await db.exec("ALTER TABLE quests ADD COLUMN code TEXT;"); } catch {}
+  try { await db.exec("ALTER TABLE quests ADD COLUMN requirement TEXT;"); } catch {}
   await db.exec(`CREATE TABLE IF NOT EXISTS tier_multipliers (
       tier TEXT PRIMARY KEY,
       multiplier REAL,
