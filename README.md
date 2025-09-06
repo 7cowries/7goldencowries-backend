@@ -45,6 +45,7 @@ Provision a 1GB disk mounted at `/var/data`.
 
 ```bash
 curl -s $BACKEND/healthz
+curl -s $BACKEND/api/health/db
 ```
 
 ## Tests
