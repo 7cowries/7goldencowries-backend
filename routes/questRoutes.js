@@ -6,8 +6,18 @@ import { deriveLevel } from "../config/progression.js";
 import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
 import { getTierMultiplier } from "../utils/tier.js";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { verifyTwitterProof } from "../lib/twitterProof.js";
 
 const router = express.Router();
+
+const proofLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
+});
 
 /* ========= ENV used for verification ========= */
 const TGBOT = process.env.TELEGRAM_BOT_TOKEN;
@@ -85,7 +95,7 @@ async function discordIsMember(accessToken, guildId) {
 
 /* ========= Route handlers (shared) ========= */
 
-async function listQuestsHandler(_req, res) {
+async function listQuestsHandler(req, res) {
   try {
     const rows = await db.all(`
       SELECT
@@ -95,7 +105,7 @@ async function listQuestsHandler(_req, res) {
         COALESCE(category,'All') AS category,
         COALESCE(kind,'link') AS kind,
         COALESCE(url,'') AS url,
-              COALESCE(xp, 0) AS xp,
+        COALESCE(xp, 0) AS xp,
         COALESCE(active,1) AS active,
         COALESCE(sort,0) AS sort,
         COALESCE(updatedAt, createdAt, 0) AS updatedAt
@@ -103,9 +113,28 @@ async function listQuestsHandler(_req, res) {
       WHERE COALESCE(active,1) = 1
       ORDER BY COALESCE(sort,0) ASC, COALESCE(updatedAt, createdAt, 0) DESC
     `);
-    const quests = rows.map(normalizeQuestRow);
-
-    if (String(_req.query.flat || "") === "1") return res.json(quests);
+    let quests = rows.map(normalizeQuestRow);
+    const wallet = req.session?.wallet;
+    if (wallet) {
+      const completedRows = await db.all(
+        `SELECT questId FROM completed_quests WHERE wallet = ?`,
+        wallet
+      );
+      const completedSet = new Set(completedRows.map((r) => String(r.questId)));
+      const proofRows = await db.all(
+        `SELECT quest_id, status FROM quest_proofs WHERE wallet = ?`,
+        wallet
+      );
+      const proofMap = new Map(proofRows.map((r) => [String(r.quest_id), r.status]));
+      quests = quests.map((q) => ({
+        ...q,
+        completed: completedSet.has(String(q.id)),
+        proofStatus: proofMap.get(String(q.id)) || null,
+      }));
+    } else {
+      quests = quests.map((q) => ({ ...q, completed: false, proofStatus: null }));
+    }
+    if (String(req.query.flat || "") === "1") return res.json(quests);
     return res.json({ quests });
   } catch (err) {
     console.error("Failed to fetch quests:", err);
@@ -322,6 +351,51 @@ router.get("/api/quests/journal/:wallet", journalHandler); // modern
 router.get("/quest/journal/:wallet", journalHandler);      // legacy
 router.get("/journal/:wallet", journalHandler);            // extra alias
 
+/** Submit a Twitter/X proof URL */
+router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
+  try {
+    const wallet = req.session?.wallet || (req.query.wallet ? String(req.query.wallet) : null);
+    if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
+    const questId = String(req.body?.questId || "").trim();
+    const url = String(req.body?.url || "").trim();
+    if (!questId || !url) return res.status(400).json({ ok: false, error: "bad-args" });
+    if (!/^https:\/\/(x|twitter)\.com\/[^/]+\/status\/\d+/.test(url)) {
+      return res.status(400).json({ ok: false, error: "invalid-url" });
+    }
+
+    await db.run(
+      `INSERT INTO quest_proofs (wallet, quest_id, url, status, createdAt)
+       VALUES (?, ?, ?, 'pending', datetime('now'))
+       ON CONFLICT(wallet, quest_id) DO UPDATE SET url=excluded.url, status='pending', details=NULL, verifiedAt=NULL, createdAt=datetime('now')`,
+      wallet,
+      questId,
+      url
+    );
+
+    const user = await db.get(
+      `SELECT wallet, twitter_username, twitterHandle FROM users WHERE wallet = ?`,
+      wallet
+    );
+    const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
+    const vr = await verifyTwitterProof({ user, quest, url });
+    const status = vr.ok ? "verified" : "rejected";
+    const verifiedAt = vr.ok ? new Date().toISOString() : null;
+    await db.run(
+      `UPDATE quest_proofs SET status = ?, details = ?, verifiedAt = ? WHERE wallet = ? AND quest_id = ?`,
+      status,
+      vr.details || null,
+      verifiedAt,
+      wallet,
+      questId
+    );
+
+    return res.json({ ok: true, status, message: vr.details || status });
+  } catch (err) {
+    console.error("submit-proof error", err);
+    res.status(500).json({ ok: false, error: "server-error" });
+  }
+});
+
 /** Complete a quest */
 router.post("/api/quests/complete", completeHandler); // modern
 router.post("/api/quest/complete", completeHandler);  // legacy
@@ -341,7 +415,27 @@ router.post("/api/quests/claim", async (req, res) => {
       return res.status(400).json({ ok: false, error: "bad-args" });
     }
 
-    const result = await awardQuest(wallet, questIdentifier);
+    let qrow = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questIdentifier);
+    if (!qrow && typeof questIdentifier === "string" && questIdentifier !== "") {
+      try {
+        qrow = await db.get(`SELECT id, requirement FROM quests WHERE code = ?`, questIdentifier);
+      } catch {}
+    }
+    if (!qrow) {
+      return res.status(404).json({ ok: false, error: "quest-not-found" });
+    }
+    if (qrow.requirement && qrow.requirement.startsWith("x_")) {
+      const proof = await db.get(
+        `SELECT status FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
+        wallet,
+        qrow.id
+      );
+      if (!proof || proof.status !== "verified") {
+        return res.status(400).json({ ok: false, needProof: true });
+      }
+    }
+
+    const result = await awardQuest(wallet, qrow.id);
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
