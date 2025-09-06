@@ -5,7 +5,7 @@ let app, db;
 beforeAll(async () => {
   process.env.TWITTER_CONSUMER_KEY = "x";
   process.env.TWITTER_CONSUMER_SECRET = "y";
-  process.env.SQLITE_FILE = ':memory:';
+  process.env.DATABASE_URL = ':memory:';
   process.env.NODE_ENV = 'test';
   ({ default: app } = await import('../server.js'));
   ({ default: db } = await import('../db.js'));

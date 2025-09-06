@@ -24,7 +24,7 @@ test('adds missing timestamp columns', async () => {
     );`);
   await pre.close();
 
-  process.env.SQLITE_FILE = tmp;
+  process.env.DATABASE_URL = tmp;
   const { default: db } = await import('../db.js');
 
   const cqCols = await db.all("PRAGMA table_info(completed_quests)");

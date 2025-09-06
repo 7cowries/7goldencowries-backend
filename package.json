@@ -9,7 +9,7 @@
     "start:prod": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development node server.js",
     "render-start": "node server.js",
-    "migrate:quests": "sqlite3 $SQLITE_FILE < scripts/migrate-quests.sql",
+    "migrate:quests": "sqlite3 $DATABASE_URL < scripts/migrate-quests.sql",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "smoke": "node scripts/smoke.mjs"
   },
