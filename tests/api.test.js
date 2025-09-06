@@ -53,4 +53,9 @@ describe('API routes', () => {
     expect(res.body.tierLabel).toBe('Tier 1');
     expect(res.body.multiplier).toBeCloseTo(1.1);
   });
+
+  test('/api/users/me returns anon when wallet missing', async () => {
+    const res = await request(app).get('/api/users/me');
+    expect(res.body.anon).toBe(true);
+  });
 });

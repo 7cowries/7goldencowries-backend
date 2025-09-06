@@ -25,6 +25,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import runSqliteMigrations from "./db/migrateProofs.js";
 import proofRoutes from "./routes/proofRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
+import refRedirectRoutes from "./routes/refRedirectRoutes.js";
 
 dotenv.config();
 const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
@@ -148,6 +149,7 @@ app.use("/api/session", sessionRoutes);
 app.use("/auth", socialRoutes);
 app.use("/api/admin", adminRoutes);
 app.use(healthRoutes);
+app.use(refRedirectRoutes);
 
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||

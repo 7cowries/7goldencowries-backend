@@ -15,9 +15,7 @@ afterAll(async () => {
   await db.close();
 });
 
-test('/api/health/db returns tables and counts', async () => {
+test('/api/health/db returns ok true', async () => {
   const res = await request(app).get('/api/health/db');
-  expect(res.body.ok).toBe(true);
-  expect(Array.isArray(res.body.tables)).toBe(true);
-  expect(res.body.counts).toBeTruthy();
+  expect(res.body).toEqual({ ok: true });
 });
