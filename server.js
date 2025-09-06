@@ -22,6 +22,7 @@ import sessionRoutes from "./routes/sessionRoutes.js";
 import usersRoutes from "./routes/usersRoutes.js";
 import socialRoutes from "./routes/socialRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import runSqliteMigrations from "./db/migrateProofs.js";
 
 dotenv.config();
 const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
@@ -115,6 +116,12 @@ async function ensureSchema() {
     await ensureQuestsSchema();
   } catch (e) {
     console.error('ensureQuestsSchema failed', e);
+    throw e;
+  }
+  try {
+    await runSqliteMigrations();
+  } catch (e) {
+    console.error('runSqliteMigrations failed', e);
     throw e;
   }
 }

@@ -53,3 +53,21 @@ curl -s $BACKEND/healthz
 npm test
 ```
 
+## Proof verification
+
+Tweet-based quests require a proof token to be posted in a public tweet.  Tokens are derived from the wallet and quest id and are
+verified asynchronously.
+
+Environment:
+
+- `PROOF_SECRET` – secret used to generate proof tokens.  Required for proof submission/verification.
+
+Flow:
+
+1. Client requests `/api/quests/submit-proof` with `{ wallet, questId, url }` where `url` is a tweet link.
+2. Server normalizes the URL and stores a pending row in the `proofs` table.
+3. Background task fetches the tweet HTML and checks for `#7GC-<token>`.
+4. On success the proof status becomes `verified` and `/api/quests/claim` may be called.
+
+Use `/api/quests/proof-status?wallet=...&questId=...` to poll for status updates.
+

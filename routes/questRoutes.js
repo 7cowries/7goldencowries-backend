@@ -7,13 +7,13 @@ import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
 import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { parseTweetUrl } from "../lib/twitterProof.js";
+import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
 
 const router = express.Router();
 
 const proofLimiter = rateLimit({
   windowMs: 60_000,
-  max: 10,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
@@ -122,7 +122,7 @@ async function listQuestsHandler(req, res) {
       );
       const completedSet = new Set(completedRows.map((r) => String(r.questId)));
       const proofRows = await db.all(
-        `SELECT quest_id, status FROM quest_proofs WHERE wallet = ?`,
+        `SELECT quest_id, status FROM proofs WHERE wallet = ?`,
         wallet
       );
       const proofMap = new Map(proofRows.map((r) => [String(r.quest_id), r.status]));
@@ -207,72 +207,61 @@ router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
       return res.status(403).json({ status: "rejected", reason: "auth-required" });
     }
     const questId = String(req.body?.questId || "").trim();
-    let url = String(req.body?.url || "").trim();
+    const url = String(req.body?.url || "").trim();
     if (!questId || !url) return res.status(400).json({ status: "rejected", reason: "bad-args" });
-    url = url.slice(0, 500);
 
-    const quest = await db.get(`SELECT requirement FROM quests WHERE id = ?`, questId);
-    if (!quest) return res.status(404).json({ status: "rejected", reason: "quest-not-found" });
-
-    const requirement = quest.requirement || "none";
-    const vendor = /^https?:\/\/(?:x|twitter)\.com\//i.test(url) ? "x" : "unknown";
-    if (requirement.startsWith("x_") && vendor !== "x") {
-      return res.status(400).json({ status: "rejected", reason: "vendor-mismatch" });
+    const quest = await db.get(`SELECT requirement, active FROM quests WHERE id = ?`, questId);
+    if (!quest || quest.active !== 1) {
+      return res.status(404).json({ status: "rejected", reason: "quest-not-found" });
     }
 
-    let parsed = null;
-    let normUrl = url;
-    if (vendor === "x") {
-      parsed = parseTweetUrl(url);
-      if (!parsed) return res.json({ status: "rejected", reason: "invalid-url" });
-      normUrl = `https://x.com/${parsed.username}/status/${parsed.tweetId}`;
-    }
-
-    const f = global.fetch || fetch;
-    let verified = false;
+    let parsed;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      const r = await f(`https://publish.twitter.com/oembed?url=${encodeURIComponent(normUrl)}`, { signal: controller.signal });
-      clearTimeout(timer);
-      if (r.ok) {
-        const data = await r.json();
-        if (typeof data.html === "string" && data.html.includes("twitter-tweet")) verified = true;
-      }
-    } catch {}
-    if (!verified) {
-      try {
-        const r2 = await f(normUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
-        if (r2.ok) {
-          const html = await r2.text();
-          if (/twitter-tweet/.test(html) || /<meta[^>]+property="og:type"[^>]+content="article"/i.test(html)) {
-            verified = true;
-          }
-        }
-      } catch {}
+      parsed = normalizeTweetUrl(url);
+    } catch {
+      return res.status(400).json({ status: "rejected", reason: "invalid-url" });
     }
 
-    const status = verified ? "verified" : "rejected";
-    const details = verified && parsed ? JSON.stringify({ tweetId: parsed.tweetId, author: parsed.username }) : null;
-    const reason = verified ? null : "verification-failed";
+    const user = await db.get(`SELECT twitterHandle, twitter_username FROM users WHERE wallet = ?`, wallet);
+    const userHandle = (user?.twitterHandle || user?.twitter_username || '').toLowerCase();
+    if (quest.requirement && quest.requirement.startsWith('x_')) {
+      if (!userHandle) return res.status(403).json({ status: 'rejected', reason: 'not-linked' });
+      if (userHandle !== parsed.handle.toLowerCase()) {
+        return res.status(403).json({ status: 'rejected', reason: 'handle-mismatch' });
+      }
+    }
+
+    const existing = await db.get(
+      `SELECT id, status, reason, updatedAt FROM proofs WHERE wallet = ? AND quest_id = ?`,
+      wallet,
+      questId
+    );
+    if (existing && (existing.status === 'pending' || existing.status === 'verified')) {
+      return res.status(409).json({ status: existing.status, reason: existing.reason });
+    }
+    if (existing) {
+      const diff = Date.now() - new Date(existing.updatedAt).getTime();
+      if (diff < 10_000) {
+        return res.status(429).json({ status: existing.status, reason: 'cooldown' });
+      }
+    }
+
     await db.run(
-      `INSERT INTO quest_proofs (wallet, questId, quest_id, vendor, url, status, details, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-         ON CONFLICT(wallet, questId) DO UPDATE SET url=excluded.url, status=excluded.status, details=excluded.details, vendor=excluded.vendor, updatedAt=datetime('now')`,
+      `INSERT INTO proofs (wallet, quest_id, url, provider, status, tweet_id, handle, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'x', 'pending', ?, ?, datetime('now'), datetime('now'))
+       ON CONFLICT(wallet, quest_id) DO UPDATE SET url=excluded.url, status='pending', reason=NULL, provider='x', tweet_id=excluded.tweet_id, handle=excluded.handle, updatedAt=datetime('now')`,
       wallet,
       questId,
-      questId,
-      vendor,
-      normUrl,
-      status,
-      details || reason
+      parsed.url,
+      parsed.tweetId,
+      parsed.handle
     );
-
-    console.log("proof", { questId, wallet, vendor, tweetId: parsed?.tweetId, status, reason });
-    return res.json(reason ? { status, reason } : { status });
+    const row = await db.get(`SELECT id FROM proofs WHERE wallet = ? AND quest_id = ?`, wallet, questId);
+    setImmediate(() => verifyProofRow(row.id));
+    return res.json({ status: 'pending' });
   } catch (err) {
-    console.error("submit-proof error", err);
-    res.status(500).json({ status: "rejected", reason: "server-error" });
+    console.error('submit-proof error', err);
+    res.status(500).json({ status: 'rejected', reason: 'server-error' });
   }
 });
 
@@ -283,11 +272,11 @@ router.get("/api/quests/proof-status", async (req, res) => {
     const questId = String(req.query.questId || "").trim();
     if (!wallet || !questId) return res.status(400).json({ error: "bad-args" });
     const row = await db.get(
-      `SELECT status, url, vendor, details, updatedAt FROM quest_proofs WHERE wallet = ? AND questId = ?`,
+      `SELECT status, reason FROM proofs WHERE wallet = ? AND quest_id = ?`,
       wallet,
       questId
     );
-    if (!row) return res.json({ status: "missing" });
+    if (!row) return res.json({ status: "none" });
     return res.json(row);
   } catch (err) {
     console.error("proof-status error", err);
@@ -319,9 +308,9 @@ router.post("/api/quests/claim", async (req, res) => {
     if (!qrow) {
       return res.status(404).json({ ok: false, error: "quest-not-found" });
     }
-    if (qrow.requirement && qrow.requirement.startsWith("x_")) {
+    if (qrow.requirement && qrow.requirement !== "none") {
       const proof = await db.get(
-        `SELECT status FROM quest_proofs WHERE wallet = ? AND questId = ?`,
+        `SELECT status FROM proofs WHERE wallet = ? AND quest_id = ?`,
         wallet,
         qrow.id
       );
