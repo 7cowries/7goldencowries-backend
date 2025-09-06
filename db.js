@@ -183,6 +183,8 @@ const initDB = async () => {
   await db.exec("UPDATE completed_quests SET timestamp = COALESCE(timestamp, datetime('now'))");
   await addColumnIfMissing("subscriptions", "timestamp", "TEXT");
   await db.exec("UPDATE subscriptions SET timestamp = COALESCE(timestamp, datetime('now'))");
+  await addColumnIfMissing("quest_proofs", "status", "TEXT");
+  await db.exec("UPDATE quest_proofs SET status = COALESCE(status, 'pending')");
 
   // --- Indices (speed up common lookups) ---
   await ensureIndex("idx_quests_active",    "ON quests(active)");

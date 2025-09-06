@@ -16,8 +16,6 @@ export async function runSqliteMigrations() {
     updatedAt TEXT DEFAULT (datetime('now')),
     UNIQUE(wallet, quest_id)
   );`);
-  await db.exec(`CREATE INDEX IF NOT EXISTS idx_proofs_status ON proofs(status);`);
-
   // add missing columns without volatile defaults
   const cols = await db.all(`PRAGMA table_info(proofs);`);
   const names = new Set(cols.map(c => c.name));
@@ -27,11 +25,14 @@ export async function runSqliteMigrations() {
       await db.exec(`ALTER TABLE proofs ADD COLUMN ${name} ${type};`);
     }
   };
+  await ensure('status', "TEXT NOT NULL DEFAULT 'pending'");
   await ensure('reason', 'TEXT');
   await ensure('tweet_id', 'TEXT');
   await ensure('handle', 'TEXT');
   await ensure('createdAt', 'TEXT');
   await ensure('updatedAt', 'TEXT');
+
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_proofs_status ON proofs(status);`);
 }
 
 export default runSqliteMigrations;
