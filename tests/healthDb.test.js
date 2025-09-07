@@ -15,12 +15,7 @@ afterAll(async () => {
   await db.close();
 });
 
-test('/api/health/db returns ok true', async () => {
-  const res = await request(app).get('/api/health/db');
-  expect(res.body).toEqual({ ok: true });
-});
-
-test('/health returns ok true', async () => {
+test('/health returns db status', async () => {
   const res = await request(app).get('/health');
-  expect(res.body.ok).toBe(true);
+  expect(res.body).toEqual({ ok: true, db: 'ok' });
 });

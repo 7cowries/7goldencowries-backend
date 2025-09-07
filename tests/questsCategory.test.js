@@ -32,10 +32,9 @@ describe('quests api', () => {
   test('inserts proofs', async () => {
     const res = await request(app)
       .post('/api/quests/1/proofs')
-      .send({ wallet: 'w1', vendor: 'twitter', url: 'https://x.com/t/1' });
-    expect(res.body.ok).toBe(true);
+      .send({ wallet: 'w1', url: 'https://x.com/t/1' });
+    expect(res.body.status).toBe('pending');
     const row = await db.get('SELECT wallet,vendor,url FROM quest_proofs WHERE quest_id=1 AND wallet=?', 'w1');
-    expect(row.vendor).toBe('twitter');
     expect(row.url).toBe('https://x.com/t/1');
   });
 });

@@ -52,12 +52,13 @@ const defaultOrigins = [
 const origins = Array.from(
   new Set([
     ...defaultOrigins,
+    process.env.FRONTEND_URL,
     ...(process.env.CORS_ORIGINS || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
   ])
-);
+).filter(Boolean);
 const originCheck = (origin, cb) => {
   if (!origin) return cb(null, true);
   const ok = origins.some((o) => {

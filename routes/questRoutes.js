@@ -9,6 +9,7 @@ import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
 import { parseTweetId, isValidTweetUrl } from "../utils/tweet.js";
+import { inferVendor } from "../utils/vendor.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -137,17 +138,21 @@ async function listQuestsHandler(req, res) {
       );
       const completedSet = new Set(completedRows.map((r) => String(r.quest_id)));
       const proofRows = await db.all(
-        `SELECT quest_id, status FROM proofs WHERE wallet = ?`,
+        `SELECT quest_id, status FROM quest_proofs WHERE wallet = ? ORDER BY updatedAt DESC`,
         wallet
       );
-      const proofMap = new Map(proofRows.map((r) => [String(r.quest_id), r.status]));
+      const proofMap = new Map();
+      for (const r of proofRows) {
+        const key = String(r.quest_id);
+        if (!proofMap.has(key)) proofMap.set(key, r.status);
+      }
       quests = quests.map((q) => ({
         ...q,
         completed: completedSet.has(String(q.id)),
-        proofStatus: proofMap.get(String(q.id)) || null,
+        proofStatus: proofMap.get(String(q.id)) || "none",
       }));
     } else {
-      quests = quests.map((q) => ({ ...q, completed: false, proofStatus: null }));
+      quests = quests.map((q) => ({ ...q, completed: false, proofStatus: "none" }));
     }
     if (String(req.query.flat || "") === "1") return res.json(quests);
     return res.json({ quests });
@@ -306,59 +311,59 @@ router.get("/api/quests/proof-status", async (req, res) => {
 // Simplified proof submission
 router.post("/api/quests/:questId/proofs", async (req, res) => {
   try {
-    const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
-    const wallet = String(req.body?.wallet || req.session?.wallet || "").trim();
-    const vendor = String(req.body?.vendor || "").trim();
+    const questId = req.params.questId;
+    const wallet = req.session?.wallet || String(req.body?.wallet || "").trim();
     const url = String(req.body?.url || "").trim();
-    if (!questId || !wallet || !vendor || !url) {
-      return res.status(400).json({ ok: false, error: "bad-args" });
+    if (!questId || !wallet || !url) {
+      return res.status(400).json({ error: "bad-args" });
     }
 
     const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
-    if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
+    if (!quest) return res.status(404).json({ error: "quest-not-found" });
 
-    let tweetId = null;
+    const vendor = inferVendor(url);
     let status = "pending";
-    if (quest.requirement === "tweet_link" && isValidTweetUrl(url)) {
-      tweetId = parseTweetId(url);
+    const reqType = quest.requirement || "none";
+    if (reqType == "link" && url) {
+      status = "approved";
+    } else if (reqType == "tweet" && vendor == "twitter" && isValidTweetUrl(url)) {
       status = "approved";
     }
 
     const existing = await db.get(
-      `SELECT id FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
+      `SELECT id FROM quest_proofs WHERE wallet = ? AND quest_id = ? ORDER BY updatedAt DESC LIMIT 1`,
       wallet,
       quest.id
     );
     if (existing) {
       await db.run(
-        `UPDATE quest_proofs SET vendor=?, url=?, tweet_id=?, status=?, updatedAt=datetime('now') WHERE id=?`,
-        vendor,
+        `UPDATE quest_proofs SET url=?, vendor=?, status=?, updatedAt=datetime('now') WHERE id=?`,
         url,
-        tweetId,
+        vendor,
         status,
         existing.id
       );
     } else {
       await db.run(
-        `INSERT INTO quest_proofs (quest_id, wallet, vendor, url, tweet_id, status, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        `INSERT INTO quest_proofs (quest_id, wallet, url, vendor, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         quest.id,
         wallet,
-        vendor,
         url,
-        tweetId,
+        vendor,
         status
       );
     }
 
-    return res.json({ ok: true, proofStatus: status });
+    if (status == "approved") {
+      await awardQuest(wallet, quest.id);
+    }
+    delCache(`user:${wallet}`);
+    return res.json({ status });
   } catch (err) {
     console.error("proof submit error", err);
-    res.status(500).json({ ok: false, error: "server-error" });
+    res.status(500).json({ error: "server-error" });
   }
 });
-
-// Simplified claim using session wallet
 router.post("/api/quests/:questId/claim", async (req, res) => {
   try {
     const wallet = req.session?.wallet;
@@ -366,16 +371,25 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
     if (!questId) return res.status(400).json({ ok: false, error: "bad-args" });
 
-    const quest = await db.get(`SELECT id, xp, requirement FROM quests WHERE id = ?`, questId);
+    const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
+
+    const done = await db.get(
+      `SELECT 1 FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
+      wallet,
+      quest.id
+    );
+    if (done) return res.status(409).json({ ok: false, error: "already-completed" });
 
     if (quest.requirement && quest.requirement !== "none") {
       const proof = await db.get(
-        `SELECT id FROM quest_proofs WHERE wallet = ? AND quest_id = ?`,
+        `SELECT status FROM quest_proofs WHERE wallet = ? AND quest_id = ? ORDER BY updatedAt DESC LIMIT 1`,
         wallet,
         quest.id
       );
-      if (!proof) return res.status(403).json({ ok: false, error: "proof-required" });
+      if (!proof || proof.status !== "approved") {
+        return res.status(403).json({ ok: false, error: "proof-required" });
+      }
     }
 
     const result = await awardQuest(wallet, quest.id);
@@ -383,8 +397,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
-    const userRow = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
-    return res.json({ ok: true, xp: userRow?.xp ?? 0, alreadyClaimed: result.already ? true : undefined });
+    return res.json({ ok: true });
   } catch (err) {
     console.error("claim error", err);
     res.status(500).json({ ok: false, error: "server-error" });
