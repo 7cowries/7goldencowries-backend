@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 
 const base = process.env.BASE_URL || 'http://localhost:3000';
-const endpoints = ['/healthz', '/api/leaderboard', '/api/quests', '/api/referrals/code'];
+const endpoints = ['/api/health', '/api/leaderboard', '/api/quests', '/api/referrals/code'];
 
 async function ping(path) {
   try {
