@@ -3,6 +3,10 @@ import db from "../db.js";
 
 const router = express.Router();
 
+router.get("/api/health", (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime(), timestamp: Date.now() });
+});
+
 router.get("/api/health/db", async (_req, res) => {
   try {
     await db.get("SELECT 1");

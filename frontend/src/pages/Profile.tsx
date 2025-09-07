@@ -2,20 +2,17 @@ import { useEffect, useState } from 'react';
 import { fetchJson } from '../lib/api';
 
 const DEFAULT_ME = {
-  anon: true,
   wallet: null as string | null,
   xp: 0,
-  level: 1,
-  levelSymbol: 'Shellborn',
+  level: 'Shellborn',
+  levelName: 'Shellborn',
+  levelSymbol: '🐚',
   nextXP: 100,
+  twitterHandle: null as string | null,
+  telegramId: null as string | null,
+  discordId: null as string | null,
   subscriptionTier: 'Free',
-  socials: {
-    twitterHandle: null as string | null,
-    telegramId: null as string | null,
-    discordId: null as string | null,
-    discordGuildMember: false,
-  },
-  referral_code: null as string | null,
+  questHistory: [] as any[],
 };
 
 export default function Profile() {
@@ -25,15 +22,7 @@ export default function Profile() {
   async function loadMe() {
     try {
       const apiMe = await fetchJson('/api/users/me');
-      const merged = {
-        ...DEFAULT_ME,
-        ...apiMe,
-        socials: {
-          ...DEFAULT_ME.socials,
-          ...(apiMe?.socials ?? {}),
-        },
-      };
-      setMe(merged);
+      setMe({ ...DEFAULT_ME, ...apiMe });
     } finally {
       setLoaded(true);
     }
@@ -68,10 +57,10 @@ export default function Profile() {
   }, []);
 
   if (!loaded) {
-    return <div>Loading...</div>;
+    return <div className="skeleton">Loading...</div>;
   }
 
-  if (me.anon) {
+  if (!me.wallet) {
     return (
       <div>
         <p>Connect wallet to view your profile</p>
@@ -85,14 +74,13 @@ export default function Profile() {
       <h1>Profile</h1>
       <p>Wallet: {me.wallet ?? ''}</p>
       <p>XP: {me.xp ?? 0}</p>
-      <p>Level: {me.level ?? 1}</p>
-      <p>Level Symbol: {me.levelSymbol ?? 'Shellborn'}</p>
+      <p>Level: {me.level ?? 'Shellborn'}</p>
+      <p>Level Symbol: {me.levelSymbol ?? '🐚'}</p>
       <p>Next XP: {me.nextXP ?? 100}</p>
       <p>Subscription: {me.subscriptionTier ?? 'Free'}</p>
-      <p>Twitter: {me.socials?.twitterHandle ?? 'N/A'}</p>
-      <p>Telegram: {me.socials?.telegramId ?? 'N/A'}</p>
-      <p>Discord: {me.socials?.discordId ?? 'N/A'}</p>
-      <p>Referral Code: {me.referral_code ?? 'N/A'}</p>
+      <p>Twitter: {me.twitterHandle ?? 'N/A'}</p>
+      <p>Telegram: {me.telegramId ?? 'N/A'}</p>
+      <p>Discord: {me.discordId ?? 'N/A'}</p>
     </div>
   );
 }

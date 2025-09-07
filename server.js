@@ -9,6 +9,7 @@ import rateLimit from "express-rate-limit";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import morgan from "morgan";
+import cookieParser from "cookie-parser";
 import db from "./db.js";
 import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
 import { ensureUsersSchema } from "./db/migrateUsers.js";
@@ -40,10 +41,23 @@ app.set("etag", false);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const origins = (process.env.CORS_ORIGINS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+const defaultOrigins = [
+  "https://7goldencowries.com",
+  "https://www.7goldencowries.com",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+const origins = Array.from(
+  new Set([
+    ...defaultOrigins,
+    ...(process.env.CORS_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ])
+);
 const originCheck = (origin, cb) => {
   if (!origin) return cb(null, true);
   const ok = origins.some((o) => {
@@ -59,6 +73,8 @@ const originCheck = (origin, cb) => {
 
 app.use(cors({ origin: originCheck, credentials: true }));
 app.options("*", cors({ origin: originCheck, credentials: true }));
+
+app.use(cookieParser());
 
 app.use(express.json());
 app.use("/api", (req, res, next) => {

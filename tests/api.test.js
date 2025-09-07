@@ -53,28 +53,24 @@ describe('API routes', () => {
     expect(res.body.subscriptionTier).toBe('tier1');
     expect(res.body.level).toBeDefined();
     expect(res.body.nextXP).toBeGreaterThan(0);
-    expect(res.body.socials).toBeDefined();
-    expect(res.body.referral_code).toBeTruthy();
+    expect(res.body).toHaveProperty('twitterHandle');
   });
 
-  test('/api/users/me returns anon with defaults when wallet missing', async () => {
+  test('/api/users/me returns defaults when wallet missing', async () => {
     const res = await request(app).get('/api/users/me');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      anon: true,
       wallet: null,
       xp: 0,
-      level: 1,
-      levelSymbol: 'Shellborn',
+      level: 'Shellborn',
+      levelName: 'Shellborn',
+      levelSymbol: '🐚',
       nextXP: 100,
+      twitterHandle: null,
+      telegramId: null,
+      discordId: null,
       subscriptionTier: 'Free',
-      socials: {
-        twitterHandle: null,
-        telegramId: null,
-        discordId: null,
-        discordGuildMember: false,
-      },
-      referral_code: null,
+      questHistory: [],
     });
   });
 

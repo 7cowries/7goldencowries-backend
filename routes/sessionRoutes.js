@@ -29,6 +29,52 @@ r.post("/bind-wallet", async (req, res) => {
     // make sure a user row exists
     await ensureUser(w);
 
+    // referral consumption
+    const refCode = req.cookies?.referral_code || req.session?.referral_code;
+    if (refCode) {
+      try {
+        await db.exec("BEGIN");
+        const existing = await db.get(
+          "SELECT referred_by FROM users WHERE wallet = ?",
+          w
+        );
+        if (!existing?.referred_by) {
+          const referrer = await db.get(
+            "SELECT wallet FROM users WHERE referral_code = ?",
+            refCode
+          );
+          if (referrer && referrer.wallet !== w) {
+            const upd = await db.run(
+              "UPDATE users SET referred_by=?, updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=? AND referred_by IS NULL",
+              [referrer.wallet, w]
+            );
+            if (upd.changes > 0) {
+              const ins = await db.run(
+                "INSERT OR IGNORE INTO completed_quests (wallet, quest_id, timestamp) VALUES (?, 'REFERRAL_BONUS', strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                referrer.wallet
+              );
+              if (ins.changes > 0) {
+                await db.run(
+                  "UPDATE users SET xp = COALESCE(xp,0) + 50, updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?",
+                  referrer.wallet
+                );
+              }
+            }
+          }
+        }
+        await db.exec("COMMIT");
+      } catch (err) {
+        await db.exec("ROLLBACK");
+        console.error("referral bind error", err);
+      }
+      res.clearCookie("referral_code", {
+        httpOnly: true,
+        sameSite: "none",
+        secure: true,
+      });
+      req.session.referral_code = null;
+    }
+
     res.json({ ok: true, wallet: w });
   } catch (e) {
     console.error("bind-wallet error:", e);
