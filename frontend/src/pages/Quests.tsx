@@ -7,6 +7,7 @@ const QuestsPage: React.FC = () => {
   const [wallet, setWallet] = useState('');
   const [quests, setQuests] = useState<Quest[]>([]);
   const [tab, setTab] = useState('All');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     setWallet(localStorage.getItem('wallet') || '');
@@ -15,15 +16,16 @@ const QuestsPage: React.FC = () => {
     return () => window.removeEventListener('wallet-changed', onWalletChanged);
   }, []);
 
+  const API_URL = process.env.REACT_APP_API_URL || '';
   useEffect(() => {
-    fetch('/api/quests')
+    fetch(`${API_URL}/api/quests`)
       .then((r) => r.json())
       .then((data) => {
         const qs = Array.isArray(data) ? data : data.quests || [];
         setQuests(qs);
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => setError('Failed to load quests'));
+  }, [API_URL]);
 
   const filtered = quests.filter((q) =>
     tab === 'All' ? true : (q.category || 'All') === tab
@@ -43,7 +45,9 @@ const QuestsPage: React.FC = () => {
         ))}
       </div>
       <div className="quests-list">
-        {filtered.length ? (
+        {error ? (
+          <p className="error">{error}</p>
+        ) : filtered.length ? (
           filtered.map((q) => <QuestCard key={q.id} quest={q} />)
         ) : (
           <p>No quests yet</p>

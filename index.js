@@ -79,10 +79,12 @@ app.use(cookieParser());
 
 // --- Sessions (popup-friendly cookies) ---
 const Store = MemoryStore(session);
+const sessionSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === "test" ? "test-secret" : null);
+if (!sessionSecret) throw new Error("SESSION_SECRET must be set");
 app.use(
   session({
     name: "7gc.sid",
-    secret: process.env.SESSION_SECRET || "cowrie-secret",
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: true,
     store: new Store({ checkPeriod: 86400000 }), // 24h

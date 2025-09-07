@@ -2,6 +2,7 @@
 import express from "express";
 import fetch from "node-fetch";
 import db from "../db.js";
+import logger from "../lib/logger.js";
 import { deriveLevel } from "../config/progression.js";
 import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
@@ -365,6 +366,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
     const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
     if (!questId) return res.status(400).json({ ok: false, error: "bad-args" });
+    logger.info({ action: "quest-claim", wallet, questId });
 
     const quest = await db.get(`SELECT id, xp, requirement FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
@@ -381,12 +383,14 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     const result = await awardQuest(wallet, quest.id);
     delCache(`user:${wallet}`);
     if (!result.ok) {
+      logger.warn({ action: "quest-claim", wallet, questId, error: result.error });
       return res.status(404).json({ ok: false, error: result.error });
     }
     const userRow = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
+    logger.info({ action: "quest-claim-success", wallet, questId });
     return res.json({ ok: true, xp: userRow?.xp ?? 0, alreadyClaimed: result.already ? true : undefined });
   } catch (err) {
-    console.error("claim error", err);
+    logger.error({ action: "quest-claim-error", err: err.message, questId: req.params.questId, wallet: req.session?.wallet });
     res.status(500).json({ ok: false, error: "server-error" });
   }
 });
@@ -405,6 +409,7 @@ router.post("/api/quests/claim", async (req, res) => {
     if (questIdentifier === undefined || questIdentifier === null || questIdentifier === "") {
       return res.status(400).json({ ok: false, error: "bad-args" });
     }
+    logger.info({ action: "quest-claim", wallet, quest: questIdentifier });
 
     let qrow = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questIdentifier);
     if (!qrow && typeof questIdentifier === "string" && questIdentifier !== "") {
@@ -413,6 +418,7 @@ router.post("/api/quests/claim", async (req, res) => {
       } catch {}
     }
     if (!qrow) {
+      logger.warn({ action: "quest-claim", wallet, quest: questIdentifier, error: "quest-not-found" });
       return res.status(404).json({ ok: false, error: "quest-not-found" });
     }
     if (qrow.requirement && qrow.requirement !== "none") {
@@ -428,6 +434,7 @@ router.post("/api/quests/claim", async (req, res) => {
 
     const result = await awardQuest(wallet, qrow.id);
     if (!result.ok) {
+      logger.warn({ action: "quest-claim", wallet, questId: qrow.id, error: result.error });
       return res.status(404).json({ ok: false, error: result.error });
     }
     delCache(`user:${wallet}`);
@@ -435,6 +442,7 @@ router.post("/api/quests/claim", async (req, res) => {
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
     const newTotalXp = row?.xp ?? 0;
     const lvl = deriveLevel(newTotalXp);
+    logger.info({ action: "quest-claim-success", wallet, questId: result.questId });
 
     return res.json({
       ok: true,
@@ -448,7 +456,7 @@ router.post("/api/quests/claim", async (req, res) => {
       alreadyClaimed: result.already ? true : undefined,
     });
   } catch (err) {
-    console.error("Quest claim error:", err);
+    logger.error({ action: "quest-claim-error", err: err.message, wallet: req.session.wallet, quest: req.body?.questId });
     res.status(500).json({ ok: false, error: "server-error" });
   }
 });

@@ -8,6 +8,7 @@
 import express from "express";
 import fetch from "node-fetch";
 import db from "../db.js";
+import logger from "../lib/logger.js";
 
 const router = express.Router();
 
@@ -179,9 +180,10 @@ router.post("/api/quests/telegram/join/verify", async (req, res) => {
       }
     }
 
+    logger.info({ action: "telegram-verify", wallet, results });
     return res.json({ ok: true, results });
   } catch (e) {
-    console.error("telegram/join/verify error:", e);
+    logger.error({ action: "telegram-verify-error", err: e.message, wallet: req.user?.wallet });
     res.status(500).json({ error: "tg_verify_failed" });
   }
 });

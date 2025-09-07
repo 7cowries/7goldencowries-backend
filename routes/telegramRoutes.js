@@ -6,19 +6,16 @@ import db from "../db.js";
 const router = express.Router();
 
 /* ========= ENV ========= */
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 // derive numeric bot_id from token like "8197436765:AAAA..."
 const BOT_ID =
   process.env.TELEGRAM_BOT_ID ||
-  (BOT_TOKEN.includes(":") ? BOT_TOKEN.split(":")[0] : "");
+  (BOT_TOKEN && BOT_TOKEN.includes(":") ? BOT_TOKEN.split(":")[0] : "");
 
 const BOT_NAME = (process.env.TELEGRAM_BOT_NAME || "").replace(/^@/, ""); // used for embed ONLY
 
 // Force the frontend origin that Telegram should trust/redirect back to
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ||
-  process.env.CLIENT_URL ||
-  "https://www.7goldencowries.com";
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://www.7goldencowries.com";
 
 // Optional: max age for auth_date (0 disables)
 const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 0); // disabled by default

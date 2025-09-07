@@ -28,6 +28,8 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.0.1",
     "express-session": "^1.18.2",
+    "connect-redis": "^7.1.0",
+    "redis": "^4.6.7",
     "connect-sqlite3": "^0.9.16",
     "helmet": "^8.1.0",
     "lodash": "^4.17.21",

@@ -10,6 +10,13 @@ cp .env.example .env
 # edit .env values
 ```
 
+Environment variables:
+
+- `FRONTEND_URL` – allowed frontend origin
+- `SESSION_SECRET` – secret for session cookies
+- `SESSION_NAME` – cookie name (optional)
+- `REDIS_URL` – if set, sessions use Redis instead of memory
+
 ## Migrations
 
 ```bash
@@ -35,7 +42,7 @@ User tiers (Free, Tier1, Tier2, Tier3) are stored in the `users.tier` column.  X
 `tier_multipliers` table (`tier`, `multiplier`, `label`) and can be edited without code changes.  Claiming a quest
 applies the multiplier and reports the effective XP.
 
-Legacy endpoints `/quests` and `/complete` redirect to the new routes and will be removed after **1 Jan 2025**. Update clients before this date.
+Legacy `/quests` and `/complete` routes have been removed. Use `/api/quests` and `/api/quests/claim` exclusively.
 
 ## Disk
 
@@ -44,7 +51,7 @@ Provision a 1GB disk mounted at `/var/data`.
 ## Health
 
 ```bash
-curl -s $BACKEND/healthz
+curl -s $BACKEND/health
 curl -s $BACKEND/api/health/db
 ```
 

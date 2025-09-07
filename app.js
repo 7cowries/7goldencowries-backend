@@ -44,8 +44,10 @@ app.use(cookieParser());
 // Required on Render/behind proxy so 'secure' cookies are set correctly
 app.set('trust proxy', 1);
 
+const sessionSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === 'test' ? 'test-secret' : null);
+if (!sessionSecret) throw new Error('SESSION_SECRET not set');
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'change-me-in-render',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: {

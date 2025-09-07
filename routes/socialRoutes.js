@@ -9,7 +9,6 @@ router.use(passport.initialize());
 router.use(passport.session());
 
 const FRONTEND_URL =
-  process.env.CLIENT_URL ||
   process.env.FRONTEND_URL ||
   "https://7goldencowries.com";
 

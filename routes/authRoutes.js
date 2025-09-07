@@ -7,8 +7,7 @@ import db from "../db.js";
 
 const router = express.Router();
 
-const CLIENT_URL =
-  process.env.CLIENT_URL ||
+const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   "https://www.7goldencowries.com"; // production default
 
@@ -104,7 +103,7 @@ router.get("/auth/twitter/callback", (req, res, next) => {
 
         req.session.state = null;
         if (req.session.save) req.session.save(() => {});
-        return res.redirect(`${CLIENT_URL}/profile?linked=twitter`);
+        return res.redirect(`${FRONTEND_URL}/profile?linked=twitter`);
       } catch (e) {
         console.error("❌ Twitter callback error:", e);
         return res
@@ -301,8 +300,8 @@ router.get("/auth/discord/callback", async (req, res) => {
     req.session.state = null;
     if (req.session.save) req.session.save(() => {});
     const redirectUrl = isMember
-      ? `${CLIENT_URL}/profile?linked=discord&guildMember=true`
-      : `${CLIENT_URL}/profile?linked=discord&guildMember=false`;
+      ? `${FRONTEND_URL}/profile?linked=discord&guildMember=true`
+      : `${FRONTEND_URL}/profile?linked=discord&guildMember=false`;
     return res.redirect(redirectUrl);
   } catch (e) {
     console.error("❌ Discord callback error:", e);
