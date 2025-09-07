@@ -3,9 +3,11 @@ import db from "../db.js";
 
 const router = express.Router();
 
-router.get("/api/health", (_req, res) => {
+const healthHandler = (_req, res) => {
   res.json({ ok: true, uptime: process.uptime(), timestamp: Date.now() });
-});
+};
+
+router.get(["/api/health", "/health"], healthHandler);
 
 router.get("/api/health/db", async (_req, res) => {
   try {
