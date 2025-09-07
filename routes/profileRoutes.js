@@ -148,7 +148,11 @@ router.get("/", async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error("Profile route error:", e);
-    res.status(500).njson({ error: "Failed to load profile" });
+    // Typo fixed: previously used non-existent `njson`,
+    // which would throw and prevent a proper error response.
+    // Use `json` to send the 500 error payload correctly so
+    // clients like the profile page can handle failures.
+    res.status(500).json({ error: "Failed to load profile" });
   }
 });
 
