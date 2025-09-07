@@ -48,34 +48,21 @@ describe('API routes', () => {
     expect(res.body.total).toBeGreaterThan(0);
   });
 
-  test('/api/users/me exposes subscription tier and socials', async () => {
+  test('/api/users/me exposes socials and referral', async () => {
     const res = await request(app).get('/api/users/me?wallet=w1');
-    expect(res.body.subscriptionTier).toBe('tier1');
-    expect(res.body.level).toBeDefined();
-    expect(res.body.nextXP).toBeGreaterThan(0);
-    expect(res.body).toHaveProperty('twitterHandle');
+    expect(res.body.user.wallet).toBe('w1');
+    expect(res.body.user).toHaveProperty('referral_code');
+    expect(res.body.user.socials.twitter).toBeDefined();
   });
 
-  test('/api/users/me returns defaults when wallet missing', async () => {
+  test('/api/users/me returns null when wallet missing', async () => {
     const res = await request(app).get('/api/users/me');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      wallet: null,
-      xp: 0,
-      level: 'Shellborn',
-      levelName: 'Shellborn',
-      levelSymbol: '🐚',
-      nextXP: 100,
-      twitterHandle: null,
-      telegramId: null,
-      discordId: null,
-      subscriptionTier: 'Free',
-      questHistory: [],
-    });
+    expect(res.body).toEqual({ user: null });
   });
 
-  test('health db endpoint works', async () => {
-    const res = await request(app).get('/api/health/db');
-    expect(res.body.ok).toBe(true);
+  test('health endpoint works', async () => {
+    const res = await request(app).get('/health');
+    expect(res.body).toEqual({ ok: true, db: 'ok' });
   });
 });
