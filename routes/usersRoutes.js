@@ -3,6 +3,38 @@ import db from "../db.js";
 import { deriveLevel } from "../config/progression.js";
 import { getSessionWallet } from "../utils/session.js";
 
+// Fetch recent quest history for a wallet
+async function fetchHistory(wallet) {
+  try {
+    const rows = await db.all(
+      `SELECT id, quest_id AS questId, title, xp, completed_at
+         FROM quest_history
+        WHERE wallet = ?
+        ORDER BY id DESC
+        LIMIT 50`,
+      wallet
+    );
+    if (Array.isArray(rows)) return rows;
+  } catch {
+    /* table may not exist */
+  }
+  try {
+    const rows = await db.all(
+      `SELECT c.rowid AS id, c.quest_id AS questId, q.title AS title, q.xp AS xp, c.timestamp AS completed_at
+         FROM completed_quests c
+         JOIN quests q ON q.id = c.quest_id
+        WHERE c.wallet = ?
+        ORDER BY c.timestamp DESC
+        LIMIT 50`,
+      wallet
+    );
+    if (Array.isArray(rows)) return rows;
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
 const router = express.Router();
 
 function makeRefCode(id) {
@@ -27,7 +59,7 @@ router.get("/me", async (req, res) => {
     );
 
     let row = await db.get(
-      `SELECT id, wallet, xp, referral_code, twitterHandle, telegramHandle, telegramId, discordId, discordHandle
+      `SELECT id, wallet, xp, tier, referral_code, twitterHandle, telegramHandle, telegramId, discordId, discordHandle
          FROM users WHERE wallet = ?`,
       wallet
     );
@@ -60,12 +92,18 @@ router.get("/me", async (req, res) => {
       },
     };
 
+    const questHistory = await fetchHistory(row.wallet);
+
     return res.json({
       user: {
         wallet: row.wallet,
         xp,
-        level: lvl.levelIndex,
+        levelName: lvl.levelName,
+        levelProgress: lvl.progress,
+        nextXP: lvl.nextNeed,
+        subscriptionTier: row.tier || "Free",
         referral_code: row.referral_code,
+        questHistory,
         socials,
       },
     });
