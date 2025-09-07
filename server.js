@@ -22,6 +22,8 @@ import sessionRoutes from "./routes/sessionRoutes.js";
 import usersRoutes from "./routes/usersRoutes.js";
 import socialRoutes from "./routes/socialRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import questTelegramRoutes from "./routes/questTelegramRoutes.js";
+import questDiscordRoutes from "./routes/questDiscordRoutes.js";
 import runSqliteMigrations from "./db/migrateProofs.js";
 import proofRoutes from "./routes/proofRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
@@ -103,6 +105,14 @@ app.use(
   })
 );
 
+// expose session wallet as req.user.wallet for convenience
+app.use((req, _res, next) => {
+  if (req.session?.wallet && !req.user) {
+    req.user = { wallet: req.session.wallet };
+  }
+  next();
+});
+
 app.get("/healthz", async (_req, res) => {
   try {
     await db.exec(
@@ -139,6 +149,8 @@ await ensureSchema();
 
 app.use(metaRoutes);
 app.use(questRoutes);
+app.use(questTelegramRoutes);
+app.use(questDiscordRoutes);
 app.use("/api/proofs", proofRoutes);
 app.use("/api/users", usersRoutes);
 app.use(userRoutes);
