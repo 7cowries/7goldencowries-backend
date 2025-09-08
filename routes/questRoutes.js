@@ -7,7 +7,7 @@ import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
 import inferVendor from "../utils/vendor.js";
-import { isRateLimited } from "../utils/limits.js";
+import { bump } from "../utils/limits.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -244,7 +244,7 @@ router.post("/api/quests/submit-proof", async (req, res) => {
     const url = String(req.body?.url || "").trim();
     if (!questId || !url) return res.status(400).json({ status: "rejected", reason: "bad-args" });
 
-    if (isRateLimited(`${req.ip}:${wallet}:proof`, 10)) {
+    if (bump(`${req.ip}:${wallet}:proof`, { limit: 10 })) {
       return res.status(429).json({ error: "rate_limited" });
     }
 
@@ -334,7 +334,7 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
       return res.status(400).json({ error: "bad-args" });
     }
 
-    if (isRateLimited(`${req.ip}:${wallet}:proof`, 10)) {
+    if (bump(`${req.ip}:${wallet}:proof`, { limit: 10 })) {
       return res.status(429).json({ error: "rate_limited" });
     }
 
@@ -416,7 +416,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
     if (!questId) return res.status(400).json({ ok: false, error: "bad-args" });
 
-    if (isRateLimited(`${req.ip}:${wallet}:claim`, 10)) {
+    if (bump(`${req.ip}:${wallet}:claim`, { limit: 10 })) {
       return res.status(429).json({ error: "rate_limited" });
     }
 
@@ -472,7 +472,7 @@ router.post("/api/quests/claim", async (req, res) => {
         .status(400)
         .json({ ok: false, error: "Missing wallet address" });
     }
-    if (isRateLimited(`${req.ip}:${wallet}:claim`, 10)) {
+    if (bump(`${req.ip}:${wallet}:claim`, { limit: 10 })) {
       return res.status(429).json({ error: "rate_limited" });
     }
     if (questIdentifier === undefined || questIdentifier === null || questIdentifier === "") {

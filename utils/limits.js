@@ -1,12 +1,14 @@
 const buckets = new Map();
 
 /**
- * Simple in-memory rate limiter. Returns true if the key has exceeded limit.
- * @param {string} key unique key (ip:wallet:bucket)
- * @param {number} limit number of allowed actions per window
- * @param {number} windowMs window size in milliseconds (default 60000)
+ * Increment usage for a key and check if limit exceeded.
+ * @param {string} key e.g. `${ip}:${wallet}:proof`
+ * @param {object} opts { limit=10, windowMs=60000 }
+ * @returns {boolean} true if rate limited
  */
-export function isRateLimited(key, limit, windowMs = 60000) {
+export function bump(key, opts = {}) {
+  const limit = Number(opts.limit ?? 10);
+  const windowMs = Number(opts.windowMs ?? 60000);
   const now = Date.now();
   const entry = buckets.get(key);
   if (!entry || now - entry.ts > windowMs) {
@@ -17,4 +19,7 @@ export function isRateLimited(key, limit, windowMs = 60000) {
   return entry.count > limit;
 }
 
-export default isRateLimited;
+export const isRateLimited = (key, limit, windowMs = 60000) =>
+  bump(key, { limit, windowMs });
+
+export default bump;
