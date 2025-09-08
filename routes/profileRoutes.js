@@ -145,7 +145,15 @@ router.get("/", async (req, res) => {
       });
     }
     const data = await buildProfile(wallet);
-    res.json(data);
+    const p = data.profile;
+    res.json({
+      wallet: p.wallet,
+      levelName: p.levelName,
+      xp: p.xp,
+      levelProgress: p.levelProgress,
+      tier: p.tier,
+      twitterHandle: p.twitterHandle || undefined,
+    });
   } catch (e) {
     console.error("Profile route error:", e);
     // Typo fixed: previously used non-existent `njson`,
@@ -162,7 +170,15 @@ router.get("/:wallet", async (req, res) => {
     const wallet = resolveWallet(req);
     if (!wallet) return res.status(400).json({ error: "Missing wallet" });
     const data = await buildProfile(wallet);
-    res.json(data);
+    const p = data.profile;
+    res.json({
+      wallet: p.wallet,
+      levelName: p.levelName,
+      xp: p.xp,
+      levelProgress: p.levelProgress,
+      tier: p.tier,
+      twitterHandle: p.twitterHandle || undefined,
+    });
   } catch (e) {
     console.error("Profile route error:", e);
     res.status(500).json({ error: "Failed to load profile" });
