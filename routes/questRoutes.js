@@ -8,8 +8,6 @@ import { awardQuest } from "../lib/quests.js";
 import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
-import { parseTweetId, isValidTweetUrl } from "../utils/tweet.js";
-import { inferVendor } from "../utils/vendor.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -146,13 +144,36 @@ async function listQuestsHandler(req, res) {
         const key = String(r.quest_id);
         if (!proofMap.has(key)) proofMap.set(key, r.status);
       }
-      quests = quests.map((q) => ({
-        ...q,
-        completed: completedSet.has(String(q.id)),
-        proofStatus: proofMap.get(String(q.id)) || "none",
-      }));
+      quests = quests.map((q) => {
+        const status = proofMap.get(String(q.id));
+        const proofStatus =
+          status === "pending" || status === "approved" ? status : null;
+        return {
+          id: q.id,
+          title: q.title,
+          category: q.category,
+          type: q.type,
+          requirement: q.requirement,
+          url: q.url,
+          xp: q.xp,
+          active: q.active,
+          completed: completedSet.has(String(q.id)),
+          proofStatus,
+        };
+      });
     } else {
-      quests = quests.map((q) => ({ ...q, completed: false, proofStatus: "none" }));
+      quests = quests.map((q) => ({
+        id: q.id,
+        title: q.title,
+        category: q.category,
+        type: q.type,
+        requirement: q.requirement,
+        url: q.url,
+        xp: q.xp,
+        active: q.active,
+        completed: false,
+        proofStatus: null,
+      }));
     }
     if (String(req.query.flat || "") === "1") return res.json(quests);
     return res.json({ quests });
@@ -312,29 +333,39 @@ router.get("/api/quests/proof-status", async (req, res) => {
 router.post("/api/quests/:questId/proofs", async (req, res) => {
   try {
     const questId = req.params.questId;
-    const wallet = req.session?.wallet || String(req.body?.wallet || "").trim();
+    const wallet = req.session?.wallet || null;
     const url = String(req.body?.url || "").trim();
     if (!questId || !wallet || !url) {
       return res.status(400).json({ error: "bad-args" });
     }
 
-    const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
+    const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ error: "quest-not-found" });
 
-    const rawVendor = inferVendor(url) || "link";
-    const vendor = ["twitter", "telegram", "discord"].includes(rawVendor)
-      ? rawVendor
-      : "link";
+    const twitterRe = /(twitter|x)\.com\/[^/]+\/status\/\d+/i;
+    const telegramRe = /t\.me\/./i;
+    const discordRe = /(discord\.gg|discord\.com\/invite|discord\.com\/channels)/i;
+    let vendor = "link";
+    if (twitterRe.test(url)) vendor = "twitter";
+    else if (telegramRe.test(url)) vendor = "telegram";
+    else if (discordRe.test(url)) vendor = "discord";
+
     let status = "pending";
-    const reqType = quest.requirement || "none";
-    if (reqType === "link") {
-      status = url ? "approved" : "pending";
-    } else if (["tweet", "retweet", "quote"].includes(reqType)) {
-      if (vendor === "twitter" && isValidTweetUrl(url)) status = "approved";
-    } else if (reqType === "join_telegram") {
-      if (vendor === "telegram") status = "approved";
-    } else if (reqType === "join_discord") {
-      if (vendor === "discord") status = "approved";
+    let headOk = false;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 3000);
+      const r = await fetch(url, { method: "HEAD", redirect: "manual", signal: ctrl.signal });
+      clearTimeout(t);
+      headOk = r.ok;
+    } catch {
+      headOk = false;
+    }
+
+    if (headOk && vendor === "twitter" && /status\/\d+/i.test(url)) {
+      status = "approved";
+    } else if (headOk && vendor === "link") {
+      status = "approved";
     }
 
     const existing = await db.get(
@@ -361,9 +392,6 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
       );
     }
 
-    if (status === "approved") {
-      await awardQuest(wallet, quest.id);
-    }
     delCache(`user:${wallet}`);
     delCache("leaderboard");
     return res.json({ status });
@@ -376,11 +404,10 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
   try {
     const wallet = req.session?.wallet;
     if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
-    const questId =
-      req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
+    const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
     if (!questId) return res.status(400).json({ ok: false, error: "bad-args" });
 
-    const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
+    const quest = await db.get(`SELECT id, requirement, title FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
 
     if (quest.requirement && quest.requirement !== "none") {
@@ -390,19 +417,30 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
         quest.id
       );
       if (!proof || proof.status !== "approved") {
-        return res.status(403).json({ ok: false, error: "proof-required" });
+        return res.status(403).json({ ok: false, error: "proof_required" });
       }
     }
 
     const result = await awardQuest(wallet, quest.id);
+    if (result.ok && !result.already) {
+      try {
+        await db.run(
+          `INSERT INTO quest_history (wallet, quest_id, title, xp) VALUES (?,?,?,?)`,
+          wallet,
+          quest.id,
+          quest.title || "",
+          result.xpGain
+        );
+      } catch {
+        /* ignore if table missing */
+      }
+    }
     delCache(`user:${wallet}`);
     delCache("leaderboard");
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
-    const body = { ok: true, xpGain: result.xpGain };
-    if (result.already) body.already = true;
-    return res.json(body);
+    return res.json({ ok: true, xpDelta: result.xpGain });
   } catch (err) {
     console.error("claim error", err);
     res.status(500).json({ ok: false, error: "server-error" });

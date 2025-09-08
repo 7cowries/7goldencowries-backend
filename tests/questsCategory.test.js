@@ -30,9 +30,11 @@ describe('quests api', () => {
   });
 
   test('inserts proofs', async () => {
-    const res = await request(app)
+    const agent = request.agent(app);
+    await agent.post('/api/session/bind-wallet').send({ wallet: 'w1' });
+    const res = await agent
       .post('/api/quests/1/proofs')
-      .send({ wallet: 'w1', url: 'https://x.com/t/1' });
+      .send({ url: 'https://x.com/t/1' });
     expect(res.body.status).toBe('pending');
     const row = await db.get('SELECT wallet,vendor,url FROM quest_proofs WHERE quest_id=1 AND wallet=?', 'w1');
     expect(row.url).toBe('https://x.com/t/1');

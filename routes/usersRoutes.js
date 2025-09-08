@@ -7,7 +7,7 @@ import { getSessionWallet } from "../utils/session.js";
 async function fetchHistory(wallet) {
   try {
     const rows = await db.all(
-      `SELECT id, quest_id AS questId, title, xp, completed_at
+      `SELECT id, quest_id, title, xp, completed_at
          FROM quest_history
         WHERE wallet = ?
         ORDER BY id DESC
@@ -16,7 +16,8 @@ async function fetchHistory(wallet) {
     );
     if (Array.isArray(rows))
       return rows.map((r) => ({
-        questId: r.questId,
+        id: r.id,
+        quest_id: r.quest_id,
         title: r.title,
         xp: r.xp,
         completed_at: r.completed_at,
@@ -26,7 +27,7 @@ async function fetchHistory(wallet) {
   }
   try {
     const rows = await db.all(
-      `SELECT c.rowid AS id, c.quest_id AS questId, q.title AS title, q.xp AS xp, c.timestamp AS completed_at
+      `SELECT c.rowid AS id, c.quest_id, q.title AS title, q.xp AS xp, c.timestamp AS completed_at
          FROM completed_quests c
          JOIN quests q ON q.id = c.quest_id
         WHERE c.wallet = ?
@@ -36,7 +37,8 @@ async function fetchHistory(wallet) {
     );
     if (Array.isArray(rows))
       return rows.map((r) => ({
-        questId: r.questId,
+        id: r.id,
+        quest_id: r.quest_id,
         title: r.title,
         xp: r.xp,
         completed_at: r.completed_at,

@@ -3,6 +3,7 @@ import express from "express";
 import db from "../db.js";
 
 const r = express.Router();
+const cooldown = new Map();
 
 /** Ensure the user row exists (first-time visitors) */
 async function ensureUser(wallet) {
@@ -22,14 +23,23 @@ r.post("/bind-wallet", async (req, res) => {
     const w = String(req.body?.wallet || "").trim();
     if (!w) return res.status(400).json({ error: "Missing wallet" });
 
-    // store in cookie-session (cross-site cookie already enabled in server.js)
+    if (req.session.wallet && req.session.wallet === w) {
+      return res.json({ ok: true });
+    }
+
+    const key = req.sessionID || req.ip;
+    const now = Date.now();
+    const last = cooldown.get(key) || 0;
+    if (now - last < 3000) {
+      return res.json({ ok: true });
+    }
+    cooldown.set(key, now);
+
     req.session.wallet = w;
     if (req.session.save) req.session.save(() => {});
 
-    // make sure a user row exists
     await ensureUser(w);
 
-    // referral consumption
     const refCode = req.cookies?.referral_code || req.session?.referral_code;
     if (refCode) {
       try {

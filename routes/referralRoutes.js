@@ -148,7 +148,7 @@ publicRouter.get("/stats", requireAuth, async (req, res) => {
 publicRouter.get("/:code", async (req, res) => {
   try {
     const code = String(req.params.code || "").trim();
-    if (!code) return res.json({ referrals: [] });
+    if (!code) return res.json({ entries: [] });
     const rows = await db.all(
       `SELECT u.wallet, COALESCE(u.xp,0) AS xp, r.created_at AS joinedAt
          FROM referrals r
@@ -158,7 +158,7 @@ publicRouter.get("/:code", async (req, res) => {
         LIMIT 100`,
       [code]
     );
-    res.json({ referrals: rows });
+    res.json({ entries: rows });
   } catch (e) {
     console.error("referrals/:code error", e);
     res.status(500).json({ error: "Internal error" });
