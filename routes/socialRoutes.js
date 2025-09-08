@@ -4,6 +4,20 @@ import db from "../db.js";
 import passport from "../passport.js";
 import { getSessionWallet } from "../utils/session.js";
 
+async function upsertSocial(wallet, provider, data) {
+  try {
+    const row = await db.get("SELECT socials FROM users WHERE wallet = ?", [wallet]);
+    let socials = {};
+    if (row?.socials) {
+      try { socials = JSON.parse(row.socials); } catch {}
+    }
+    socials[provider] = { ...(socials[provider] || {}), ...data, connected: true };
+    await db.run("UPDATE users SET socials=? WHERE wallet=?", [JSON.stringify(socials), wallet]);
+  } catch (e) {
+    console.error("socials update error", e);
+  }
+}
+
 const router = express.Router();
 router.use(passport.initialize());
 router.use(passport.session());
@@ -80,14 +94,16 @@ router.get("/twitter/callback", (req, res, next) => {
     if (!wallet) return res.status(400).send("Missing wallet address");
     try {
       await db.run(
-        `INSERT INTO users (wallet, twitter_username, twitter_id, updatedAt)
-           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO users (wallet, twitter_username, twitter_id, twitterHandle, updatedAt)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(wallet) DO UPDATE SET
              twitter_username=excluded.twitter_username,
              twitter_id=excluded.twitter_id,
+             twitterHandle=excluded.twitterHandle,
              updatedAt=CURRENT_TIMESTAMP`,
-        [wallet, user.username, String(user.id)]
+        [wallet, user.username, String(user.id), user.username]
       );
+      await upsertSocial(wallet, "twitter", { handle: user.username, id: String(user.id) });
     } catch (e) {
       console.error("twitter db error", e);
     }
@@ -161,18 +177,36 @@ router.get("/discord/callback", async (req, res) => {
         ? `${me.username}#${me.discriminator}`
         : me.username;
     const did = String(me.id);
+    let guildMember = false;
+    if (process.env.DISCORD_GUILD_ID) {
+      try {
+        const gRes = await fetch("https://discord.com/api/users/@me/guilds", {
+          headers: { Authorization: `Bearer ${access}` },
+        });
+        if (gRes.ok) {
+          const guilds = await gRes.json();
+          guildMember = Array.isArray(guilds) && guilds.some((g) => String(g.id) === String(process.env.DISCORD_GUILD_ID));
+        }
+      } catch {}
+    }
     await db.run(
-      `INSERT INTO users (wallet, discord_username, discord_id, updatedAt)
-         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      `INSERT INTO users (wallet, discord_username, discord_id, discordHandle, discordId, discordGuildMember, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(wallet) DO UPDATE SET
            discord_username=excluded.discord_username,
            discord_id=excluded.discord_id,
+           discordHandle=excluded.discordHandle,
+           discordId=excluded.discordId,
+           discordGuildMember=excluded.discordGuildMember,
            updatedAt=CURRENT_TIMESTAMP`,
-      [wallet, username, did]
+      [wallet, username, did, username, did, guildMember ? 1 : 0]
     );
+    await upsertSocial(wallet, "discord", { id: did });
     req.session.discord_state = null;
     if (req.session.save) req.session.save(() => {});
-    return res.redirect(FRONTEND_URL + "/profile?connected=discord");
+    return res.redirect(
+      `${FRONTEND_URL}/profile?connected=discord&guildMember=${guildMember ? "true" : "false"}`
+    );
   } catch (e) {
     console.error("discord callback error", e);
     return res.redirect(FRONTEND_URL + "/profile?error=discord");
@@ -197,15 +231,19 @@ router.get("/telegram/callback", async (req, res) => {
     const wallet =
       getSessionWallet(req) || safelyDecodeBase64(req.query.state) || null;
     const username = req.query.username || null;
+    const tid = req.query.id ? String(req.query.id) : null;
     if (wallet && username) {
       await db.run(
-        `INSERT INTO users (wallet, telegram_username, updatedAt)
-           VALUES (?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO users (wallet, telegram_username, telegramHandle, telegramId, updatedAt)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(wallet) DO UPDATE SET
              telegram_username=excluded.telegram_username,
+             telegramHandle=excluded.telegramHandle,
+             telegramId=excluded.telegramId,
              updatedAt=CURRENT_TIMESTAMP`,
-        [wallet, username]
+        [wallet, username, username, tid]
       );
+      await upsertSocial(wallet, "telegram", { username, id: tid });
     }
     return res.redirect(FRONTEND_URL + "/profile?connected=telegram");
   } catch (e) {

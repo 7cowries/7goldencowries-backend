@@ -30,6 +30,8 @@ import proofRoutes from "./routes/proofRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import refRedirectRoutes from "./routes/refRedirectRoutes.js";
 import tonVerifyRoutes from "./routes/tonVerifyRoutes.js";
+import authStartRoutes from "./routes/authStartRoutes.js";
+import referralLookupRoutes from "./routes/referralLookupRoutes.js";
 
 dotenv.config();
 const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
@@ -168,8 +170,10 @@ app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
 app.use("/api/session", sessionRoutes);
+app.use("/api/auth", authStartRoutes);
 app.use("/auth", socialRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/referrals", referralLookupRoutes);
 app.use(tonVerifyRoutes);
 app.use(healthRoutes);
 app.use(refRedirectRoutes);
@@ -178,11 +182,6 @@ const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   process.env.CLIENT_URL ||
   "https://7goldencowries.com";
-
-app.get("/referrals/:code", (req, res) => {
-  const { code } = req.params;
-  res.redirect(302, `${FRONTEND_URL}/?ref=${encodeURIComponent(code)}`);
-});
 
 // temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));

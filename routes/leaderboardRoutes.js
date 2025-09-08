@@ -37,7 +37,7 @@ router.get("/", async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset ?? "0", 10) || 0);
 
     const rows = await db.all(
-      `SELECT u.wallet, COALESCE(u.xp,0) AS xp, u.twitterHandle, u.tier
+      `SELECT u.wallet, COALESCE(u.xp,0) AS xp, u.twitterHandle, u.twitter_username, u.tier
          FROM users u
         WHERE u.wallet IS NOT NULL
         ORDER BY COALESCE(u.xp,0) DESC, u.wallet ASC
@@ -51,12 +51,13 @@ router.get("/", async (req, res) => {
     );
     const entries = (rows || []).map((r, i) => {
       const lvl = deriveLevel(r.xp || 0);
+      const prog = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
       return {
         wallet: r.wallet || "",
         xp: Number(r.xp ?? 0),
-        twitterHandle: r.twitterHandle || undefined,
+        twitterHandle: r.twitterHandle || r.twitter_username || undefined,
         levelName: lvl.levelName,
-        progress: Math.min(1, Math.max(0, lvl.progress)),
+        progress: Math.min(1, Math.max(0, prog)),
         rank: offset + i + 1,
         tier: r.tier || undefined,
       };
