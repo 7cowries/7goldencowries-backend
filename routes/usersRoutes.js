@@ -88,7 +88,8 @@ router.get("/me", async (req, res) => {
 
     const xp = row.xp ?? 0;
     const lvl = deriveLevel(xp);
-    const progress = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
+    const rawProgress = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
+    const progress = Math.max(0, Math.min(1, rawProgress));
     let socialsData = {};
     try {
       socialsData = row.socials ? JSON.parse(row.socials) : {};
@@ -134,7 +135,7 @@ router.get("/me", async (req, res) => {
     return res.json({ user: payload });
   } catch (e) {
     console.error("GET /api/users/me error", e);
-    return res.status(500).json({ error: "internal" });
+    return res.json({ user: null });
   }
 });
 
