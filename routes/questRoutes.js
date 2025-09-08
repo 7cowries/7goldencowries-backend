@@ -8,6 +8,7 @@ import { awardQuest } from "../lib/quests.js";
 import { getTierMultiplier } from "../utils/tier.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
+import inferVendor from "../utils/vendor.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -23,7 +24,15 @@ const router = express.Router();
 
 const proofLimiter = rateLimit({
   windowMs: 60_000,
-  max: 5,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
+});
+
+const claimLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
@@ -330,7 +339,7 @@ router.get("/api/quests/proof-status", async (req, res) => {
 });
 
 // Simplified proof submission
-router.post("/api/quests/:questId/proofs", async (req, res) => {
+router.post("/api/quests/:questId/proofs", proofLimiter, async (req, res) => {
   try {
     const questId = req.params.questId;
     const wallet = req.session?.wallet || null;
@@ -342,13 +351,7 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
     const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ error: "quest-not-found" });
 
-    const twitterRe = /(twitter|x)\.com\/[^/]+\/status\/\d+/i;
-    const telegramRe = /t\.me\/./i;
-    const discordRe = /(discord\.gg|discord\.com\/invite|discord\.com\/channels)/i;
-    let vendor = "link";
-    if (twitterRe.test(url)) vendor = "twitter";
-    else if (telegramRe.test(url)) vendor = "telegram";
-    else if (discordRe.test(url)) vendor = "discord";
+    const vendor = inferVendor(url);
 
     let status = "pending";
     let headOk = false;
@@ -362,9 +365,7 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
       headOk = false;
     }
 
-    if (headOk && vendor === "twitter" && /status\/\d+/i.test(url)) {
-      status = "approved";
-    } else if (headOk && vendor === "link") {
+    if (headOk && (vendor === "twitter" || vendor === "link")) {
       status = "approved";
     }
 
@@ -394,13 +395,14 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
 
     delCache(`user:${wallet}`);
     delCache("leaderboard");
+    console.log("proof_submitted", { wallet, questId: quest.id, ts: Date.now() });
     return res.json({ status });
   } catch (err) {
     console.error("proof submit error", err);
     res.status(500).json({ error: "server-error" });
   }
 });
-router.post("/api/quests/:questId/claim", async (req, res) => {
+router.post("/api/quests/:questId/claim", claimLimiter, async (req, res) => {
   try {
     const wallet = req.session?.wallet;
     if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
@@ -437,6 +439,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     }
     delCache(`user:${wallet}`);
     delCache("leaderboard");
+    console.log("quest_claimed", { wallet, questId: quest.id, ts: Date.now() });
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
@@ -448,7 +451,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
 });
 
 // Idempotent quest XP claim
-router.post("/api/quests/claim", async (req, res) => {
+router.post("/api/quests/claim", claimLimiter, async (req, res) => {
   try {
     const wallet =
       req.session.wallet || (req.query.wallet ? String(req.query.wallet) : null);
@@ -487,6 +490,7 @@ router.post("/api/quests/claim", async (req, res) => {
       return res.status(404).json({ ok: false, error: result.error });
     }
     delCache(`user:${wallet}`);
+    console.log("quest_claimed", { wallet, questId: qrow.id, ts: Date.now() });
 
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
     const newTotalXp = row?.xp ?? 0;

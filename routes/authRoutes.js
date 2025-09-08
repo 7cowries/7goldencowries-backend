@@ -401,4 +401,20 @@ router.get("/session-debug", (req, res) => {
   res.json({ session: req.session });
 });
 
+// --- /api/auth/*/start aliases ---
+router.get("/api/auth/twitter/start", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(302, `/auth/twitter${qs}`);
+});
+
+router.get("/api/auth/discord/start", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(302, `/auth/discord${qs}`);
+});
+
+router.get("/api/auth/telegram/start", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(302, `/auth/telegram/start${qs}`);
+});
+
 export default router;

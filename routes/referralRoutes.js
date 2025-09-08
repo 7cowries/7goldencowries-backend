@@ -78,7 +78,9 @@ publicRouter.post("/accept", requireAuth, async (req, res) => {
   try {
     const refereeId = req.user.id;
     const code = (req.body?.code || "").trim();
-    if (!code) return res.status(400).json({ error: "Missing code" });
+    const CODE_RE = /^[A-Z0-9_-]{4,64}$/i;
+    if (!code || !CODE_RE.test(code))
+      return res.status(400).json({ error: "Invalid code" });
 
     // who owns this code?
     const referrer = await db.get("SELECT id FROM users WHERE referral_code=?", [code]);
@@ -148,7 +150,8 @@ publicRouter.get("/stats", requireAuth, async (req, res) => {
 publicRouter.get("/:code", async (req, res) => {
   try {
     const code = String(req.params.code || "").trim();
-    if (!code) return res.json({ entries: [] });
+    const CODE_RE = /^[A-Z0-9_-]{4,64}$/i;
+    if (!code || !CODE_RE.test(code)) return res.json({ entries: [] });
     const rows = await db.all(
       `SELECT u.wallet, COALESCE(u.xp,0) AS xp, r.created_at AS joinedAt
          FROM referrals r

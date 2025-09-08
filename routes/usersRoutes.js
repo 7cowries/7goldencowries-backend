@@ -90,6 +90,7 @@ router.get("/me", async (req, res) => {
 
     const xp = row.xp ?? 0;
     const lvl = deriveLevel(xp);
+    const progress = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
     const socials = {
       twitter: {
         connected: !!row.twitterHandle,
@@ -108,20 +109,22 @@ router.get("/me", async (req, res) => {
 
     const questHistory = await fetchHistory(row.wallet);
 
-    return res.json({
-      user: {
-        wallet: row.wallet,
-        xp,
-        levelName: lvl.levelName,
-        levelProgress: lvl.progress,
-        nextXP: lvl.nextNeed,
-        subscriptionTier: row.tier || "Free",
-        tier: row.tier || "Free",
-        referral_code: row.referral_code,
-        questHistory,
-        socials,
-      },
-    });
+    const payload = {
+      wallet: row.wallet,
+      xp,
+      levelName: lvl.levelName,
+      levelProgress: progress,
+      nextXP: lvl.nextNeed,
+      subscriptionTier: row.tier || "Free",
+      tier: row.tier || "Free",
+      referral_code: row.referral_code,
+      questHistory,
+      socials,
+      twitterHandle: row.twitterHandle || undefined,
+    };
+
+    if (String(req.query.flat || "") === "1") return res.json(payload);
+    return res.json({ user: payload });
   } catch (e) {
     console.error("GET /api/users/me error", e);
     return res.status(500).json({ error: "internal" });
