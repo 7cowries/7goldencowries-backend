@@ -2,6 +2,7 @@
 import express from "express";
 import crypto from "crypto";
 import db from "../db.js";
+import { upsertSocial } from "../utils/socials.js";
 
 const router = express.Router();
 
@@ -229,8 +230,9 @@ router.get("/auth/telegram/callback", async (req, res) => {
       wallet,
       tgUsername
     );
+    await upsertSocial(wallet, 'telegram', { username: tgUsername, id: tgId });
 
-    return res.redirect(`${FRONTEND_URL}/profile?linked=telegram`);
+    return res.redirect(`${FRONTEND_URL}/profile?connected=telegram`);
   } catch (e) {
     console.error("Telegram callback error:", e);
     return res.redirect(

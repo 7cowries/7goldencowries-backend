@@ -5,10 +5,9 @@ import db from "../db.js";
 import { deriveLevel } from "../config/progression.js";
 import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
-import { getTierMultiplier } from "../utils/tier.js";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
 import inferVendor from "../utils/vendor.js";
+import { isRateLimited } from "../utils/limits.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -21,23 +20,6 @@ function categoryFor(id) {
 }
 
 const router = express.Router();
-
-const proofLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
-});
-
-const claimLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req, _res) => req.session?.wallet || ipKeyGenerator(req),
-});
-
 
 /* ========= ENV used for verification ========= */
 const TGBOT = process.env.TELEGRAM_BOT_TOKEN;
@@ -248,7 +230,7 @@ router.get("/quest/journal/:wallet", journalHandler);      // legacy
 router.get("/journal/:wallet", journalHandler);            // extra alias
 
 /** Submit a Twitter/X proof URL */
-router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
+router.post("/api/quests/submit-proof", async (req, res) => {
   try {
     const sessionWallet = req.session?.wallet || null;
     const walletParam = String(req.body?.wallet || req.query.wallet || "").trim();
@@ -261,6 +243,10 @@ router.post("/api/quests/submit-proof", proofLimiter, async (req, res) => {
     ).trim();
     const url = String(req.body?.url || "").trim();
     if (!questId || !url) return res.status(400).json({ status: "rejected", reason: "bad-args" });
+
+    if (isRateLimited(`${req.ip}:${wallet}:proof`, 10)) {
+      return res.status(429).json({ error: "rate_limited" });
+    }
 
     const quest = await db.get(`SELECT requirement, active FROM quests WHERE id = ?`, questId);
     if (!quest || quest.active !== 1) {
@@ -339,7 +325,7 @@ router.get("/api/quests/proof-status", async (req, res) => {
 });
 
 // Simplified proof submission
-router.post("/api/quests/:questId/proofs", proofLimiter, async (req, res) => {
+router.post("/api/quests/:questId/proofs", async (req, res) => {
   try {
     const questId = req.params.questId;
     const wallet = req.session?.wallet || null;
@@ -348,25 +334,42 @@ router.post("/api/quests/:questId/proofs", proofLimiter, async (req, res) => {
       return res.status(400).json({ error: "bad-args" });
     }
 
-    const quest = await db.get(`SELECT id FROM quests WHERE id = ?`, questId);
-    if (!quest) return res.status(404).json({ error: "quest-not-found" });
-
-    const vendor = inferVendor(url);
-
-    let status = "pending";
-    let headOk = false;
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 3000);
-      const r = await fetch(url, { method: "HEAD", redirect: "manual", signal: ctrl.signal });
-      clearTimeout(t);
-      headOk = r.ok;
-    } catch {
-      headOk = false;
+    if (isRateLimited(`${req.ip}:${wallet}:proof`, 10)) {
+      return res.status(429).json({ error: "rate_limited" });
     }
 
-    if (headOk && (vendor === "twitter" || vendor === "link")) {
-      status = "approved";
+    const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
+    if (!quest) return res.status(404).json({ error: "quest-not-found" });
+
+    let vendor = inferVendor(url);
+    let status = "pending";
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      switch (quest.requirement) {
+        case "tweet":
+        case "retweet":
+        case "quote":
+          if (/(^|\.)(twitter|x)\.com$/.test(host)) status = "approved";
+          vendor = "twitter";
+          break;
+        case "join_telegram":
+          if (/(^|\.)t(elegram)?\.me$/.test(host)) status = "approved";
+          vendor = "telegram";
+          break;
+        case "join_discord":
+          if (/discord\.(gg|com)$/.test(host)) status = "approved";
+          vendor = "discord";
+          break;
+        case "link":
+          if (u.protocol === "http:" || u.protocol === "https:") status = "approved";
+          vendor = vendor || "link";
+          break;
+        default:
+          break;
+      }
+    } catch {
+      return res.status(400).json({ error: "bad-url" });
     }
 
     const existing = await db.get(
@@ -393,8 +396,12 @@ router.post("/api/quests/:questId/proofs", proofLimiter, async (req, res) => {
       );
     }
 
-    delCache(`user:${wallet}`);
-    delCache("leaderboard");
+    if (status === "approved" && quest.requirement !== "none") {
+      await awardQuest(wallet, quest.id);
+      delCache(`user:${wallet}`);
+      delCache("leaderboard");
+    }
+
     console.log("proof_submitted", { wallet, questId: quest.id, ts: Date.now() });
     return res.json({ status });
   } catch (err) {
@@ -402,12 +409,16 @@ router.post("/api/quests/:questId/proofs", proofLimiter, async (req, res) => {
     res.status(500).json({ error: "server-error" });
   }
 });
-router.post("/api/quests/:questId/claim", claimLimiter, async (req, res) => {
+router.post("/api/quests/:questId/claim", async (req, res) => {
   try {
     const wallet = req.session?.wallet;
     if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
     const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
     if (!questId) return res.status(400).json({ ok: false, error: "bad-args" });
+
+    if (isRateLimited(`${req.ip}:${wallet}:claim`, 10)) {
+      return res.status(429).json({ error: "rate_limited" });
+    }
 
     const quest = await db.get(`SELECT id, requirement, title FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
@@ -439,11 +450,11 @@ router.post("/api/quests/:questId/claim", claimLimiter, async (req, res) => {
     }
     delCache(`user:${wallet}`);
     delCache("leaderboard");
-    console.log("quest_claimed", { wallet, questId: quest.id, xpDelta: result.xpGain, ts: Date.now() });
+    console.log("quest_claimed", { wallet, questId: quest.id, xpGain: result.xpGain, ts: Date.now() });
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
-    return res.json({ ok: true, xpDelta: result.xpGain });
+    return res.json({ ok: true, xpGain: result.xpGain, already: result.already || undefined });
   } catch (err) {
     console.error("claim error", err);
     res.status(500).json({ ok: false, error: "server-error" });
@@ -451,7 +462,7 @@ router.post("/api/quests/:questId/claim", claimLimiter, async (req, res) => {
 });
 
 // Idempotent quest XP claim
-router.post("/api/quests/claim", claimLimiter, async (req, res) => {
+router.post("/api/quests/claim", async (req, res) => {
   try {
     const wallet =
       req.session.wallet || (req.query.wallet ? String(req.query.wallet) : null);
@@ -461,14 +472,17 @@ router.post("/api/quests/claim", claimLimiter, async (req, res) => {
         .status(400)
         .json({ ok: false, error: "Missing wallet address" });
     }
+    if (isRateLimited(`${req.ip}:${wallet}:claim`, 10)) {
+      return res.status(429).json({ error: "rate_limited" });
+    }
     if (questIdentifier === undefined || questIdentifier === null || questIdentifier === "") {
       return res.status(400).json({ ok: false, error: "bad-args" });
     }
 
-    let qrow = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questIdentifier);
+    let qrow = await db.get(`SELECT id, requirement, title FROM quests WHERE id = ?`, questIdentifier);
     if (!qrow && typeof questIdentifier === "string" && questIdentifier !== "") {
       try {
-        qrow = await db.get(`SELECT id, requirement FROM quests WHERE code = ?`, questIdentifier);
+        qrow = await db.get(`SELECT id, requirement, title FROM quests WHERE code = ?`, questIdentifier);
       } catch {}
     }
     if (!qrow) {
@@ -490,7 +504,7 @@ router.post("/api/quests/claim", claimLimiter, async (req, res) => {
       return res.status(404).json({ ok: false, error: result.error });
     }
     delCache(`user:${wallet}`);
-    console.log("quest_claimed", { wallet, questId: qrow.id, xpDelta: result.xpGain, ts: Date.now() });
+    console.log("quest_claimed", { wallet, questId: qrow.id, xpGain: result.xpGain, ts: Date.now() });
 
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
     const newTotalXp = row?.xp ?? 0;
@@ -498,14 +512,11 @@ router.post("/api/quests/claim", claimLimiter, async (req, res) => {
 
     return res.json({
       ok: true,
-      questId: result.questId,
-      baseXp: result.baseXp,
-      multiplier: result.multiplier,
-      effectiveXp: result.xpGain,
+      xpGain: result.xpGain,
       newTotalXp,
       level: lvl.levelName,
       levelProgress: lvl.progress,
-      alreadyClaimed: result.already ? true : undefined,
+      already: result.already || undefined,
     });
   } catch (err) {
     console.error("Quest claim error:", err);

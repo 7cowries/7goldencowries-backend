@@ -20,19 +20,13 @@ describe('proof then claim flow', () => {
   test('submit proof, claim, re-claim idempotent', async () => {
     const agent = request.agent(app);
     await agent.post('/api/session/bind-wallet').send({ wallet: 'w1' });
-    let res = await agent
+    const res = await agent
       .post('/api/quests/qpc/proofs')
       .send({ url: 'https://example.com/proof' });
-    expect(res.body.status).toBe('pending');
-    let u1 = await db.get('SELECT xp FROM users WHERE wallet=?', 'w1');
-    expect(u1.xp).toBe(0);
-    await db.run("UPDATE quest_proofs SET status='approved' WHERE quest_id='qpc' AND wallet='w1'");
-    res = await agent.post('/api/quests/qpc/claim');
-    expect(res.body.ok).toBe(true);
-    expect(res.body.xpDelta).toBe(10);
-    u1 = await db.get('SELECT xp FROM users WHERE wallet=?', 'w1');
+    expect(res.body.status).toBe('approved');
+    const u1 = await db.get('SELECT xp FROM users WHERE wallet=?', 'w1');
     expect(u1.xp).toBe(10);
-    res = await agent.post('/api/quests/qpc/claim');
-    expect(res.body.xpDelta).toBe(0);
+    const again = await agent.post('/api/quests/qpc/claim');
+    expect(again.body.xpGain).toBe(0);
   });
 });

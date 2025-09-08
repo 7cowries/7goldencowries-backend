@@ -4,6 +4,7 @@
 import express from "express";
 import passport from "passport";
 import db from "../db.js";
+import { upsertSocial } from "../utils/socials.js";
 
 const router = express.Router();
 
@@ -101,10 +102,11 @@ router.get("/auth/twitter/callback", (req, res, next) => {
            ON CONFLICT(wallet) DO UPDATE SET twitter = excluded.twitter`,
           [wallet, twitterHandle]
         );
+        await upsertSocial(wallet, 'twitter', { handle: twitterHandle, id: String(user.id) });
 
         req.session.state = null;
         if (req.session.save) req.session.save(() => {});
-        return res.redirect(`${CLIENT_URL}/profile?linked=twitter`);
+        return res.redirect(`${CLIENT_URL}/profile?connected=twitter`);
       } catch (e) {
         console.error("❌ Twitter callback error:", e);
         return res
@@ -297,12 +299,11 @@ router.get("/auth/discord/callback", async (req, res) => {
        ON CONFLICT(wallet) DO UPDATE SET discord = excluded.discord`,
       [wallet, display]
     );
+    await upsertSocial(wallet, 'discord', { id: discordId, handle: display, guildMember: isMember });
 
     req.session.state = null;
     if (req.session.save) req.session.save(() => {});
-    const redirectUrl = isMember
-      ? `${CLIENT_URL}/profile?linked=discord&guildMember=true`
-      : `${CLIENT_URL}/profile?linked=discord&guildMember=false`;
+    const redirectUrl = `${CLIENT_URL}/profile?connected=discord&guildMember=${isMember ? 'true' : 'false'}`;
     return res.redirect(redirectUrl);
   } catch (e) {
     console.error("❌ Discord callback error:", e);

@@ -29,11 +29,11 @@ r.post("/bind-wallet", async (req, res) => {
 
     const key = req.sessionID || req.ip;
     const now = Date.now();
-    const last = cooldown.get(key) || 0;
-    if (now - last < 4000) {
+    const last = cooldown.get(key);
+    if (last && last.wallet === w && now - last.ts < 4000) {
       return res.json({ ok: true, bound: true });
     }
-    cooldown.set(key, now);
+    cooldown.set(key, { wallet: w, ts: now });
 
     req.session.wallet = w;
     if (req.session.save) req.session.save(() => {});
