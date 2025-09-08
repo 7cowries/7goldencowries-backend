@@ -1,6 +1,8 @@
 // routes/leaderboardRoutes.js
 import express from "express";
 import db from "../db.js";
+import { deriveLevel } from "../config/progression.js";
+import { getCache, setCache } from "../utils/cache.js";
 
 const router = express.Router();
 
@@ -12,6 +14,9 @@ const router = express.Router();
  */
 router.get("/", async (req, res) => {
   try {
+    const cached = getCache("leaderboard");
+    if (cached) return res.json(cached);
+
     const maxLimit = 100;
     const limit = Math.min(
       maxLimit,
@@ -20,7 +25,7 @@ router.get("/", async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset ?? "0", 10) || 0);
 
     const rows = await db.all(
-      `SELECT u.wallet, COALESCE(u.xp,0) AS xp
+      `SELECT u.wallet, COALESCE(u.xp,0) AS xp, u.twitterHandle
          FROM users u
         WHERE u.wallet IS NOT NULL
         ORDER BY COALESCE(u.xp,0) DESC, u.wallet ASC
@@ -32,13 +37,21 @@ router.get("/", async (req, res) => {
     const totalRow = await db.get(
       `SELECT COUNT(*) AS c FROM users WHERE wallet IS NOT NULL`
     );
-    const entries = (rows || []).map((r, i) => ({
-      wallet: r.wallet || "",
-      xp: Number(r.xp ?? 0),
-      rank: offset + i + 1,
-    }));
+    const entries = (rows || []).map((r, i) => {
+      const lvl = deriveLevel(r.xp || 0);
+      return {
+        wallet: r.wallet || "",
+        xp: Number(r.xp ?? 0),
+        twitterHandle: r.twitterHandle || null,
+        levelName: lvl.levelName,
+        progress: lvl.progress,
+        rank: offset + i + 1,
+      };
+    });
 
-    res.json({ entries, total: totalRow?.c ?? 0 });
+    const data = { entries, total: totalRow?.c ?? 0 };
+    setCache("leaderboard", data, 60000);
+    res.json(data);
   } catch (err) {
     console.error("Leaderboard error:", err);
     res.status(500).json({ entries: [], total: 0 });

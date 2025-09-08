@@ -13,27 +13,28 @@ export const LEVELS = [
 export function deriveLevel(total = 0) {
   const xpTotal = Math.max(0, Number(total) || 0);
 
-  let levelIndex = -1;
-  for (const lvl of LEVELS) {
-    if (xpTotal >= lvl.need) levelIndex = lvl.id - 1;
-    else break;
-  }
-
-  if (levelIndex === -1) {
-    const next = LEVELS[0];
+  // Below first threshold: still considered first level
+  if (xpTotal < LEVELS[0].need) {
+    const nextNeed = LEVELS[0].need;
     return {
-      levelName: "Unranked",
-      levelIndex: 0,
+      levelName: LEVELS[0].key,
+      levelIndex: LEVELS[0].id,
       prevNeed: 0,
-      nextNeed: next.need,
-      progress: Math.min(xpTotal / next.need, 1),
+      nextNeed,
+      progress: Math.min(xpTotal / nextNeed, 1),
       xpTotal,
       maxXP: MAX_XP,
     };
   }
 
-  const current = LEVELS[levelIndex];
-  const next = LEVELS[levelIndex + 1];
+  // Find first level whose requirement exceeds current XP
+  let idx = 1;
+  for (; idx < LEVELS.length; idx++) {
+    if (xpTotal < LEVELS[idx].need) break;
+  }
+
+  const current = LEVELS[idx - 1];
+  const next = LEVELS[idx];
   const prevNeed = current.need;
   const nextNeed = next ? next.need : MAX_XP;
   const denom = nextNeed - prevNeed;

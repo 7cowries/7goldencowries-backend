@@ -324,9 +324,9 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
     const vendor = inferVendor(url);
     let status = "pending";
     const reqType = quest.requirement || "none";
-    if (reqType == "link" && url) {
+    if (["link", "join_telegram", "join_discord"].includes(reqType) && url) {
       status = "approved";
-    } else if (reqType == "tweet" && vendor == "twitter" && isValidTweetUrl(url)) {
+    } else if (["tweet", "retweet", "quote"].includes(reqType) && vendor == "twitter" && isValidTweetUrl(url)) {
       status = "approved";
     }
 

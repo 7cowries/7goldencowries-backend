@@ -1,9 +1,9 @@
 import { deriveLevel } from '../config/progression.js';
 
 describe('deriveLevel', () => {
-  test('handles negative xp', () => {
+  test('handles low or negative xp as Shellborn', () => {
     const lvl = deriveLevel(-5);
-    expect(lvl.levelName).toBe('Unranked');
+    expect(lvl.levelName).toBe('Shellborn');
     expect(lvl.progress).toBe(0);
   });
 

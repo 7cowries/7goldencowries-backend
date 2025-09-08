@@ -165,7 +165,7 @@ app.get("/api/leaderboard", async (_req, res) => {
         twitter: u.twitterHandle || null,
         xp: u.xp,
         tier: u.tier || "Free",
-        name: level.levelName || "Unranked",
+        name: level.levelName || "Shellborn",
         progress: level.progress || 0, // 0..1
         badge: `/images/badges/${badgeSlug}`,
       };
