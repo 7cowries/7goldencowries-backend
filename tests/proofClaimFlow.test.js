@@ -27,6 +27,6 @@ describe('proof then claim flow', () => {
     const u1 = await db.get('SELECT xp FROM users WHERE wallet=?', 'w1');
     expect(u1.xp).toBe(10);
     res = await agent.post('/api/quests/qpc/claim');
-    expect(res.status).toBe(409);
+    expect(res.body.already).toBe(true);
   });
 });

@@ -15,5 +15,6 @@ async function healthHandler(_req, res) {
 
 router.get("/health", healthHandler);
 router.get("/api/health", healthHandler); // alias for backward compatibility
+router.get("/healthz", healthHandler);
 
 export default router;

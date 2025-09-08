@@ -52,7 +52,10 @@ const defaultOrigins = [
 const origins = Array.from(
   new Set([
     ...defaultOrigins,
-    process.env.FRONTEND_URL,
+    ...(process.env.FRONTEND_URL || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     ...(process.env.CORS_ORIGINS || "")
       .split(",")
       .map((s) => s.trim())
@@ -128,17 +131,6 @@ app.use((req, _res, next) => {
     req.user = { wallet: req.session.wallet };
   }
   next();
-});
-
-app.get("/healthz", async (_req, res) => {
-  try {
-    await db.exec(
-      "BEGIN; CREATE TABLE IF NOT EXISTS __health (id INTEGER); DELETE FROM __health; INSERT INTO __health (id) VALUES (1); DELETE FROM __health; COMMIT;"
-    );
-    res.json({ ok: true, db: "rw" });
-  } catch (e) {
-    res.status(500).json({ ok: false, db: "error" });
-  }
 });
 
 async function ensureSchema() {
