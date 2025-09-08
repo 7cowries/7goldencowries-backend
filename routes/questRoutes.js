@@ -439,7 +439,7 @@ router.post("/api/quests/:questId/claim", claimLimiter, async (req, res) => {
     }
     delCache(`user:${wallet}`);
     delCache("leaderboard");
-    console.log("quest_claimed", { wallet, questId: quest.id, ts: Date.now() });
+    console.log("quest_claimed", { wallet, questId: quest.id, xpDelta: result.xpGain, ts: Date.now() });
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
@@ -490,7 +490,7 @@ router.post("/api/quests/claim", claimLimiter, async (req, res) => {
       return res.status(404).json({ ok: false, error: result.error });
     }
     delCache(`user:${wallet}`);
-    console.log("quest_claimed", { wallet, questId: qrow.id, ts: Date.now() });
+    console.log("quest_claimed", { wallet, questId: qrow.id, xpDelta: result.xpGain, ts: Date.now() });
 
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
     const newTotalXp = row?.xp ?? 0;

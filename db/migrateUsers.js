@@ -30,6 +30,7 @@ export async function ensureUsersSchema(db) {
     ['twitter_id', 'TEXT'],
     ['discord_username', 'TEXT'],
     ['discord_id', 'TEXT'],
+    ['socials', 'TEXT'],
     ['createdAt', 'TEXT'],
     ['updatedAt', 'TEXT'],
   ];
@@ -62,6 +63,7 @@ export async function ensureUsersSchema(db) {
       twitter_id TEXT,
       discord_username TEXT,
       discord_id TEXT,
+      socials TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       UNIQUE(referral_code)
@@ -126,6 +128,7 @@ export async function ensureUsersSchema(db) {
       twitter_id TEXT,
       discord_username TEXT,
       discord_id TEXT,
+      socials TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       UNIQUE(referral_code)
@@ -156,6 +159,7 @@ export async function backfillUsersDefaults(db) {
     levelSymbol   = COALESCE(levelSymbol, '🐚'),
     levelProgress = COALESCE(levelProgress, 0),
     nextXP        = COALESCE(nextXP, 10000),
+    socials       = COALESCE(socials, '{}'),
     discordGuildMember = COALESCE(discordGuildMember, 0),
     createdAt     = COALESCE(createdAt, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updatedAt     = COALESCE(updatedAt, strftime('%Y-%m-%dT%H:%M:%fZ','now'))

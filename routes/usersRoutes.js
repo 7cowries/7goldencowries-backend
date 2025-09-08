@@ -73,7 +73,7 @@ router.get("/me", async (req, res) => {
     );
 
     let row = await db.get(
-      `SELECT id, wallet, xp, tier, referral_code, twitterHandle, telegramHandle, telegramId, discordId, discordHandle
+      `SELECT id, wallet, xp, tier, referral_code, twitterHandle, twitter_username, twitter_id, telegramHandle, telegram_username, telegramId, discordId, discord_id, discordHandle, discord_username, socials
          FROM users WHERE wallet = ?`,
       wallet
     );
@@ -91,19 +91,29 @@ router.get("/me", async (req, res) => {
     const xp = row.xp ?? 0;
     const lvl = deriveLevel(xp);
     const progress = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
+    let socialsData = {};
+    try {
+      socialsData = row.socials ? JSON.parse(row.socials) : {};
+    } catch {}
+    const twitterHandle = row.twitterHandle || row.twitter_username || socialsData.twitter?.handle;
+    const twitterId = row.twitter_id || socialsData.twitter?.id;
+    const telegramHandle = row.telegramHandle || row.telegram_username || socialsData.telegram?.username;
+    const telegramId = row.telegramId || socialsData.telegram?.id;
+    const discordId = row.discordId || row.discord_id || socialsData.discord?.id;
     const socials = {
       twitter: {
-        connected: !!row.twitterHandle,
-        ...(row.twitterHandle ? { handle: row.twitterHandle } : {}),
+        connected: !!(twitterHandle || twitterId),
+        ...(twitterHandle ? { handle: twitterHandle } : {}),
+        ...(twitterId ? { id: twitterId } : {}),
       },
       telegram: {
-        connected: !!row.telegramHandle,
-        ...(row.telegramHandle ? { username: row.telegramHandle } : {}),
-        ...(row.telegramId ? { id: row.telegramId } : {}),
+        connected: !!(telegramHandle || telegramId),
+        ...(telegramHandle ? { username: telegramHandle } : {}),
+        ...(telegramId ? { id: telegramId } : {}),
       },
       discord: {
-        connected: !!row.discordId,
-        ...(row.discordId ? { id: row.discordId } : {}),
+        connected: !!discordId,
+        ...(discordId ? { id: discordId } : {}),
       },
     };
 
@@ -120,7 +130,7 @@ router.get("/me", async (req, res) => {
       referral_code: row.referral_code,
       questHistory,
       socials,
-      twitterHandle: row.twitterHandle || undefined,
+      twitterHandle: twitterHandle || undefined,
     };
 
     if (String(req.query.flat || "") === "1") return res.json(payload);

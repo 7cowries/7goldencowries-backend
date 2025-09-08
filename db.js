@@ -297,6 +297,8 @@ const initDB = async () => {
   await addColumnIfMissing("users", "twitter_id",            `twitter_id TEXT`);
   await addColumnIfMissing("users", "discord_username",      `discord_username TEXT`);
   await addColumnIfMissing("users", "discord_id",            `discord_id TEXT`);
+  await addColumnIfMissing("users", "socials",               `socials TEXT`);
+  await db.exec("UPDATE users SET socials = COALESCE(socials, '{}')");
 
 
   // social_links/referrals extras
