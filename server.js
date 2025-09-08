@@ -88,7 +88,16 @@ app.use("/api", (req, res, next) => {
   next();
 });
 morgan.token("uid", (req) => req.user?.id || req.session?.userId || "anon");
-app.use(morgan(":method :url :status :res[content-length] - :response-time ms uid=:uid"));
+const morganOpts = {
+  skip: (req, res) =>
+    req.method === "GET" && req.path === "/api/users/me" && res.statusCode < 400,
+};
+app.use(
+  morgan(
+    ":method :url :status :res[content-length] - :response-time ms uid=:uid",
+    morganOpts
+  )
+);
 
 const globalLimiter = rateLimit({
   windowMs: 60_000,

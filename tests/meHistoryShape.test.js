@@ -22,13 +22,14 @@ afterAll(async () => {
 test('/api/users/me returns normalized progress and history shape', async () => {
   const res = await agent.get('/api/users/me');
   expect(res.status).toBe(200);
-  const user = res.body.user;
+  const user = res.body;
   expect(user.levelProgress).toBeGreaterThanOrEqual(0);
   expect(user.levelProgress).toBeLessThanOrEqual(1);
   expect(Array.isArray(user.questHistory)).toBe(true);
   const entry = user.questHistory[0];
-  expect(entry).toHaveProperty('questId');
+  expect(entry).toHaveProperty('id');
   expect(entry).toHaveProperty('title');
   expect(entry).toHaveProperty('xp');
-  expect(entry).toHaveProperty('completed_at');
+  expect(entry).toHaveProperty('ts');
+  expect(entry).toHaveProperty('status');
 });

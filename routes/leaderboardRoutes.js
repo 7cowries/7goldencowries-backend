@@ -65,6 +65,13 @@ router.get("/", async (req, res) => {
 
     const data = { entries, total: totalRow?.c ?? 0 };
     setCache("leaderboard", data, 60000);
+    res.set(
+      "Cache-Control",
+      "public, max-age=30, stale-while-revalidate=120"
+    );
+    if (req.headers.origin) {
+      res.set("Access-Control-Allow-Origin", req.headers.origin);
+    }
     res.json(data);
   } catch (err) {
     console.error("Leaderboard error:", err);
