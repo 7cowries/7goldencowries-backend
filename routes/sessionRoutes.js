@@ -24,14 +24,14 @@ r.post("/bind-wallet", async (req, res) => {
     if (!w) return res.status(400).json({ error: "Missing wallet" });
 
     if (req.session.wallet && req.session.wallet === w) {
-      return res.json({ ok: true });
+      return res.json({ ok: true, bound: true });
     }
 
     const key = req.sessionID || req.ip;
     const now = Date.now();
     const last = cooldown.get(key) || 0;
-    if (now - last < 3000) {
-      return res.json({ ok: true });
+    if (now - last < 4000) {
+      return res.json({ ok: true, bound: true });
     }
     cooldown.set(key, now);
 
@@ -41,7 +41,8 @@ r.post("/bind-wallet", async (req, res) => {
     await ensureUser(w);
 
     const refCode = req.cookies?.referral_code || req.session?.referral_code;
-    if (refCode) {
+    const codeRe = /^[A-Z0-9_-]{4,64}$/i;
+    if (refCode && codeRe.test(refCode)) {
       try {
         await db.exec("BEGIN");
         const existing = await db.get(
@@ -85,7 +86,7 @@ r.post("/bind-wallet", async (req, res) => {
       req.session.referral_code = null;
     }
 
-    res.json({ ok: true, wallet: w });
+    res.json({ ok: true, wallet: w, bound: true });
   } catch (e) {
     console.error("bind-wallet error:", e);
     res.status(500).json({ error: "Failed to bind wallet" });

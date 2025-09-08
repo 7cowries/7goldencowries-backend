@@ -1,10 +1,11 @@
-export function inferVendor(url) {
+export function inferVendor(url = "") {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host.includes('twitter.com') || host.includes('x.com')) return 'twitter';
-    if (host.includes('t.me') || host.includes('telegram')) return 'telegram';
-    if (host.includes('discord.gg') || host.includes('discordapp.com') || host.includes('discord.com')) return 'discord';
-    return host;
+    const str = String(url);
+    if (/(twitter|x)\.com\/[^/]+\/status\/\d+/i.test(str)) return "twitter";
+    if (/t\.me\/.+/i.test(str)) return "telegram";
+    if (/(discord\.gg|discord\.com\/invite|discord\.com\/channels)/i.test(str)) return "discord";
+    // generic link
+    return "link";
   } catch {
     return null;
   }
