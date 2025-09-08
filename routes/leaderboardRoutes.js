@@ -10,7 +10,19 @@ const router = express.Router();
  * GET /api/leaderboard
  * Optional query: ?limit=50&offset=0
  * Response:
- *   { top: [{ rank, wallet, xp, tier, name, progress, twitter }] }
+ *   {
+ *     entries: [
+ *       {
+ *         rank,
+ *         wallet,
+ *         xp,
+ *         twitterHandle,
+ *         levelName,
+ *         progress,
+ *       },
+ *     ],
+ *     total: number,
+ *   }
  */
 router.get("/", async (req, res) => {
   try {

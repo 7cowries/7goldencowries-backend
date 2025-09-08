@@ -13,7 +13,6 @@ import rateLimit from "express-rate-limit";
 
 import "./passport.js";
 import db from "./db.js";
-import { deriveLevel } from "./config/progression.js";
 
 // ✅ Core routes already in your repo
 import questRoutes from "./routes/questRoutes.js";
@@ -35,6 +34,7 @@ import socialLinkRoutes from "./routes/socialLinkRoutes.js";
 
 // ✅ New XP/Quest history endpoints
 import historyRoutes from "./routes/historyRoutes.js";
+import leaderboardRoutes from "./routes/leaderboardRoutes.js";
 
 dotenv.config();
 
@@ -128,6 +128,7 @@ app.use(tokenSaleRoutes); // mounts /token-sale/contribute (if present)
 
 // --- History APIs (XP + quest history) ---
 app.use(historyRoutes); // /api/xp/history, /api/quests/history
+app.use("/api/leaderboard", leaderboardRoutes);
 
 // --- Health checks ---
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
@@ -140,43 +141,6 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 app.get("/session-debug", (req, res) => res.json({ session: req.session }));
-
-// --- Leaderboard (frontend expects /api/leaderboard) ---
-app.get("/api/leaderboard", async (_req, res) => {
-  try {
-    const users = await db.all(
-      `
-      SELECT wallet, twitterHandle, xp, tier
-      FROM users
-      ORDER BY xp DESC
-      LIMIT 20
-    `
-    );
-
-    const ranked = users.map((u, i) => {
-      const level = deriveLevel(u.xp || 0);
-      const badgeSlug = level.levelName
-        ? `level-${level.levelName.toLowerCase().replace(/\s+/g, "-")}.png`
-        : "unranked.png";
-
-      return {
-        rank: i + 1,
-        wallet: u.wallet,
-        twitter: u.twitterHandle || null,
-        xp: u.xp,
-        tier: u.tier || "Free",
-        name: level.levelName || "Shellborn",
-        progress: level.progress || 0, // 0..1
-        badge: `/images/badges/${badgeSlug}`,
-      };
-    });
-
-    res.json({ top: ranked });
-  } catch (err) {
-    console.error("Leaderboard error:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
 
 // --- Daily subscription expiry cron ---
 cron.schedule("0 0 * * *", async () => {
