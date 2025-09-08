@@ -1,9 +1,17 @@
 // routes/sessionRoutes.js
 import express from "express";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import db from "../db.js";
 
 const r = express.Router();
-const cooldown = new Map();
+const bindLimiter = rateLimit({
+  windowMs: 4000,
+  max: 1,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.sessionID || ""}`,
+  handler: (_req, res) => res.status(429).json({ error: "Too many requests" }),
+});
 
 /** Ensure the user row exists (first-time visitors) */
 async function ensureUser(wallet) {
@@ -18,7 +26,7 @@ async function ensureUser(wallet) {
 }
 
 /** POST /api/session/bind-wallet  { wallet } */
-r.post("/bind-wallet", async (req, res) => {
+r.post("/bind-wallet", bindLimiter, async (req, res) => {
   try {
     const w = String(req.body?.wallet || "").trim();
     if (!w) return res.status(400).json({ error: "Missing wallet" });
@@ -26,14 +34,6 @@ r.post("/bind-wallet", async (req, res) => {
     if (req.session.wallet && req.session.wallet === w) {
       return res.json({ ok: true, bound: true });
     }
-
-    const key = req.sessionID || req.ip;
-    const now = Date.now();
-    const last = cooldown.get(key);
-    if (last && last.wallet === w && now - last.ts < 4000) {
-      return res.json({ ok: true, bound: true });
-    }
-    cooldown.set(key, { wallet: w, ts: now });
 
     req.session.wallet = w;
     if (req.session.save) req.session.save(() => {});

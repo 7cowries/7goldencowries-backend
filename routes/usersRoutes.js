@@ -7,26 +7,7 @@ import { getSessionWallet } from "../utils/session.js";
 async function fetchHistory(wallet) {
   try {
     const rows = await db.all(
-      `SELECT id, quest_id, title, xp, completed_at
-         FROM quest_history
-        WHERE wallet = ?
-        ORDER BY id DESC
-        LIMIT 50`,
-      wallet
-    );
-    if (Array.isArray(rows))
-      return rows.map((r) => ({
-        questId: r.quest_id,
-        title: r.title,
-        xp: r.xp,
-        completed_at: r.completed_at,
-      }));
-  } catch {
-    /* table may not exist */
-  }
-  try {
-    const rows = await db.all(
-      `SELECT c.rowid AS id, c.quest_id, q.title AS title, q.xp AS xp, c.timestamp AS completed_at
+      `SELECT c.quest_id AS id, q.title, q.xp, c.timestamp AS ts
          FROM completed_quests c
          JOIN quests q ON q.id = c.quest_id
         WHERE c.wallet = ?
@@ -36,10 +17,11 @@ async function fetchHistory(wallet) {
     );
     if (Array.isArray(rows))
       return rows.map((r) => ({
-        questId: r.quest_id,
+        id: r.id,
         title: r.title,
         xp: r.xp,
-        completed_at: r.completed_at,
+        ts: r.ts,
+        status: "claimed",
       }));
   } catch {
     /* ignore */
@@ -62,7 +44,23 @@ router.get("/me", async (req, res) => {
   try {
     const wallet =
       getSessionWallet(req) || (req.query.wallet ? String(req.query.wallet) : null);
-    if (!wallet) return res.json({ user: null });
+
+    if (!wallet) {
+      return res.json({
+        wallet: null,
+        xp: 0,
+        nextXP: 10000,
+        levelName: "Shellborn",
+        levelProgress: 0,
+        tier: "Free",
+        socials: {
+          twitter: { connected: false },
+          telegram: { connected: false },
+          discord: { connected: false },
+        },
+        questHistory: [],
+      });
+    }
 
     await db.run(
       `INSERT INTO users (wallet, updatedAt) VALUES (?, CURRENT_TIMESTAMP)
@@ -94,9 +92,11 @@ router.get("/me", async (req, res) => {
     try {
       socialsData = row.socials ? JSON.parse(row.socials) : {};
     } catch {}
-    const twitterHandle = row.twitterHandle || row.twitter_username || socialsData.twitter?.handle;
+    const twitterHandle =
+      row.twitterHandle || row.twitter_username || socialsData.twitter?.handle;
     const twitterId = row.twitter_id || socialsData.twitter?.id;
-    const telegramHandle = row.telegramHandle || row.telegram_username || socialsData.telegram?.username;
+    const telegramHandle =
+      row.telegramHandle || row.telegram_username || socialsData.telegram?.username;
     const telegramId = row.telegramId || socialsData.telegram?.id;
     const discordId = row.discordId || row.discord_id || socialsData.discord?.id;
     const socials = {
@@ -124,18 +124,20 @@ router.get("/me", async (req, res) => {
       levelName: lvl.levelName,
       levelProgress: progress,
       nextXP: lvl.nextNeed,
-      subscriptionTier: row.tier || "Free",
       tier: row.tier || "Free",
-      referral_code: row.referral_code,
-      questHistory,
       socials,
+      questHistory,
+      referral_code: row.referral_code,
+      twitterHandle: twitterHandle || null,
+      telegramHandle: telegramHandle || null,
+      discordId: discordId || null,
     };
 
     if (String(req.query.flat || "") === "1") return res.json(payload);
-    return res.json({ user: payload });
+    return res.json(payload);
   } catch (e) {
     console.error("GET /api/users/me error", e);
-    return res.json({ user: null });
+    return res.status(500).json({ error: "Failed to load user" });
   }
 });
 

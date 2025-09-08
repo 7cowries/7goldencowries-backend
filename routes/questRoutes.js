@@ -166,6 +166,13 @@ async function listQuestsHandler(req, res) {
         proofStatus: null,
       }));
     }
+    res.set(
+      "Cache-Control",
+      "public, max-age=30, stale-while-revalidate=120"
+    );
+    if (req.headers.origin) {
+      res.set("Access-Control-Allow-Origin", req.headers.origin);
+    }
     if (String(req.query.flat || "") === "1") return res.json(quests);
     return res.json({ quests });
   } catch (err) {

@@ -42,15 +42,16 @@ describe('API routes', () => {
 
   test('/api/users/me exposes socials and referral', async () => {
     const res = await request(app).get('/api/users/me?wallet=w1');
-    expect(res.body.user.wallet).toBe('w1');
-    expect(res.body.user).toHaveProperty('referral_code');
-    expect(res.body.user.socials.twitter).toBeDefined();
+    expect(res.body.wallet).toBe('w1');
+    expect(res.body).toHaveProperty('referral_code');
+    expect(res.body.socials.twitter).toBeDefined();
   });
 
-  test('/api/users/me returns null when wallet missing', async () => {
+  test('/api/users/me returns defaults when wallet missing', async () => {
     const res = await request(app).get('/api/users/me');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ user: null });
+    expect(res.body.wallet).toBeNull();
+    expect(res.body.socials.twitter.connected).toBe(false);
   });
 
   test('health endpoint works', async () => {
