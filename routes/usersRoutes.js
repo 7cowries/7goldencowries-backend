@@ -16,8 +16,7 @@ async function fetchHistory(wallet) {
     );
     if (Array.isArray(rows))
       return rows.map((r) => ({
-        id: r.id,
-        quest_id: r.quest_id,
+        questId: r.quest_id,
         title: r.title,
         xp: r.xp,
         completed_at: r.completed_at,
@@ -37,8 +36,7 @@ async function fetchHistory(wallet) {
     );
     if (Array.isArray(rows))
       return rows.map((r) => ({
-        id: r.id,
-        quest_id: r.quest_id,
+        questId: r.quest_id,
         title: r.title,
         xp: r.xp,
         completed_at: r.completed_at,
@@ -130,7 +128,6 @@ router.get("/me", async (req, res) => {
       referral_code: row.referral_code,
       questHistory,
       socials,
-      twitterHandle: twitterHandle || undefined,
     };
 
     if (String(req.query.flat || "") === "1") return res.json(payload);
