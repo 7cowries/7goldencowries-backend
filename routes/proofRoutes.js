@@ -44,6 +44,7 @@ router.post("/", async (req, res) => {
 
     const result = await awardQuest(wallet, quest_id);
     delCache(`user:${wallet}`);
+    delCache('leaderboard');
     const row = await db.get("SELECT xp FROM users WHERE wallet = ?", wallet);
     const newTotalXp = row?.xp ?? 0;
 

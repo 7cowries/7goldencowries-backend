@@ -19,3 +19,8 @@ test('/health returns db status', async () => {
   const res = await request(app).get('/health');
   expect(res.body).toEqual({ ok: true, db: 'ok' });
 });
+
+test('/healthz returns db status', async () => {
+  const res = await request(app).get('/healthz');
+  expect(res.body).toEqual({ ok: true, db: 'ok' });
+});

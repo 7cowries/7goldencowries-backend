@@ -321,13 +321,20 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
     const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ error: "quest-not-found" });
 
-    const vendor = inferVendor(url);
+    const rawVendor = inferVendor(url) || "link";
+    const vendor = ["twitter", "telegram", "discord"].includes(rawVendor)
+      ? rawVendor
+      : "link";
     let status = "pending";
     const reqType = quest.requirement || "none";
-    if (["link", "join_telegram", "join_discord"].includes(reqType) && url) {
-      status = "approved";
-    } else if (["tweet", "retweet", "quote"].includes(reqType) && vendor == "twitter" && isValidTweetUrl(url)) {
-      status = "approved";
+    if (reqType === "link") {
+      status = url ? "approved" : "pending";
+    } else if (["tweet", "retweet", "quote"].includes(reqType)) {
+      if (vendor === "twitter" && isValidTweetUrl(url)) status = "approved";
+    } else if (reqType === "join_telegram") {
+      if (vendor === "telegram") status = "approved";
+    } else if (reqType === "join_discord") {
+      if (vendor === "discord") status = "approved";
     }
 
     const existing = await db.get(
@@ -354,10 +361,11 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
       );
     }
 
-    if (status == "approved") {
+    if (status === "approved") {
       await awardQuest(wallet, quest.id);
     }
     delCache(`user:${wallet}`);
+    delCache("leaderboard");
     return res.json({ status });
   } catch (err) {
     console.error("proof submit error", err);
@@ -368,18 +376,12 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
   try {
     const wallet = req.session?.wallet;
     if (!wallet) return res.status(401).json({ ok: false, error: "auth-required" });
-    const questId = req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
+    const questId =
+      req.params.questId || String(req.body?.quest_id || req.body?.questId || "").trim();
     if (!questId) return res.status(400).json({ ok: false, error: "bad-args" });
 
     const quest = await db.get(`SELECT id, requirement FROM quests WHERE id = ?`, questId);
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
-
-    const done = await db.get(
-      `SELECT 1 FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
-      wallet,
-      quest.id
-    );
-    if (done) return res.status(409).json({ ok: false, error: "already-completed" });
 
     if (quest.requirement && quest.requirement !== "none") {
       const proof = await db.get(
@@ -394,10 +396,13 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
 
     const result = await awardQuest(wallet, quest.id);
     delCache(`user:${wallet}`);
+    delCache("leaderboard");
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
-    return res.json({ ok: true });
+    const body = { ok: true, xpGain: result.xpGain };
+    if (result.already) body.already = true;
+    return res.json(body);
   } catch (err) {
     console.error("claim error", err);
     res.status(500).json({ ok: false, error: "server-error" });

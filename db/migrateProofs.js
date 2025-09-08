@@ -49,8 +49,7 @@ export async function runSqliteMigrations() {
   const qnames = new Set(qcols.map(c => c.name));
   const qensure = async (name, def) => {
     if (!qnames.has(name)) {
-      const type = String(def).replace(/DEFAULT.+$/i, '').trim();
-      await db.exec(`ALTER TABLE quest_proofs ADD COLUMN ${name} ${type};`);
+      await db.exec(`ALTER TABLE quest_proofs ADD COLUMN ${name} ${def}`);
     }
   };
   await qensure('vendor', 'TEXT');
@@ -67,7 +66,7 @@ export async function runSqliteMigrations() {
     await db.exec(`ALTER TABLE completed_quests ADD COLUMN quest_id INT;`);
   }
   if (!cnames.has('timestamp')) {
-    await db.exec(`ALTER TABLE completed_quests ADD COLUMN timestamp TEXT;`);
+    await db.exec(`ALTER TABLE completed_quests ADD COLUMN timestamp TEXT DEFAULT (datetime('now'));`);
   }
   await db.exec(`UPDATE completed_quests SET timestamp = COALESCE(timestamp, datetime('now'))`);
 }

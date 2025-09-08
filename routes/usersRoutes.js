@@ -14,7 +14,13 @@ async function fetchHistory(wallet) {
         LIMIT 50`,
       wallet
     );
-    if (Array.isArray(rows)) return rows;
+    if (Array.isArray(rows))
+      return rows.map((r) => ({
+        questId: r.questId,
+        title: r.title,
+        xp: r.xp,
+        completed_at: r.completed_at,
+      }));
   } catch {
     /* table may not exist */
   }
@@ -28,7 +34,13 @@ async function fetchHistory(wallet) {
         LIMIT 50`,
       wallet
     );
-    if (Array.isArray(rows)) return rows;
+    if (Array.isArray(rows))
+      return rows.map((r) => ({
+        questId: r.questId,
+        title: r.title,
+        xp: r.xp,
+        completed_at: r.completed_at,
+      }));
   } catch {
     /* ignore */
   }
@@ -102,6 +114,7 @@ router.get("/me", async (req, res) => {
         levelProgress: lvl.progress,
         nextXP: lvl.nextNeed,
         subscriptionTier: row.tier || "Free",
+        tier: row.tier || "Free",
         referral_code: row.referral_code,
         questHistory,
         socials,
