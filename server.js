@@ -83,7 +83,25 @@ app.options("*", cors({ origin: originCheck, credentials: true }));
 
 app.use(cookieParser());
 
-app.use(express.json());
+const rawBodySaver = (req, _res, buf) => {
+  if (buf?.length) {
+    req.rawBody = buf.toString("utf8");
+  }
+};
+
+app.use(
+  express.json({
+    verify: rawBodySaver,
+    limit: "2mb",
+  })
+);
+app.use(
+  express.urlencoded({
+    verify: rawBodySaver,
+    limit: "2mb",
+    extended: true,
+  })
+);
 app.use("/api", (req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();

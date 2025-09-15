@@ -1,7 +1,9 @@
-import { randomUUID } from "crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
+import { Buffer } from "node:buffer";
 import dayjs from "dayjs";
 import express from "express";
 import db from "../../lib/db.js";
+import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
 
 const router = express.Router();
 
@@ -15,11 +17,75 @@ const TIERS = new Map([
   ["tier3", "Tier 3"],
 ]);
 
-const SUBSCRIPTION_CHECKOUT_URL =
-  process.env.SUBSCRIPTION_CHECKOUT_URL || "https://pay.7goldencowries.com/subscription";
-const SUBSCRIPTION_CALLBACK_REDIRECT =
-  process.env.SUBSCRIPTION_CALLBACK_REDIRECT ||
-  `${process.env.FRONTEND_URL || "https://7goldencowries.com"}/subscription/callback`;
+const DEFAULT_CHECKOUT_URL = "https://pay.7goldencowries.com/subscription";
+const DEFAULT_CALLBACK_REDIRECT = `${
+  process.env.FRONTEND_URL || "https://7goldencowries.com"
+}/subscription/callback`;
+
+const DEFAULT_CHECKOUT_ALLOWLIST = [
+  "https://pay.7goldencowries.com",
+  "https://payments.7goldencowries.com",
+  "https://checkout.7goldencowries.com",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
+const DEFAULT_CALLBACK_ALLOWLIST = [
+  "https://7goldencowries.com",
+  "https://www.7goldencowries.com",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
+function buildAllowlist(base, extraEnv) {
+  const extras = (extraEnv || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return new Set([...base, ...extras]);
+}
+
+const CHECKOUT_ALLOWLIST = buildAllowlist(
+  DEFAULT_CHECKOUT_ALLOWLIST,
+  process.env.SUBSCRIPTION_CHECKOUT_ALLOWLIST
+);
+const CALLBACK_ALLOWLIST = buildAllowlist(
+  DEFAULT_CALLBACK_ALLOWLIST,
+  process.env.SUBSCRIPTION_CALLBACK_ALLOWLIST
+);
+
+function sanitizeUrl(candidate, fallback, allowlist, label) {
+  if (!candidate) return fallback;
+  try {
+    const url = new URL(candidate);
+    if (allowlist.has(url.origin)) {
+      return url.toString();
+    }
+    console.warn(
+      `subscription ${label} url rejected (untrusted origin ${url.origin}), falling back to default`
+    );
+  } catch (err) {
+    console.warn(`subscription ${label} url parse failed: ${err?.message}`);
+  }
+  return fallback;
+}
+
+const SUBSCRIPTION_CHECKOUT_URL = sanitizeUrl(
+  process.env.SUBSCRIPTION_CHECKOUT_URL,
+  DEFAULT_CHECKOUT_URL,
+  CHECKOUT_ALLOWLIST,
+  "checkout"
+);
+const SUBSCRIPTION_CALLBACK_REDIRECT = sanitizeUrl(
+  process.env.SUBSCRIPTION_CALLBACK_REDIRECT,
+  DEFAULT_CALLBACK_REDIRECT,
+  CALLBACK_ALLOWLIST,
+  "callback"
+);
 
 function normalizeTier(input) {
   if (!input) return null;
@@ -27,13 +93,21 @@ function normalizeTier(input) {
   return TIERS.get(key) || null;
 }
 
-function buildCheckoutUrl(sessionId) {
+function buildCheckoutUrl(sessionId, nonce) {
   try {
     const url = new URL(SUBSCRIPTION_CHECKOUT_URL);
     url.searchParams.set("session", sessionId);
+    if (nonce) {
+      url.searchParams.set("nonce", nonce);
+    }
     return url.toString();
   } catch {
-    return `https://pay.7goldencowries.com/subscription?session=${encodeURIComponent(sessionId)}`;
+    const base = new URL(DEFAULT_CHECKOUT_URL);
+    base.searchParams.set("session", sessionId);
+    if (nonce) {
+      base.searchParams.set("nonce", nonce);
+    }
+    return base.toString();
   }
 }
 
@@ -71,14 +145,18 @@ router.post("/subscribe", async (req, res) => {
     }
 
     const sessionId = `sub_${randomUUID()}`;
-    const sessionUrl = buildCheckoutUrl(sessionId);
+    const nonce = randomUUID().replace(/-/g, "");
+    const sessionCreatedAt = new Date().toISOString();
+    const sessionUrl = buildCheckoutUrl(sessionId, nonce);
 
     await db.run(
-      `INSERT INTO subscriptions (wallet, tier, status, sessionId, timestamp)
-       VALUES (?, ?, 'pending', ?, datetime('now'))`,
+      `INSERT INTO subscriptions (wallet, tier, status, sessionId, nonce, sessionCreatedAt, timestamp)
+       VALUES (?, ?, 'pending', ?, ?, ?, datetime('now'))`,
       wallet,
       tier,
-      sessionId
+      sessionId,
+      nonce,
+      sessionCreatedAt
     );
 
     return res.json({ sessionUrl, sessionId });
@@ -88,19 +166,104 @@ router.post("/subscribe", async (req, res) => {
   }
 });
 
-router.get("/callback", async (req, res) => {
+const SUBSCRIPTION_WEBHOOK_SECRET = process.env.SUBSCRIPTION_WEBHOOK_SECRET || "";
+
+function normalizeSignature(signature) {
+  return signature.replace(/^sha256=/i, "").trim();
+}
+
+function verifySignature(rawBody, signature, secret) {
+  if (!rawBody || !signature || !secret) return false;
+  const normalized = normalizeSignature(signature);
+  let provided;
   try {
-    const sessionId = req.query.sessionId ? String(req.query.sessionId).trim() : "";
+    provided = Buffer.from(normalized, "hex");
+  } catch {
+    return false;
+  }
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  const expectedBuf = Buffer.from(expected, "hex");
+  if (expectedBuf.length !== provided.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuf, provided);
+}
+
+function isPaidStatus(status) {
+  const normalized = String(status || "").toLowerCase();
+  return ["paid", "succeeded", "success", "active", "complete", "completed"].some((token) =>
+    normalized.includes(token)
+  );
+}
+
+router.post("/callback", async (req, res) => {
+  const correlationId = randomUUID().slice(0, 8);
+  try {
+    if (!SUBSCRIPTION_WEBHOOK_SECRET) {
+      console.error(
+        `[subscription-callback:${correlationId}] SUBSCRIPTION_WEBHOOK_SECRET is not configured`
+      );
+      return res.status(500).json({ error: "webhook_not_configured", correlationId });
+    }
+
+    const signature = req.get("x-signature") || req.get("X-Signature") || "";
+    if (!signature) {
+      console.warn(`[subscription-callback:${correlationId}] missing X-Signature header`);
+      return res.status(401).json({ error: "signature_required", correlationId });
+    }
+
+    const rawBody = req.rawBody || "";
+    if (!verifySignature(rawBody, signature, SUBSCRIPTION_WEBHOOK_SECRET)) {
+      console.warn(`[subscription-callback:${correlationId}] invalid signature`);
+      return res.status(401).json({ error: "invalid_signature", correlationId });
+    }
+
+    const sessionId = req.body?.sessionId ? String(req.body.sessionId).trim() : "";
     if (!sessionId) {
-      return res.redirect(buildRedirectUrl("error", { reason: "missing_session" }));
+      console.warn(`[subscription-callback:${correlationId}] missing sessionId in payload`);
+      return res.status(400).json({ error: "session_required", correlationId });
     }
 
     const record = await db.get(
-      `SELECT id, wallet, tier FROM subscriptions WHERE sessionId = ? ORDER BY datetime(timestamp) DESC LIMIT 1`,
+      `SELECT id, wallet, tier, status, nonce FROM subscriptions WHERE sessionId = ? ORDER BY datetime(timestamp) DESC LIMIT 1`,
       sessionId
     );
+
     if (!record || !record.wallet) {
-      return res.redirect(buildRedirectUrl("error", { sessionId, reason: "unknown_session" }));
+      console.warn(`[subscription-callback:${correlationId}] unknown session ${sessionId}`);
+      return res.status(400).json({ error: "unknown_session", correlationId });
+    }
+
+    const payloadNonce = req.body?.nonce ? String(req.body.nonce).trim() : null;
+    if (payloadNonce && record.nonce && payloadNonce !== record.nonce) {
+      console.warn(`[subscription-callback:${correlationId}] nonce mismatch for ${sessionId}`);
+      return res.status(400).json({ error: "nonce_mismatch", correlationId });
+    }
+
+    if (record.status === "active") {
+      return res.json({
+        ok: true,
+        sessionId,
+        status: "active",
+        alreadyProcessed: true,
+        redirect: buildRedirectUrl("success", {
+          sessionId,
+          wallet: record.wallet,
+          tier: record.tier,
+        }),
+      });
+    }
+
+    const verification = await verifySubscriptionSession(sessionId, record.nonce);
+    if (!verification?.ok || !isPaidStatus(verification.status)) {
+      console.warn(
+        `[subscription-callback:${correlationId}] provider status not ready (${verification?.status || "unknown"})`
+      );
+      return res.status(202).json({
+        ok: false,
+        status: verification?.status || "pending",
+        correlationId,
+      });
     }
 
     const renewalDate = dayjs().add(30, "day").toISOString();
@@ -119,17 +282,23 @@ router.get("/callback", async (req, res) => {
       record.tier
     );
 
-    return res.redirect(
-      buildRedirectUrl("success", {
+    return res.json({
+      ok: true,
+      sessionId,
+      status: "active",
+      wallet: record.wallet,
+      tier: record.tier,
+      renewalDate,
+      redirect: buildRedirectUrl("success", {
         sessionId,
         wallet: record.wallet,
         tier: record.tier,
         renewalDate,
-      })
-    );
+      }),
+    });
   } catch (err) {
-    console.error("subscription callback error", err);
-    return res.redirect(buildRedirectUrl("error", { reason: "callback_failed" }));
+    console.error(`subscription callback error [${correlationId}]`, err);
+    return res.status(500).json({ error: "callback_failed", correlationId });
   }
 });
 
