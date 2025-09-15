@@ -1,6 +1,6 @@
 import express from "express";
 import crypto from "crypto";
-import db from "../db.js";
+import db from "../lib/db.js";
 import passport from "../passport.js";
 import { getSessionWallet } from "../utils/session.js";
 

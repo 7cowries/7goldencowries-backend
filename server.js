@@ -10,7 +10,7 @@ import session from "express-session";
 import MemoryStore from "memorystore";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
-import db from "./db.js";
+import db from "./lib/db.js";
 import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
 import { ensureUsersSchema } from "./db/migrateUsers.js";
 import metaRoutes from "./routes/metaRoutes.js";
@@ -32,6 +32,7 @@ import refRedirectRoutes from "./routes/refRedirectRoutes.js";
 import tonVerifyRoutes from "./routes/tonVerifyRoutes.js";
 import authStartRoutes from "./routes/authStartRoutes.js";
 import referralLookupRoutes from "./routes/referralLookupRoutes.js";
+import apiV1Routes from "./routes/apiV1/index.js";
 
 dotenv.config();
 const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
@@ -167,6 +168,7 @@ async function ensureSchema() {
 
 await ensureSchema();
 
+app.use("/api/v1", apiV1Routes);
 app.use(metaRoutes);
 app.use(questRoutes);
 app.use(questTelegramRoutes);

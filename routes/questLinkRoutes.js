@@ -1,7 +1,7 @@
 // routes/questLinkRoutes.js
 import express from "express";
 import crypto from "crypto";
-import db from "../db.js";
+import db from "../lib/db.js";
 
 const router = express.Router();
 

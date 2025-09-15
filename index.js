@@ -12,7 +12,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 
 import "./passport.js";
-import db from "./db.js";
+import db from "./lib/db.js";
 
 // ✅ Core routes already in your repo
 import questRoutes from "./routes/questRoutes.js";

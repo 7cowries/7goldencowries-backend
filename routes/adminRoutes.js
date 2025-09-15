@@ -1,7 +1,7 @@
 import express from "express";
 import { seedQuestsFromFile } from "../lib/seedQuests.js";
 import path from "path";
-import db from "../db.js";
+import db from "../lib/db.js";
 
 const router = express.Router();
 const mustAuth = (req, res, next) => {

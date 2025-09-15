@@ -1,5 +1,5 @@
 // utils/seed.js
-import db from "../db.js";
+import db from "../lib/db.js";
 
 /* -------------------------------------------
    Ensure quests table has the columns we need

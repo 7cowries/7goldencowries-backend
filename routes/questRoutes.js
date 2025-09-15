@@ -1,11 +1,12 @@
 // routes/questRoutes.js
 import express from "express";
 import fetch from "node-fetch";
-import db from "../db.js";
+import db from "../lib/db.js";
 import { deriveLevel } from "../config/progression.js";
 import { delCache } from "../utils/cache.js";
 import { awardQuest } from "../lib/quests.js";
 import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
+import { verifyQuestRequirement } from "../lib/proofVerifier.js";
 import inferVendor from "../utils/vendor.js";
 import { bump } from "../utils/limits.js";
 
@@ -431,6 +432,18 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
     if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
 
     if (quest.requirement && quest.requirement !== "none") {
+      const verification = await verifyQuestRequirement(quest.requirement, {
+        wallet,
+        questId: quest.id,
+        requirement: quest.requirement,
+      });
+      if (!verification.ok) {
+        return res.status(403).json({
+          ok: false,
+          error: "proof_required",
+          reason: verification.reason,
+        });
+      }
       const proof = await db.get(
         `SELECT status FROM quest_proofs WHERE wallet = ? AND quest_id = ? ORDER BY updatedAt DESC LIMIT 1`,
         wallet,
@@ -496,6 +509,18 @@ router.post("/api/quests/claim", async (req, res) => {
       return res.status(404).json({ ok: false, error: "quest-not-found" });
     }
     if (qrow.requirement && qrow.requirement !== "none") {
+      const verification = await verifyQuestRequirement(qrow.requirement, {
+        wallet,
+        questId: qrow.id,
+        requirement: qrow.requirement,
+      });
+      if (!verification.ok) {
+        return res.status(403).json({
+          ok: false,
+          error: "proof-required",
+          reason: verification.reason,
+        });
+      }
       const proof = await db.get(
         `SELECT status FROM proofs WHERE wallet = ? AND quest_id = ?`,
         wallet,

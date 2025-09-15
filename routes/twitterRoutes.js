@@ -1,7 +1,7 @@
 // routes/twitterRoutes.js
 import express from "express";
 import fetch from "node-fetch";
-import db from "../db.js";
+import db from "../lib/db.js";
 import dotenv from "dotenv";
 
 dotenv.config();

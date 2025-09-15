@@ -3,7 +3,7 @@
 
 import express from "express";
 import passport from "passport";
-import db from "../db.js";
+import db from "../lib/db.js";
 import { upsertSocial } from "../utils/socials.js";
 
 const router = express.Router();

@@ -8,7 +8,7 @@ beforeAll(async () => {
   process.env.TWITTER_CONSUMER_KEY = 'x';
   process.env.TWITTER_CONSUMER_SECRET = 'y';
   ({ default: app } = await import('../server.js'));
-  ({ default: db } = await import('../db.js'));
+  ({ default: db } = await import('../lib/db.js'));
   await db.run("INSERT INTO quests (id, title, xp, requirement, active) VALUES ('q1','Quest',10,'none',1)");
 });
 

@@ -24,6 +24,15 @@ node server.js
 
 ## API
 
+### Versioned (`/api/v1`)
+
+- `POST /api/v1/token-sale/purchase` – accepts `{ wallet, amount, referralCode? }` and returns `{ paymentLink, sessionId }` for checkout hand-off.
+- `POST /api/v1/token-sale/webhook` – idempotently records payment notifications and updates the matching contribution row.
+- `POST /api/v1/subscription/subscribe` – accepts `{ wallet, tier }`, creates a pending subscription session, and returns `{ sessionUrl, sessionId }`.
+- `GET /api/v1/subscription/callback?sessionId=...` – marks the session active, updates the user tier, and redirects back to the frontend with status/tier metadata.
+
+### Legacy (`/api`)
+
 - `GET /api/meta/progression` – progression levels (cached)
 - `GET /api/users/:wallet` – returns xp, tier, levelName, progress
 - `POST /api/quests/claim?wallet=ADDR` `{ "questId": "..." }` – idempotent claim, responds with `alreadyClaimed` when repeated
@@ -40,6 +49,10 @@ Legacy endpoints `/quests` and `/complete` redirect to the new routes and will b
 ## Disk
 
 Provision a 1GB disk mounted at `/var/data`.
+
+## Database roadmap
+
+- SQLite powers development/staging today. A migration to a managed Postgres cluster is planned once connection details are available; `lib/db.js` contains the bootstrap logic that will be swapped for a pooled Postgres client.
 
 ## Health
 

@@ -8,7 +8,7 @@ beforeAll(async () => {
   process.env.TWITTER_CONSUMER_KEY = 'x';
   process.env.TWITTER_CONSUMER_SECRET = 'y';
   ({ default: app } = await import('../server.js'));
-  ({ default: db } = await import('../db.js'));
+  ({ default: db } = await import('../lib/db.js'));
   await db.exec(`CREATE TABLE IF NOT EXISTS tier_multipliers (tier TEXT PRIMARY KEY, multiplier REAL, label TEXT);`);
   await db.run("INSERT OR IGNORE INTO tier_multipliers (tier,multiplier,label) VALUES ('free',1,'Free')");
   await db.run("INSERT INTO quests (id,title,url,xp,active) VALUES (1,'Q1','u1',10,1),(4,'Q4','u4',10,1),(5,'Q5','u5',10,1),(41,'Q41','u41',10,1)");

@@ -17,7 +17,7 @@ beforeAll(async () => {
   jest.unstable_mockModule('node-fetch', () => ({ default: fetchMock }));
 
   ({ default: app } = await import('../server.js'));
-  ({ default: db } = await import('../db.js'));
+  ({ default: db } = await import('../lib/db.js'));
   await db.run("ALTER TABLE users ADD COLUMN telegram_id TEXT").catch(() => {});
   await db.run("ALTER TABLE users ADD COLUMN discord_id TEXT").catch(() => {});
 });

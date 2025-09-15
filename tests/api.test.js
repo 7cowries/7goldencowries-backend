@@ -8,7 +8,7 @@ beforeAll(async () => {
   process.env.DATABASE_URL = ':memory:';
   process.env.NODE_ENV = 'test';
   ({ default: app } = await import('../server.js'));
-  ({ default: db } = await import('../db.js'));
+  ({ default: db } = await import('../lib/db.js'));
   try { await db.exec("ALTER TABLE quests ADD COLUMN code TEXT;"); } catch {}
   try { await db.exec("ALTER TABLE quests ADD COLUMN requirement TEXT;"); } catch {}
   await db.run("INSERT INTO quests (id, code, title, xp, active) VALUES ('q1','Q1','Test Quest',100,1)");

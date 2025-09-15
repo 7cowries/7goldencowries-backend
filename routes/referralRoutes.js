@@ -17,7 +17,7 @@
 //   POST /api/admin/referrals/unlink { referee_id }               (remove a link)
 
 import express from "express";
-import db from "../db.js";
+import db from "../lib/db.js";
 
 const publicRouter = express.Router();
 const adminRouter = express.Router();

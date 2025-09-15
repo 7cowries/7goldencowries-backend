@@ -7,7 +7,7 @@
 
 import express from "express";
 import fetch from "node-fetch";
-import db from "../db.js";
+import db from "../lib/db.js";
 
 const router = express.Router();
 
