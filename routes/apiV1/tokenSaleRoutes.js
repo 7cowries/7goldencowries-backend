@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { Buffer } from "node:buffer";
 import express from "express";
 import rateLimit from "express-rate-limit";
+import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
 import db from "../../lib/db.js";
 
 const router = express.Router();
@@ -9,8 +10,7 @@ const router = express.Router();
 const TOKEN_SALE_WEBHOOK_SECRET = process.env.TOKEN_SALE_WEBHOOK_SECRET || "";
 
 const webhookLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 20,
+  ...getWebhookRateLimitOptions(),
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -135,22 +135,58 @@ router.post("/webhook", webhookLimiter, async (req, res) => {
       return res.status(401).json({ error: "signature_required", correlationId });
     }
 
-    const rawBody = req.rawBody || "";
-    if (!verifySignature(rawBody, signature, TOKEN_SALE_WEBHOOK_SECRET)) {
+    const rawBodyBuffer = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody
+      : Buffer.from(req.rawBody || "", "utf8");
+
+    if (!verifySignature(rawBodyBuffer, signature, TOKEN_SALE_WEBHOOK_SECRET)) {
       console.warn(`[token-sale-webhook:${correlationId}] invalid signature`);
       return res.status(401).json({ error: "invalid_signature", correlationId });
     }
 
-    const payload = req.body ?? {};
-    const eventId = payload.eventId ? String(payload.eventId).trim() : "";
+    let payload;
+    try {
+      if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
+        payload = req.body;
+      } else if (rawBodyBuffer.length > 0) {
+        payload = JSON.parse(rawBodyBuffer.toString("utf8"));
+      } else {
+        payload = {};
+      }
+      req.body = payload;
+    } catch (err) {
+      console.warn(
+        `[token-sale-webhook:${correlationId}] invalid JSON payload (${err?.message || err})`
+      );
+      return res.status(400).json({ error: "invalid_payload", correlationId });
+    }
+
+    const data =
+      payload && typeof payload.data === "object" && payload.data !== null
+        ? payload.data
+        : { ...payload };
+
+    const txHashCandidate =
+      data.txHash || data.tx_hash || payload.txHash || payload.tx_hash || null;
+    const txHash = txHashCandidate ? String(txHashCandidate).trim() : null;
+    const normalizedTxHash = txHash ? txHash.toLowerCase() : null;
+
+    const rawEventId =
+      payload.eventId ||
+      payload.event_id ||
+      data.eventId ||
+      data.event_id ||
+      null;
+    let eventId = rawEventId ? String(rawEventId).trim() : null;
+    if (!eventId && normalizedTxHash) {
+      eventId = normalizedTxHash;
+    }
     if (!eventId) {
-      console.warn(`[token-sale-webhook:${correlationId}] missing eventId`);
+      console.warn(`[token-sale-webhook:${correlationId}] missing eventId/txHash`);
       return res.status(400).json({ error: "eventId_required", correlationId });
     }
 
-    const eventType = payload.eventType || payload.type || "";
-    const data =
-      payload.data && typeof payload.data === "object" ? payload.data : { ...payload };
+    const eventType = payload.eventType || payload.type || data.eventType || data.type || "";
 
     const sessionId =
       data.sessionId || data.checkoutSessionId || payload.sessionId || payload.checkoutSessionId;
@@ -173,29 +209,49 @@ router.post("/webhook", webhookLimiter, async (req, res) => {
     }
 
     const referralCode = data.referralCode ? String(data.referralCode).trim() : null;
-    const txHash = data.txHash ? String(data.txHash).trim() : null;
     const derivedStatus = deriveStatus(eventType, data.paymentStatus ?? payload.paymentStatus);
+    const receivedAt = new Date().toISOString();
 
-    await db.run(
-      `INSERT INTO token_sale_contributions (event_id, wallet, ton_amount, usd_amount, referral_code, tx_hash, checkout_session_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(event_id) DO UPDATE SET
-         wallet = COALESCE(excluded.wallet, token_sale_contributions.wallet),
-         ton_amount = excluded.ton_amount,
-         usd_amount = excluded.usd_amount,
-         referral_code = COALESCE(excluded.referral_code, token_sale_contributions.referral_code),
-         tx_hash = COALESCE(excluded.tx_hash, token_sale_contributions.tx_hash),
-         checkout_session_id = COALESCE(excluded.checkout_session_id, token_sale_contributions.checkout_session_id),
-         status = excluded.status`,
-      eventId,
-      wallet,
-      tonAmountValue,
-      usdAmountValue,
-      referralCode,
-      txHash,
-      normalizedSessionId,
-      derivedStatus
-    );
+    await db.exec("BEGIN IMMEDIATE");
+    try {
+      const eventInsert = await db.run(
+        `INSERT OR IGNORE INTO token_sale_events (eventId, receivedAt, raw) VALUES (?, ?, ?)`,
+        eventId,
+        receivedAt,
+        JSON.stringify(payload)
+      );
+
+      if (eventInsert.changes === 0) {
+        await db.exec("ROLLBACK");
+        return res.json({ ok: true, eventId, idempotent: true });
+      }
+
+      await db.run(
+        `INSERT INTO token_sale_contributions (event_id, wallet, ton_amount, usd_amount, referral_code, tx_hash, checkout_session_id, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(checkout_session_id) DO UPDATE SET
+           wallet = COALESCE(excluded.wallet, token_sale_contributions.wallet),
+           ton_amount = excluded.ton_amount,
+           usd_amount = excluded.usd_amount,
+           referral_code = COALESCE(excluded.referral_code, token_sale_contributions.referral_code),
+           tx_hash = COALESCE(excluded.tx_hash, token_sale_contributions.tx_hash),
+           status = excluded.status,
+           event_id = excluded.event_id`,
+        eventId,
+        wallet,
+        tonAmountValue,
+        usdAmountValue,
+        referralCode,
+        txHash,
+        normalizedSessionId,
+        derivedStatus
+      );
+
+      await db.exec("COMMIT");
+    } catch (err) {
+      await db.exec("ROLLBACK");
+      throw err;
+    }
 
     return res.json({ ok: true, eventId, status: derivedStatus });
   } catch (err) {

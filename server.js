@@ -5,6 +5,7 @@ import winston from "winston";
 import dotenv from "dotenv";
 import cors from "cors";
 import helmet from "helmet";
+import bodyParser from "body-parser";
 import rateLimit from "express-rate-limit";
 import session from "express-session";
 import MemoryStore from "memorystore";
@@ -85,18 +86,32 @@ app.use(cookieParser());
 
 const rawBodySaver = (req, _res, buf) => {
   if (buf?.length) {
-    req.rawBody = buf.toString("utf8");
+    req.rawBody = buf;
   }
 };
 
 app.use(
-  express.json({
+  bodyParser.json({
     verify: rawBodySaver,
     limit: "2mb",
   })
 );
 app.use(
-  express.urlencoded({
+  bodyParser.raw({
+    type: "application/octet-stream",
+    verify: rawBodySaver,
+    limit: "2mb",
+  })
+);
+app.use(
+  bodyParser.text({
+    type: "text/*",
+    verify: rawBodySaver,
+    limit: "2mb",
+  })
+);
+app.use(
+  bodyParser.urlencoded({
     verify: rawBodySaver,
     limit: "2mb",
     extended: true,
@@ -224,8 +239,10 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT || 3000;
 
 if (process.env.NODE_ENV !== "test") {
-  app.listen(PORT, () => {
-    console.log(`Listening on ${PORT}`);
+  const port = PORT;
+  app.listen(port, () => {
+    logger.info(`listening on :${port}`);
   });
 }
+
 export default app;

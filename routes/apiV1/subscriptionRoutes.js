@@ -2,7 +2,9 @@ import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { Buffer } from "node:buffer";
 import dayjs from "dayjs";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import db from "../../lib/db.js";
+import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
 import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
 
 const router = express.Router();
@@ -167,6 +169,11 @@ router.post("/subscribe", async (req, res) => {
 });
 
 const SUBSCRIPTION_WEBHOOK_SECRET = process.env.SUBSCRIPTION_WEBHOOK_SECRET || "";
+const subscriptionCallbackLimiter = rateLimit({
+  ...getWebhookRateLimitOptions(),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function normalizeSignature(signature) {
   return signature.replace(/^sha256=/i, "").trim();
@@ -196,7 +203,7 @@ function isPaidStatus(status) {
   );
 }
 
-router.post("/callback", async (req, res) => {
+router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
   const correlationId = randomUUID().slice(0, 8);
   try {
     if (!SUBSCRIPTION_WEBHOOK_SECRET) {
@@ -212,13 +219,33 @@ router.post("/callback", async (req, res) => {
       return res.status(401).json({ error: "signature_required", correlationId });
     }
 
-    const rawBody = req.rawBody || "";
-    if (!verifySignature(rawBody, signature, SUBSCRIPTION_WEBHOOK_SECRET)) {
+    const rawBodyBuffer = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody
+      : Buffer.from(req.rawBody || "", "utf8");
+
+    if (!verifySignature(rawBodyBuffer, signature, SUBSCRIPTION_WEBHOOK_SECRET)) {
       console.warn(`[subscription-callback:${correlationId}] invalid signature`);
       return res.status(401).json({ error: "invalid_signature", correlationId });
     }
 
-    const sessionId = req.body?.sessionId ? String(req.body.sessionId).trim() : "";
+    let payload;
+    try {
+      if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
+        payload = req.body;
+      } else if (rawBodyBuffer.length > 0) {
+        payload = JSON.parse(rawBodyBuffer.toString("utf8"));
+      } else {
+        payload = {};
+      }
+      req.body = payload;
+    } catch (err) {
+      console.warn(
+        `[subscription-callback:${correlationId}] invalid JSON payload (${err?.message || err})`
+      );
+      return res.status(400).json({ error: "invalid_payload", correlationId });
+    }
+
+    const sessionId = payload?.sessionId ? String(payload.sessionId).trim() : "";
     if (!sessionId) {
       console.warn(`[subscription-callback:${correlationId}] missing sessionId in payload`);
       return res.status(400).json({ error: "session_required", correlationId });
@@ -234,7 +261,7 @@ router.post("/callback", async (req, res) => {
       return res.status(400).json({ error: "unknown_session", correlationId });
     }
 
-    const payloadNonce = req.body?.nonce ? String(req.body.nonce).trim() : null;
+    const payloadNonce = payload?.nonce ? String(payload.nonce).trim() : null;
     if (payloadNonce && record.nonce && payloadNonce !== record.nonce) {
       console.warn(`[subscription-callback:${correlationId}] nonce mismatch for ${sessionId}`);
       return res.status(400).json({ error: "nonce_mismatch", correlationId });
@@ -254,15 +281,17 @@ router.post("/callback", async (req, res) => {
       });
     }
 
-    const verification = await verifySubscriptionSession(sessionId, record.nonce);
+    const verification = await verifySubscriptionSession(sessionId);
     if (!verification?.ok || !isPaidStatus(verification.status)) {
+      const status = verification?.status || "pending";
       console.warn(
-        `[subscription-callback:${correlationId}] provider status not ready (${verification?.status || "unknown"})`
+        `[subscription-callback:${correlationId}] provider status not ready (${status}) reason=${verification?.reason || "unknown"}`
       );
-      return res.status(202).json({
-        ok: false,
-        status: verification?.status || "pending",
+      return res.status(400).json({
+        error: "session_unverified",
         correlationId,
+        status,
+        reason: verification?.reason || "unverified",
       });
     }
 
