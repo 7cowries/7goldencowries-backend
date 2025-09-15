@@ -1,6 +1,6 @@
 // routes/tokenSaleRoutes.js
 import express from 'express';
-import db from '../db.js';
+import db from '../lib/db.js';
 
 const router = express.Router();
 

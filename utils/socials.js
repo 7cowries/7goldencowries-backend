@@ -1,4 +1,4 @@
-import db from '../db.js';
+import db from '../lib/db.js';
 
 /**
  * Merge social data for a user under users.socials JSON column.

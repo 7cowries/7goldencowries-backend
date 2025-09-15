@@ -9,7 +9,7 @@ beforeAll(async () => {
   process.env.TWITTER_CONSUMER_KEY = 'x';
   process.env.TWITTER_CONSUMER_SECRET = 'y';
   ({ default: app } = await import('../server.js'));
-  ({ default: db } = await import('../db.js'));
+  ({ default: db } = await import('../lib/db.js'));
   await db.run("INSERT OR REPLACE INTO quests (id, title, xp, requirement, active) VALUES ('qc','Cache Quest',10,'none',1)");
 });
 

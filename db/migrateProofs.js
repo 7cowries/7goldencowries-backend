@@ -1,4 +1,4 @@
-import db from '../db.js';
+import db from '../lib/db.js';
 
 // runSqliteMigrations ensures proof-related tables exist and are up to date.
 export async function runSqliteMigrations() {

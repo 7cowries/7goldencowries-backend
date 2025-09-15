@@ -24,6 +24,15 @@ node server.js
 
 ## API
 
+### Versioned (`/api/v1`)
+
+- `POST /api/v1/token-sale/purchase` – accepts `{ wallet, amount, referralCode? }` and returns `{ paymentLink, sessionId }` for checkout hand-off.
+- `POST /api/v1/token-sale/webhook` – requires an `X-Signature` HMAC header (see below) and upserts the contribution by `eventId`.
+- `POST /api/v1/subscription/subscribe` – accepts `{ wallet, tier }`, creates a pending subscription session, and returns `{ sessionUrl, sessionId }`.
+- `POST /api/v1/subscription/callback` – requires an HMAC-signed JSON payload, verifies the session with the payment provider stub, and activates the tier idempotently.
+
+### Legacy (`/api`)
+
 - `GET /api/meta/progression` – progression levels (cached)
 - `GET /api/users/:wallet` – returns xp, tier, levelName, progress
 - `POST /api/quests/claim?wallet=ADDR` `{ "questId": "..." }` – idempotent claim, responds with `alreadyClaimed` when repeated
@@ -37,9 +46,22 @@ applies the multiplier and reports the effective XP.
 
 Legacy endpoints `/quests` and `/complete` redirect to the new routes and will be removed after **1 Jan 2025**. Update clients before this date.
 
+### Webhook signing
+
+Subscription and token-sale webhooks must include an `X-Signature` header computed as an `HMAC-SHA256` digest over the raw request body. Each flow uses its own secret:
+
+- `SUBSCRIPTION_WEBHOOK_SECRET` – validates `POST /api/v1/subscription/callback` payloads before any database writes.
+- `TOKEN_SALE_WEBHOOK_SECRET` – validates `POST /api/v1/token-sale/webhook` events before they are upserted.
+
+Incoming bodies are rejected with `401` when the signature is missing or invalid, and callbacks are idempotent by `sessionId`/`eventId`. The checkout and redirect URLs used in the subscription flow are restricted to allow-listed origins via `SUBSCRIPTION_CHECKOUT_URL` / `SUBSCRIPTION_CALLBACK_REDIRECT` and their respective `*_ALLOWLIST` overrides to prevent untrusted redirects.
+
 ## Disk
 
 Provision a 1GB disk mounted at `/var/data`.
+
+## Database roadmap
+
+- SQLite powers development/staging today. A migration to a managed Postgres cluster is planned once connection details are available; `lib/db.js` contains the bootstrap logic that will be swapped for a pooled Postgres client.
 
 ## Health
 

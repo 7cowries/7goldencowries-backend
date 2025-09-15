@@ -1,5 +1,5 @@
 import express from "express";
-import db from "../db.js";
+import db from "../lib/db.js";
 
 const router = express.Router();
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "dev_admin_secret_change_me";

@@ -4,7 +4,7 @@ let db, awardQuest;
 
 beforeAll(async () => {
   process.env.DATABASE_URL = ':memory:';
-  ({ default: db } = await import('../db.js'));
+  ({ default: db } = await import('../lib/db.js'));
   ({ awardQuest } = await import('../lib/quests.js'));
   await db.run("INSERT INTO quests (id, title, xp, active) VALUES ('q1','Q',100,1)");
   await db.run("INSERT INTO users (wallet, tier, updatedAt) VALUES ('w3','tier3',CURRENT_TIMESTAMP)");

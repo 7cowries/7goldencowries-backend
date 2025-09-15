@@ -1,5 +1,5 @@
 import express from "express";
-import db from "../db.js";
+import db from "../lib/db.js";
 import { deriveLevel } from "../config/progression.js";
 import { getSessionWallet } from "../utils/session.js";
 

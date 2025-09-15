@@ -1,4 +1,4 @@
-import db from "../db.js";
+import db from "../lib/db.js";
 
 const REFERRAL_XP = Number(process.env.REFERRAL_XP || 100);
 

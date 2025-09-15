@@ -7,7 +7,7 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import passport from 'passport';
 
-import db from './db.js';
+import db from './lib/db.js';
 import discordAuth from './routes/discordAuth.js';
 import questRoutes from './routes/questRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
