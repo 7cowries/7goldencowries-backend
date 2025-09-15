@@ -239,8 +239,10 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT || 3000;
 
 if (process.env.NODE_ENV !== "test") {
-  app.listen(PORT, () => {
-    console.log(`Listening on ${PORT}`);
+  const port = PORT;
+  app.listen(port, () => {
+    logger.info(`listening on :${port}`);
   });
 }
+
 export default app;
