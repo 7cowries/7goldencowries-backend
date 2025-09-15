@@ -3,11 +3,12 @@ import { Buffer } from "node:buffer";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
+import { getRequiredEnv } from "../../config/env.js";
 import db from "../../lib/db.js";
 
 const router = express.Router();
 
-const TOKEN_SALE_WEBHOOK_SECRET = process.env.TOKEN_SALE_WEBHOOK_SECRET || "";
+const TOKEN_SALE_WEBHOOK_SECRET = getRequiredEnv("TOKEN_SALE_WEBHOOK_SECRET");
 
 const webhookLimiter = rateLimit({
   ...getWebhookRateLimitOptions(),
@@ -122,13 +123,6 @@ router.post("/purchase", async (req, res) => {
 router.post("/webhook", webhookLimiter, async (req, res) => {
   const correlationId = randomUUID().slice(0, 8);
   try {
-    if (!TOKEN_SALE_WEBHOOK_SECRET) {
-      console.error(
-        `[token-sale-webhook:${correlationId}] TOKEN_SALE_WEBHOOK_SECRET is not configured`
-      );
-      return res.status(500).json({ error: "webhook_not_configured", correlationId });
-    }
-
     const signature = req.get("x-signature") || req.get("X-Signature") || "";
     if (!signature) {
       console.warn(`[token-sale-webhook:${correlationId}] missing X-Signature header`);
