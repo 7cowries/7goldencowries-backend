@@ -5,6 +5,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import db from "../../lib/db.js";
 import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
+import { getRequiredEnv } from "../../config/env.js";
 import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
 
 const router = express.Router();
@@ -168,7 +169,7 @@ router.post("/subscribe", async (req, res) => {
   }
 });
 
-const SUBSCRIPTION_WEBHOOK_SECRET = process.env.SUBSCRIPTION_WEBHOOK_SECRET || "";
+const SUBSCRIPTION_WEBHOOK_SECRET = getRequiredEnv("SUBSCRIPTION_WEBHOOK_SECRET");
 const subscriptionCallbackLimiter = rateLimit({
   ...getWebhookRateLimitOptions(),
   standardHeaders: true,
@@ -206,13 +207,6 @@ function isPaidStatus(status) {
 router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
   const correlationId = randomUUID().slice(0, 8);
   try {
-    if (!SUBSCRIPTION_WEBHOOK_SECRET) {
-      console.error(
-        `[subscription-callback:${correlationId}] SUBSCRIPTION_WEBHOOK_SECRET is not configured`
-      );
-      return res.status(500).json({ error: "webhook_not_configured", correlationId });
-    }
-
     const signature = req.get("x-signature") || req.get("X-Signature") || "";
     if (!signature) {
       console.warn(`[subscription-callback:${correlationId}] missing X-Signature header`);

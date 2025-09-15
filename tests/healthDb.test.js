@@ -17,10 +17,18 @@ afterAll(async () => {
 
 test('/health returns db status', async () => {
   const res = await request(app).get('/health');
+  expect(res.status).toBe(200);
   expect(res.body).toEqual({ ok: true, db: 'ok' });
 });
 
 test('/healthz returns db status', async () => {
   const res = await request(app).get('/healthz');
+  expect(res.status).toBe(200);
+  expect(res.body).toEqual({ ok: true, db: 'ok' });
+});
+
+test('/api/health reports db status', async () => {
+  const res = await request(app).get('/api/health');
+  expect(res.status).toBe(200);
   expect(res.body).toEqual({ ok: true, db: 'ok' });
 });
