@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { Buffer } from "node:buffer";
 import express from "express";
 import rateLimit from "express-rate-limit";
+import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
 import db from "../../lib/db.js";
 
 const router = express.Router();
@@ -9,8 +10,7 @@ const router = express.Router();
 const TOKEN_SALE_WEBHOOK_SECRET = process.env.TOKEN_SALE_WEBHOOK_SECRET || "";
 
 const webhookLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 20,
+  ...getWebhookRateLimitOptions(),
   standardHeaders: true,
   legacyHeaders: false,
 });

@@ -2,7 +2,9 @@ import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { Buffer } from "node:buffer";
 import dayjs from "dayjs";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import db from "../../lib/db.js";
+import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
 import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
 
 const router = express.Router();
@@ -167,6 +169,11 @@ router.post("/subscribe", async (req, res) => {
 });
 
 const SUBSCRIPTION_WEBHOOK_SECRET = process.env.SUBSCRIPTION_WEBHOOK_SECRET || "";
+const subscriptionCallbackLimiter = rateLimit({
+  ...getWebhookRateLimitOptions(),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function normalizeSignature(signature) {
   return signature.replace(/^sha256=/i, "").trim();
@@ -196,7 +203,7 @@ function isPaidStatus(status) {
   );
 }
 
-router.post("/callback", async (req, res) => {
+router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
   const correlationId = randomUUID().slice(0, 8);
   try {
     if (!SUBSCRIPTION_WEBHOOK_SECRET) {

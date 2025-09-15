@@ -440,7 +440,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
       if (!verification.ok) {
         return res.status(403).json({
           ok: false,
-          error: "proof_required",
+          error: "proof-required",
           reason: verification.reason,
         });
       }
@@ -450,7 +450,7 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
         quest.id
       );
       if (!proof || proof.status !== "approved") {
-        return res.status(403).json({ ok: false, error: "proof_required" });
+        return res.status(403).json({ ok: false, error: "proof-required" });
       }
     }
 

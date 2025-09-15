@@ -31,6 +31,10 @@ node server.js
 - `POST /api/v1/subscription/subscribe` – accepts `{ wallet, tier }`, creates a pending subscription session, and returns `{ sessionUrl, sessionId }`.
 - `POST /api/v1/subscription/callback` – requires an HMAC-signed JSON payload, verifies the session with the payment provider stub, and activates the tier idempotently.
 
+### Quest claim responses
+
+Quest claim endpoints respond with consistent error keys. Proof-gated quests return `{ ok: false, error: "proof-required" }` when the user must submit or wait for an approved proof before claiming XP.
+
 ### Legacy (`/api`)
 
 - `GET /api/meta/progression` – progression levels (cached)
@@ -52,6 +56,11 @@ Subscription and token-sale webhooks must include an `X-Signature` header comput
 
 - `SUBSCRIPTION_WEBHOOK_SECRET` – validates `POST /api/v1/subscription/callback` payloads before any database writes.
 - `TOKEN_SALE_WEBHOOK_SECRET` – validates `POST /api/v1/token-sale/webhook` events before they are upserted.
+
+Webhook endpoints are also rate-limited to guard against bursts or replay storms:
+
+- `WEBHOOK_WINDOW_MS` – sliding window size in milliseconds (default/recommended starting value: `60000`).
+- `WEBHOOK_MAX_EVENTS` – maximum events allowed per window (default/recommended starting value: `120`).
 
 Incoming bodies are rejected with `401` when the signature is missing or invalid, and callbacks are idempotent by `sessionId`/`eventId`. The checkout and redirect URLs used in the subscription flow are restricted to allow-listed origins via `SUBSCRIPTION_CHECKOUT_URL` / `SUBSCRIPTION_CALLBACK_REDIRECT` and their respective `*_ALLOWLIST` overrides to prevent untrusted redirects.
 
