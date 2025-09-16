@@ -1,5 +1,6 @@
 import express from "express";
 import db from "../lib/db.js";
+import { crossSiteCookieOptions } from "../utils/cookies.js";
 
 const router = express.Router();
 
@@ -9,13 +10,11 @@ router.get("/ref/:code", async (req, res) => {
     if (!code) return res.status(404).json({ error: "Invalid code" });
     const row = await db.get("SELECT wallet FROM users WHERE referral_code = ?", [code]);
     if (!row) return res.status(404).json({ error: "Invalid code" });
-    res.cookie("referral_code", code, {
-      maxAge: 2592000 * 1000,
-      httpOnly: true,
-      sameSite: "none",
-      secure: true,
-      path: "/",
-    });
+    res.cookie(
+      "referral_code",
+      code,
+      crossSiteCookieOptions({ maxAge: 2592000 * 1000 })
+    );
     req.session.referral_code = code;
     const redirectUrl =
       process.env.FRONTEND_URL || "https://7goldencowries.com";

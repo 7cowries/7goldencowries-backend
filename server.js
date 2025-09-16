@@ -34,6 +34,7 @@ import tonVerifyRoutes from "./routes/tonVerifyRoutes.js";
 import authStartRoutes from "./routes/authStartRoutes.js";
 import referralLookupRoutes from "./routes/referralLookupRoutes.js";
 import apiV1Routes from "./routes/apiV1/index.js";
+import socialApiRoutes from "./routes/socialApiRoutes.js";
 
 dotenv.config();
 const logger = winston.createLogger({ level: "info", transports: [new winston.transports.Console()], format: winston.format.combine(winston.format.timestamp(), winston.format.simple()) });
@@ -45,42 +46,14 @@ app.set("etag", false);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
-const defaultOrigins = [
-  "https://7goldencowries.com",
-  "https://www.7goldencowries.com",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
-const origins = Array.from(
-  new Set([
-    ...defaultOrigins,
-    ...(process.env.FRONTEND_URL || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    ...(process.env.CORS_ORIGINS || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  ])
-).filter(Boolean);
-const originCheck = (origin, cb) => {
-  if (!origin) return cb(null, true);
-  const ok = origins.some((o) => {
-    if (o.includes("*")) {
-      const re = new RegExp("^" + o.replace(/\./g, "\.").replace(/\*/g, ".*") + "$");
-      return re.test(origin);
-    }
-    return o === origin;
-  });
-  if (!ok) logger.warn(`CORS blocked: ${origin}`);
-  cb(null, ok);
-};
+const frontendOrigins = (process.env.FRONTEND_URL || "https://7goldencowries.com")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const corsOrigin = frontendOrigins.length <= 1 ? frontendOrigins[0] : frontendOrigins;
 
-app.use(cors({ origin: originCheck, credentials: true }));
-app.options("*", cors({ origin: originCheck, credentials: true }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
+app.options("*", cors({ origin: corsOrigin, credentials: true }));
 
 app.use(cookieParser());
 
@@ -91,7 +64,7 @@ const rawBodySaver = (req, _res, buf) => {
 };
 
 app.use(
-  bodyParser.json({
+  express.json({
     verify: rawBodySaver,
     limit: "2mb",
   })
@@ -150,6 +123,7 @@ const claimLimiter = rateLimit({
 app.use("/api/quests/claim", claimLimiter);
 
 const SESSION_DIR = process.env.SESSIONS_DIR || "/var/data";
+const isProd = process.env.NODE_ENV === "production";
 try { fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch (e) { logger.error("Session dir creation failed", e); }
 const MemStore = MemoryStore(session);
 const store = new MemStore({ checkPeriod: 864e5, path: SESSION_DIR });
@@ -163,8 +137,8 @@ app.use(
     store,
     cookie: {
       httpOnly: true,
-      sameSite: "none",
-      secure: process.env.NODE_ENV !== "test",
+      sameSite: isProd ? "none" : "lax",
+      secure: isProd,
       maxAge: 1000 * 60 * 60 * 24 * 30,
     },
   })
@@ -202,6 +176,7 @@ async function ensureSchema() {
 await ensureSchema();
 
 app.use("/api/v1", apiV1Routes);
+app.use("/api/social", socialApiRoutes);
 app.use(metaRoutes);
 app.use(questRoutes);
 app.use(questTelegramRoutes);
