@@ -50,14 +50,21 @@ router.get("/", async (req, res) => {
       `SELECT COUNT(*) AS c FROM users WHERE wallet IS NOT NULL`
     );
     const entries = (rows || []).map((r, i) => {
-      const lvl = deriveLevel(r.xp || 0);
+      const totalXP = Number(r.xp ?? 0);
+      const lvl = deriveLevel(totalXP);
       const prog = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
+      const clampedProgress = Math.min(1, Math.max(0, prog));
       return {
         wallet: r.wallet || "",
-        xp: Number(r.xp ?? 0),
+        totalXP,
+        xp: Math.max(0, lvl.xpIntoLevel ?? 0),
+        nextXP: lvl.nextNeed,
         twitterHandle: r.twitterHandle || r.twitter_username || undefined,
         levelName: lvl.levelName,
-        progress: Math.min(1, Math.max(0, prog)),
+        levelSymbol: lvl.levelSymbol,
+        levelTier: lvl.levelTier,
+        levelProgress: clampedProgress,
+        progress: clampedProgress,
         rank: offset + i + 1,
         tier: r.tier || undefined,
       };

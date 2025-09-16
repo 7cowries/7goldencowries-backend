@@ -9,7 +9,7 @@ describe('ensureUsersSchema migration', () => {
     await ensureUsersSchema(db);
     const cols = await db.all("PRAGMA table_info(users)");
     const names = cols.map(c => c.name);
-    const expected = ['id','wallet','xp','level','levelName','levelProgress','referral_code','referred_by','telegram_username','twitter_username','twitter_id','discord_username','discord_id','createdAt','updatedAt'];
+    const expected = ['id','wallet','xp','level','levelName','levelSymbol','levelProgress','nextXP','referral_code','referred_by','telegram_username','twitter_username','twitter_id','discord_username','discord_id','socials','createdAt','updatedAt'];
     expected.forEach(c => expect(names).toContain(c));
     const idx = await db.all("PRAGMA index_list('users')");
     const refIdx = [];

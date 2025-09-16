@@ -1,5 +1,10 @@
 export function getSessionWallet(req) {
   const w = req?.session?.wallet;
-  return w ? String(w) : null;
+  if (typeof w !== "string") {
+    return null;
+  }
+  const trimmed = w.trim();
+  return trimmed ? trimmed : null;
 }
 
+export default { getSessionWallet };

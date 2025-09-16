@@ -100,9 +100,11 @@ async function buildProfile(wallet) {
   );
 
   // Compute level info/fallbacks
-  const lvl = deriveLevel(u?.xp ?? 0);
+  const totalXP = u?.xp ?? 0;
+  const lvl = deriveLevel(totalXP);
   const levelName     = lvl.levelName;
-  const levelProgress = lvl.progress;
+  const levelProgress = Math.max(0, Math.min(1, lvl.progress ?? 0));
+  const xpIntoLevel   = Math.max(0, lvl.xpIntoLevel ?? 0);
   const nextXP        = lvl.nextNeed;
 
   // Merge links: prefer social_links table, then users.*Handle
@@ -117,9 +119,12 @@ async function buildProfile(wallet) {
   return {
     profile: {
       wallet: u?.wallet || wallet,
-      xp: u?.xp ?? 0,
+      totalXP,
+      xp: xpIntoLevel,
       tier: u?.tier || "Free",
       levelName,
+      levelSymbol: lvl.levelSymbol,
+      levelTier: lvl.levelTier,
       levelProgress,
       nextXP,
       twitterHandle:  u?.twitterHandle  || null,
@@ -149,7 +154,11 @@ router.get("/", async (req, res) => {
     res.json({
       wallet: p.wallet,
       levelName: p.levelName,
+      totalXP: p.totalXP,
       xp: p.xp,
+      nextXP: p.nextXP,
+      levelSymbol: p.levelSymbol,
+      levelTier: p.levelTier,
       levelProgress: p.levelProgress,
       tier: p.tier,
       twitterHandle: p.twitterHandle || undefined,
@@ -174,7 +183,11 @@ router.get("/:wallet", async (req, res) => {
     res.json({
       wallet: p.wallet,
       levelName: p.levelName,
+      totalXP: p.totalXP,
       xp: p.xp,
+      nextXP: p.nextXP,
+      levelSymbol: p.levelSymbol,
+      levelTier: p.levelTier,
       levelProgress: p.levelProgress,
       tier: p.tier,
       twitterHandle: p.twitterHandle || undefined,
