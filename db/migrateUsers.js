@@ -1,3 +1,5 @@
+import { deriveLevel } from "../config/progression.js";
+
 /**
  * Ensure the users table matches the expected schema.
  * @param {import('sqlite').Database} db
@@ -164,6 +166,25 @@ export async function backfillUsersDefaults(db) {
     createdAt     = COALESCE(createdAt, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updatedAt     = COALESCE(updatedAt, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   `);
+
+  const rows = await db.all("SELECT wallet, COALESCE(xp,0) AS xp FROM users");
+  for (const row of rows) {
+    const lvl = deriveLevel(row.xp || 0);
+    await db.run(
+      `UPDATE users
+          SET levelName = ?,
+              levelSymbol = ?,
+              levelProgress = ?,
+              nextXP = ?,
+              updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE wallet = ?`,
+      lvl.levelName,
+      lvl.levelSymbol,
+      lvl.progress,
+      lvl.nextNeed,
+      row.wallet
+    );
+  }
 }
 
 export default ensureUsersSchema;

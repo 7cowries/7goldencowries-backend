@@ -24,15 +24,19 @@ async function fetchUser(wallet, res) {
       user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
     }
 
-    const { xp, tier, twitterHandle } = user;
-    const lvl = deriveLevel(xp);
+    const totalXP = user?.xp ?? 0;
+    const { tier, twitterHandle } = user;
+    const lvl = deriveLevel(totalXP);
     const data = {
-      xp,
+      totalXP,
+      xp: Math.max(0, lvl.xpIntoLevel ?? 0),
+      nextXP: lvl.nextNeed,
       tier,
       twitter: twitterHandle || null,
       levelName: lvl.levelName,
-      levelProgress: lvl.progress,
-      nextXP: lvl.nextNeed,
+      levelSymbol: lvl.levelSymbol,
+      levelTier: lvl.levelTier,
+      levelProgress: Math.max(0, Math.min(1, lvl.progress ?? 0)),
     };
     setCache(key, data, TTL);
     res.json(data);

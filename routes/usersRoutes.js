@@ -35,6 +35,52 @@ function makeRefCode(id) {
   return (id.toString(36) + Math.random().toString(36).slice(2, 6)).toUpperCase();
 }
 
+function baseSocials() {
+  return {
+    twitter: { connected: false },
+    telegram: { connected: false },
+    discord: { connected: false },
+  };
+}
+
+function defaultPayload() {
+  return {
+    wallet: null,
+    authed: false,
+    totalXP: 0,
+    xp: 0,
+    nextXP: 10000,
+    levelName: "Shellborn",
+    levelSymbol: "🐚",
+    levelTier: "shellborn",
+    levelProgress: 0,
+    tier: "Free",
+    socials: baseSocials(),
+    referralCount: 0,
+    questHistory: [],
+  };
+}
+
+async function fetchReferralCount(wallet) {
+  let count = 0;
+  if (!wallet) return count;
+  try {
+    const row = await db.get(
+      "SELECT COUNT(*) AS c FROM referrals WHERE referrer = ?",
+      wallet
+    );
+    if (row?.c) count = Math.max(count, Number(row.c) || 0);
+  } catch {}
+  try {
+    const row = await db.get(
+      "SELECT COUNT(*) AS c FROM referrals WHERE referrer_user_id = (SELECT id FROM users WHERE wallet = ?)",
+      wallet
+    );
+    if (row?.c) count = Math.max(count, Number(row.c) || 0);
+  } catch {}
+  return count;
+}
+
 /**
  * GET /api/users/me
  * Reads wallet from session; falls back to ?wallet=.
@@ -42,24 +88,12 @@ function makeRefCode(id) {
  */
 router.get("/me", async (req, res) => {
   try {
-    const wallet =
-      getSessionWallet(req) || (req.query.wallet ? String(req.query.wallet) : null);
+    const sessionWallet = getSessionWallet(req);
+    const queryWallet = req.query.wallet ? String(req.query.wallet).trim() : "";
+    const wallet = sessionWallet || (queryWallet ? queryWallet : null);
 
     if (!wallet) {
-      return res.json({
-        wallet: null,
-        xp: 0,
-        nextXP: 10000,
-        levelName: "Shellborn",
-        levelProgress: 0,
-        tier: "Free",
-        socials: {
-          twitter: { connected: false },
-          telegram: { connected: false },
-          discord: { connected: false },
-        },
-        questHistory: [],
-      });
+      return res.json(defaultPayload());
     }
 
     await db.run(
@@ -69,7 +103,10 @@ router.get("/me", async (req, res) => {
     );
 
     let row = await db.get(
-      `SELECT id, wallet, xp, tier, referral_code, twitterHandle, twitter_username, twitter_id, telegramHandle, telegram_username, telegramId, discordId, discord_id, discordHandle, discord_username, socials
+      `SELECT id, wallet, xp, tier, referral_code, referred_by, socials,
+              twitterHandle, twitter_username, twitter_id,
+              telegramHandle, telegram_username, telegramId,
+              discordId, discord_id, discordHandle, discord_username
          FROM users WHERE wallet = ?`,
       wallet
     );
@@ -84,10 +121,11 @@ router.get("/me", async (req, res) => {
       row.referral_code = code;
     }
 
-    const xp = row.xp ?? 0;
-    const lvl = deriveLevel(xp);
+    const xpTotal = row.xp ?? 0;
+    const lvl = deriveLevel(xpTotal);
     const rawProgress = lvl.progress > 1 ? lvl.progress / 100 : lvl.progress;
     const progress = Math.max(0, Math.min(1, rawProgress));
+    const xpIntoLevel = Math.max(0, lvl.xpIntoLevel ?? 0);
     let socialsData = {};
     try {
       socialsData = row.socials ? JSON.parse(row.socials) : {};
@@ -99,35 +137,50 @@ router.get("/me", async (req, res) => {
       row.telegramHandle || row.telegram_username || socialsData.telegram?.username;
     const telegramId = row.telegramId || socialsData.telegram?.id;
     const discordId = row.discordId || row.discord_id || socialsData.discord?.id;
-    const socials = {
-      twitter: {
-        connected: !!(twitterHandle || twitterId),
+    const socials = baseSocials();
+    if (twitterHandle || twitterId) {
+      socials.twitter = {
+        connected: true,
         ...(twitterHandle ? { handle: twitterHandle } : {}),
         ...(twitterId ? { id: twitterId } : {}),
-      },
-      telegram: {
-        connected: !!(telegramHandle || telegramId),
+      };
+    }
+    if (telegramHandle || telegramId) {
+      socials.telegram = {
+        connected: true,
         ...(telegramHandle ? { username: telegramHandle } : {}),
         ...(telegramId ? { id: telegramId } : {}),
-      },
-      discord: {
-        connected: !!discordId,
-        ...(discordId ? { id: discordId } : {}),
-      },
-    };
+      };
+    }
+    if (discordId) {
+      socials.discord = {
+        connected: true,
+        id: discordId,
+      };
+    }
 
     const questHistory = await fetchHistory(row.wallet);
+    const referralCount = await fetchReferralCount(row.wallet);
+    const authed =
+      typeof sessionWallet === "string" &&
+      sessionWallet.toLowerCase() === String(row.wallet || "").toLowerCase();
 
     const payload = {
       wallet: row.wallet,
-      xp,
-      levelName: lvl.levelName,
-      levelProgress: progress,
+      authed,
+      totalXP: lvl.totalXP,
+      xp: xpIntoLevel,
       nextXP: lvl.nextNeed,
+      levelName: lvl.levelName,
+      levelSymbol: lvl.levelSymbol,
+      levelTier: lvl.levelTier,
+      levelProgress: progress,
       tier: row.tier || "Free",
       socials,
+      referralCount,
       questHistory,
       referral_code: row.referral_code,
+      referred_by: row.referred_by || null,
       twitterHandle: twitterHandle || null,
       telegramHandle: telegramHandle || null,
       discordId: discordId || null,

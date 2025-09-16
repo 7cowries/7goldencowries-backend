@@ -55,22 +55,10 @@ r.post("/bind-wallet", bindLimiter, async (req, res) => {
             refCode
           );
           if (referrer && referrer.wallet !== w) {
-            const upd = await db.run(
+            await db.run(
               "UPDATE users SET referred_by=?, updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=? AND referred_by IS NULL",
               [referrer.wallet, w]
             );
-            if (upd.changes > 0) {
-              const ins = await db.run(
-                "INSERT OR IGNORE INTO completed_quests (wallet, quest_id, timestamp) VALUES (?, 'REFERRAL_BONUS', strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-                referrer.wallet
-              );
-              if (ins.changes > 0) {
-                await db.run(
-                  "UPDATE users SET xp = COALESCE(xp,0) + 50, updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?",
-                  referrer.wallet
-                );
-              }
-            }
           }
         }
         await db.exec("COMMIT");
@@ -78,12 +66,7 @@ r.post("/bind-wallet", bindLimiter, async (req, res) => {
         await db.exec("ROLLBACK");
         console.error("referral bind error", err);
       }
-      res.clearCookie("referral_code", {
-        httpOnly: true,
-        sameSite: "none",
-        secure: true,
-      });
-      req.session.referral_code = null;
+      req.session.referral_code = refCode;
     }
 
     res.json({ ok: true, wallet: w, bound: true });
@@ -91,6 +74,19 @@ r.post("/bind-wallet", bindLimiter, async (req, res) => {
     console.error("bind-wallet error:", e);
     res.status(500).json({ error: "Failed to bind wallet" });
   }
+});
+
+r.post("/disconnect", (req, res) => {
+  if (req.session) {
+    req.session.wallet = null;
+    if (req.session.user) {
+      delete req.session.user;
+    }
+    if (req.session.save) {
+      req.session.save(() => {});
+    }
+  }
+  res.json({ ok: true });
 });
 
 export default r;

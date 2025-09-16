@@ -23,6 +23,10 @@ test('/api/users/me returns normalized progress and history shape', async () => 
   const res = await agent.get('/api/users/me');
   expect(res.status).toBe(200);
   const user = res.body;
+  expect(user.totalXP).toBeGreaterThanOrEqual(0);
+  expect(user).toHaveProperty('xp');
+  expect(user).toHaveProperty('nextXP');
+  expect(user).toHaveProperty('levelTier');
   expect(user.levelProgress).toBeGreaterThanOrEqual(0);
   expect(user.levelProgress).toBeLessThanOrEqual(1);
   expect(Array.isArray(user.questHistory)).toBe(true);

@@ -7,6 +7,8 @@ import db from "../../lib/db.js";
 import { getWebhookRateLimitOptions } from "../../config/rateLimits.js";
 import { getRequiredEnv } from "../../config/env.js";
 import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
+import { getSessionWallet } from "../../utils/session.js";
+import { grantXP } from "../../lib/grantXP.js";
 
 const router = express.Router();
 
@@ -322,6 +324,63 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
   } catch (err) {
     console.error(`subscription callback error [${correlationId}]`, err);
     return res.status(500).json({ error: "callback_failed", correlationId });
+  }
+});
+
+const SUBSCRIPTION_CLAIM_QUEST_ID = "SUBSCRIPTION_CLAIM_BONUS";
+const claimLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+router.post("/claim", claimLimiter, async (req, res) => {
+  try {
+    const wallet = getSessionWallet(req);
+    if (!wallet) {
+      return res.status(401).json({ error: "wallet_required" });
+    }
+
+    await db.run(
+      `INSERT OR IGNORE INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+         VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet
+    );
+
+    const inserted = await db.run(
+      `INSERT OR IGNORE INTO completed_quests (wallet, quest_id, timestamp)
+         VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet,
+      SUBSCRIPTION_CLAIM_QUEST_ID
+    );
+
+    if (inserted.changes === 0) {
+      return res.json({ ok: true, xpDelta: 0 });
+    }
+
+    const result = await grantXP({ wallet }, 200);
+    return res.json({ ok: true, xpDelta: result.delta ?? 200 });
+  } catch (err) {
+    console.error("subscription claim error", err);
+    return res.status(500).json({ error: "claim_failed" });
+  }
+});
+
+router.get("/status", async (req, res) => {
+  try {
+    const wallet = getSessionWallet(req);
+    if (!wallet) {
+      return res.json({ tier: "Free" });
+    }
+    const row = await db.get(
+      "SELECT tier FROM users WHERE wallet = ?",
+      wallet
+    );
+    return res.json({ tier: row?.tier || "Free" });
+  } catch (err) {
+    console.error("subscription status error", err);
+    return res.status(500).json({ error: "status_failed" });
   }
 });
 

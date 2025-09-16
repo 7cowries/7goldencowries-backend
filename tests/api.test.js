@@ -31,7 +31,10 @@ describe('API routes', () => {
 
   test('returns user stats', async () => {
     const res = await request(app).get('/api/users/w1');
+    expect(res.body.totalXP).toBe(105);
     expect(res.body.xp).toBe(105);
+    expect(res.body.nextXP).toBe(10000);
+    expect(res.body.levelTier).toBe('shellborn');
   });
 
   test('leaderboard shows users', async () => {
@@ -51,6 +54,8 @@ describe('API routes', () => {
     const res = await request(app).get('/api/users/me');
     expect(res.status).toBe(200);
     expect(res.body.wallet).toBeNull();
+    expect(res.body.totalXP).toBe(0);
+    expect(res.body.levelTier).toBe('shellborn');
     expect(res.body.socials.twitter.connected).toBe(false);
   });
 
