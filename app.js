@@ -16,7 +16,7 @@ import proofRoutes from './routes/proofRoutes.js';
 const app = express();
 
 /* ---------- CORS (Render ↔ Vercel with cookies) ---------- */
-const defaultOrigin = 'https://7goldencowries-frontend.vercel.app';
+const defaultOrigin = 'https://7goldencowries.com';
 const allowedOrigins = (
   process.env.ALLOWED_ORIGINS ||
   process.env.FRONTEND_URL ||
@@ -44,14 +44,16 @@ app.use(cookieParser());
 // Required on Render/behind proxy so 'secure' cookies are set correctly
 app.set('trust proxy', 1);
 
+const isProd = process.env.NODE_ENV === 'production';
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'change-me-in-render',
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,      // not readable by JS
-    secure: true,        // HTTPS only
-    sameSite: 'none',    // allow cross-site (Vercel <-> Render)
+    secure: isProd,      // HTTPS only in prod
+    sameSite: isProd ? 'none' : 'lax',    // cross-site in prod, relaxed for localhost
     maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
   },
 }));
@@ -60,8 +62,19 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* ---------- Health ---------- */
-app.get('/api/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
-app.get('/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() })); // alias
+async function healthHandler(_req, res) {
+  let dbStatus = 'ok';
+  try {
+    await db.get('SELECT 1');
+  } catch {
+    dbStatus = 'down';
+  }
+  res.json({ ok: true, db: dbStatus });
+}
+
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler); // alias
+app.get('/healthz', healthHandler);
 
 /* ---------- Session-based profile: /api/users/me ---------- */
 /*  Frontend can call this without passing wallet; it reads the session user.
