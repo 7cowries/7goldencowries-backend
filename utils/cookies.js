@@ -1,13 +1,16 @@
-const isProd = process.env.NODE_ENV === 'production';
+const isLocalhost = (host) =>
+  /^localhost(:\d+)?$/.test(host || "") || /^127\.0\.0\.1(:\d+)?$/.test(host || "");
 
-export function crossSiteCookieOptions(overrides = {}) {
+export function crossSiteCookieOptions(override = {}) {
+  const host = process.env.HOST || "";
+  const local = isLocalhost(host) || process.env.NODE_ENV === "development";
   return {
     httpOnly: true,
-    sameSite: isProd ? 'none' : 'lax',
-    secure: isProd,
-    path: '/',
-    ...overrides,
+    sameSite: local ? "Lax" : "none",
+    secure: local ? false : true,
+    path: "/",
+    ...override,
   };
 }
 
-export default crossSiteCookieOptions;
+export default { crossSiteCookieOptions };

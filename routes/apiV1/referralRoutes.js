@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import db from "../../lib/db.js";
 import { getSessionWallet } from "../../utils/session.js";
 import { grantXP } from "../../lib/grantXP.js";
@@ -6,6 +7,12 @@ import { crossSiteCookieOptions } from "../../utils/cookies.js";
 
 const router = express.Router();
 const REFERRAL_BONUS_QUEST_PREFIX = "REFERRAL_BONUS:";
+const claimLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function normalizeCode(code) {
   if (!code) return null;
@@ -14,7 +21,7 @@ function normalizeCode(code) {
   return re.test(trimmed) ? trimmed : null;
 }
 
-router.post("/claim", async (req, res) => {
+router.post("/claim", claimLimiter, async (req, res) => {
   try {
     const wallet = getSessionWallet(req);
     if (!wallet) {

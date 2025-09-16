@@ -5,7 +5,6 @@ import winston from "winston";
 import dotenv from "dotenv";
 import cors from "cors";
 import helmet from "helmet";
-import bodyParser from "body-parser";
 import rateLimit from "express-rate-limit";
 import session from "express-session";
 import MemoryStore from "memorystore";
@@ -46,6 +45,30 @@ app.set("etag", false);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
+const rawBodySaver = (req, _res, buf) => {
+  if (buf?.length) {
+    req.rawBody = buf;
+  }
+};
+
+// Parse JSON before any routes use req.body
+app.use(express.json({ limit: "1mb", verify: rawBodySaver }));
+app.use(express.urlencoded({ extended: true, limit: "1mb", verify: rawBodySaver }));
+app.use(
+  express.raw({
+    type: "application/octet-stream",
+    verify: rawBodySaver,
+    limit: "2mb",
+  })
+);
+app.use(
+  express.text({
+    type: "text/*",
+    verify: rawBodySaver,
+    limit: "2mb",
+  })
+);
+
 const frontendOrigins = (process.env.FRONTEND_URL || "https://7goldencowries.com")
   .split(",")
   .map((s) => s.trim())
@@ -56,40 +79,6 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 app.options("*", cors({ origin: corsOrigin, credentials: true }));
 
 app.use(cookieParser());
-
-const rawBodySaver = (req, _res, buf) => {
-  if (buf?.length) {
-    req.rawBody = buf;
-  }
-};
-
-app.use(
-  express.json({
-    verify: rawBodySaver,
-    limit: "2mb",
-  })
-);
-app.use(
-  bodyParser.raw({
-    type: "application/octet-stream",
-    verify: rawBodySaver,
-    limit: "2mb",
-  })
-);
-app.use(
-  bodyParser.text({
-    type: "text/*",
-    verify: rawBodySaver,
-    limit: "2mb",
-  })
-);
-app.use(
-  bodyParser.urlencoded({
-    verify: rawBodySaver,
-    limit: "2mb",
-    extended: true,
-  })
-);
 app.use("/api", (req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
@@ -176,7 +165,6 @@ async function ensureSchema() {
 await ensureSchema();
 
 app.use("/api/v1", apiV1Routes);
-app.use("/api/social", socialApiRoutes);
 app.use(metaRoutes);
 app.use(questRoutes);
 app.use(questTelegramRoutes);
@@ -189,6 +177,8 @@ app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/admin/referrals", referralAdminRoutes);
 app.use("/api/session", sessionRoutes);
+// Social unlink endpoints (twitter/telegram/discord)
+app.use("/api/social", socialApiRoutes);
 app.use("/api/auth", authStartRoutes);
 app.use("/auth", socialRoutes);
 app.use("/api/admin", adminRoutes);

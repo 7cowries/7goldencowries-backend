@@ -328,8 +328,14 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
 });
 
 const SUBSCRIPTION_CLAIM_QUEST_ID = "SUBSCRIPTION_CLAIM_BONUS";
+const claimLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
-router.post("/claim", async (req, res) => {
+router.post("/claim", claimLimiter, async (req, res) => {
   try {
     const wallet = getSessionWallet(req);
     if (!wallet) {
