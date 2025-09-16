@@ -72,11 +72,27 @@ describe("referral claim", () => {
     const second = await agent.post("/api/v1/referral/claim");
     expect(second.body).toMatchObject({ ok: true, xpDelta: 0 });
 
-    const referrer = await db.get(
+    let referrer = await db.get(
       "SELECT xp FROM users WHERE wallet = ?",
       "referrer-wallet"
     );
     expect(referrer?.xp).toBe(50);
+
+    const secondAgent = request.agent(app);
+    await secondAgent.get("/ref/REFCODE").expect(302);
+    await secondAgent
+      .post("/api/session/bind-wallet")
+      .send({ wallet: "referred-wallet-2" })
+      .expect(200);
+
+    const third = await secondAgent.post("/api/v1/referral/claim");
+    expect(third.body).toMatchObject({ ok: true, xpDelta: 50 });
+
+    referrer = await db.get(
+      "SELECT xp FROM users WHERE wallet = ?",
+      "referrer-wallet"
+    );
+    expect(referrer?.xp).toBe(100);
   });
 });
 

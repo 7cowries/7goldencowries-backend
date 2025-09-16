@@ -62,7 +62,7 @@ router.post("/claim", claimLimiter, async (req, res) => {
       wallet
     );
 
-    const questId = `${REFERRAL_BONUS_QUEST_PREFIX}${code}`;
+    const questId = `${REFERRAL_BONUS_QUEST_PREFIX}${code}:${wallet}`;
     const inserted = await db.run(
       `INSERT OR IGNORE INTO completed_quests (wallet, quest_id, timestamp)
          VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
