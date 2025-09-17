@@ -6,7 +6,8 @@ let db;
 let verifyTonMock;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL = ":memory:";
+  process.env.SQLITE_FILE = ":memory:";
+  process.env.DATABASE_URL = process.env.SQLITE_FILE;
   process.env.NODE_ENV = "test";
   process.env.FRONTEND_URL = "http://localhost:3000";
   process.env.SESSION_SECRET = "test-secret";

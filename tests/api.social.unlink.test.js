@@ -4,7 +4,8 @@ let app;
 let db;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL = ":memory:";
+  process.env.SQLITE_FILE = ":memory:";
+  process.env.DATABASE_URL = process.env.SQLITE_FILE;
   process.env.NODE_ENV = "test";
   process.env.FRONTEND_URL = "http://localhost:3000";
   process.env.TWITTER_CONSUMER_KEY = "test";
