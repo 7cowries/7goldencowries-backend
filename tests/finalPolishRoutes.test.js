@@ -78,6 +78,15 @@ describe("referral claim", () => {
     );
     expect(referrer?.xp).toBe(50);
 
+    const questRows = await db.all(
+      "SELECT quest_id FROM completed_quests WHERE wallet = ? ORDER BY timestamp",
+      "referrer-wallet"
+    );
+    expect(questRows).toHaveLength(1);
+    expect(questRows[0]?.quest_id).toBe(
+      "REFERRAL_BONUS:referrer-wallet:referred-wallet"
+    );
+
     const secondAgent = request.agent(app);
     await secondAgent.get("/ref/REFCODE").expect(302);
     await secondAgent
