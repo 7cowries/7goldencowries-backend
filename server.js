@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import winston from "winston";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -69,14 +70,43 @@ app.use(
   })
 );
 
-const frontendOrigins = (process.env.FRONTEND_URL || "https://7goldencowries.com")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-const corsOrigin = frontendOrigins.length <= 1 ? frontendOrigins[0] : frontendOrigins;
+const DEV_CORS = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
 
-app.use(cors({ origin: corsOrigin, credentials: true }));
-app.options("*", cors({ origin: corsOrigin, credentials: true }));
+function parseOrigins(value) {
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const configuredOrigins = [
+  ...parseOrigins(process.env.FRONTEND_URL),
+  ...parseOrigins(process.env.CLIENT_URL),
+  ...parseOrigins(process.env.CORS_ORIGINS),
+];
+const corsAllowlist = Array.from(new Set([...DEV_CORS, ...configuredOrigins]));
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (corsAllowlist.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 app.use(cookieParser());
 app.use("/api", (req, res, next) => {
@@ -117,6 +147,30 @@ try { fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch (e) { logger.error
 const MemStore = MemoryStore(session);
 const store = new MemStore({ checkPeriod: 864e5, path: SESSION_DIR });
 store.on("error", (err) => logger.error("Session store error", err));
+
+function resolveSecureCookieFlag() {
+  const flag = process.env.COOKIE_SECURE;
+  if (typeof flag === "string") {
+    const normalized = flag.trim().toLowerCase();
+    if (["1", "true", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+  return isProd;
+}
+
+function buildSessionCookieOptions() {
+  const secure = resolveSecureCookieFlag();
+  return {
+    httpOnly: true,
+    sameSite: secure ? "none" : "lax",
+    secure,
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+  };
+}
 app.use(
   session({
     name: process.env.COOKIE_NAME || "7gc.sid",
@@ -124,12 +178,7 @@ app.use(
     resave: false,
     saveUninitialized: false,
     store,
-    cookie: {
-      httpOnly: true,
-      sameSite: isProd ? "none" : "lax",
-      secure: isProd,
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    },
+    cookie: buildSessionCookieOptions(),
   })
 );
 
@@ -185,12 +234,18 @@ app.use("/api/admin", adminRoutes);
 app.use("/referrals", referralLookupRoutes);
 app.use(tonVerifyRoutes);
 app.use(healthRoutes);
+app.get("/", (_req, res) => {
+  res.json({
+    name: "7goldencowries-backend",
+    routes: {
+      health: "/healthz",
+      apiHealth: "/api/health",
+      paymentsStatus: "/api/v1/payments/status",
+      subscriptionStatus: "/api/v1/subscription/status",
+    },
+  });
+});
 app.use(refRedirectRoutes);
-
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ||
-  process.env.CLIENT_URL ||
-  "https://7goldencowries.com";
 
 // temporary; keep until clients migrate
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
@@ -201,12 +256,13 @@ app.use((err, _req, res, _next) => {
   logger.error(err);
   res.status(500).json({ error: "Internal error" });
 });
-const PORT = process.env.PORT || 3000;
+const port = process.env.PORT || 4000;
+const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+const currentPath = fileURLToPath(import.meta.url);
 
-if (process.env.NODE_ENV !== "test") {
-  const port = PORT;
+if (entryPath && entryPath === currentPath) {
   app.listen(port, () => {
-    logger.info(`listening on :${port}`);
+    logger.info(`API listening on ${port}`);
   });
 }
 

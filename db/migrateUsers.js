@@ -33,6 +33,8 @@ export async function ensureUsersSchema(db) {
     ['discord_username', 'TEXT'],
     ['discord_id', 'TEXT'],
     ['socials', 'TEXT'],
+    ['paid', 'INTEGER'],
+    ['lastPaymentAt', 'TEXT'],
     ['createdAt', 'TEXT'],
     ['updatedAt', 'TEXT'],
   ];
@@ -66,6 +68,8 @@ export async function ensureUsersSchema(db) {
       discord_username TEXT,
       discord_id TEXT,
       socials TEXT,
+      paid INTEGER DEFAULT 0,
+      lastPaymentAt TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       UNIQUE(referral_code)
@@ -131,6 +135,8 @@ export async function ensureUsersSchema(db) {
       discord_username TEXT,
       discord_id TEXT,
       socials TEXT,
+      paid INTEGER DEFAULT 0,
+      lastPaymentAt TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       UNIQUE(referral_code)
@@ -163,6 +169,7 @@ export async function backfillUsersDefaults(db) {
     nextXP        = COALESCE(nextXP, 10000),
     socials       = COALESCE(socials, '{}'),
     discordGuildMember = COALESCE(discordGuildMember, 0),
+    paid          = COALESCE(paid, 0),
     createdAt     = COALESCE(createdAt, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updatedAt     = COALESCE(updatedAt, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   `);

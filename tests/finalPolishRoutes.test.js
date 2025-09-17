@@ -9,6 +9,7 @@ beforeAll(async () => {
   process.env.TWITTER_CONSUMER_KEY = "test";
   process.env.TWITTER_CONSUMER_SECRET = "secret";
   process.env.FRONTEND_URL = "http://localhost:3000";
+  process.env.SUBSCRIPTION_BONUS_XP = "120";
   ({ default: app } = await import("../server.js"));
   ({ default: db } = await import("../lib/db.js"));
 });
@@ -40,15 +41,19 @@ describe("subscription claim", () => {
     const agent = request.agent(app);
     const wallet = "wallet-sub";
     await agent.post("/api/session/bind-wallet").send({ wallet }).expect(200);
+    await db.run(
+      "UPDATE users SET paid = 1, lastPaymentAt = CURRENT_TIMESTAMP WHERE wallet = ?",
+      wallet
+    );
 
     const first = await agent.post("/api/v1/subscription/claim");
-    expect(first.body).toMatchObject({ ok: true, xpDelta: 200 });
+    expect(first.body).toMatchObject({ ok: true, xpDelta: 120 });
 
     const second = await agent.post("/api/v1/subscription/claim");
     expect(second.body).toMatchObject({ ok: true, xpDelta: 0 });
 
     const row = await db.get("SELECT xp FROM users WHERE wallet = ?", wallet);
-    expect(row?.xp).toBe(200);
+    expect(row?.xp).toBe(120);
   });
 });
 
