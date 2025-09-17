@@ -77,6 +77,8 @@ const DEV_CORS = [
   "http://127.0.0.1:5173",
 ];
 
+const DEV_ORIGIN_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
 function parseOrigins(value) {
   if (!value) return [];
   return String(value)
@@ -85,11 +87,15 @@ function parseOrigins(value) {
     .filter(Boolean);
 }
 
-const configuredOrigins = [
+function filterDevOrigins(origins) {
+  return origins.filter((origin) => DEV_ORIGIN_PATTERN.test(origin));
+}
+
+const configuredOrigins = filterDevOrigins([
   ...parseOrigins(process.env.FRONTEND_URL),
   ...parseOrigins(process.env.CLIENT_URL),
   ...parseOrigins(process.env.CORS_ORIGINS),
-];
+]);
 const corsAllowlist = Array.from(new Set([...DEV_CORS, ...configuredOrigins]));
 
 const corsOptions = {

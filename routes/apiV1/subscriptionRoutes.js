@@ -13,6 +13,7 @@ import { grantXP } from "../../lib/grantXP.js";
 const router = express.Router();
 
 const SUBSCRIPTION_BONUS_XP = Math.max(0, Number(process.env.SUBSCRIPTION_BONUS_XP || 120));
+const DEFAULT_SUBSCRIPTION_TIER = "Tier 1";
 
 function toBoolean(value) {
   if (typeof value === "boolean") return value;
@@ -152,10 +153,12 @@ function buildRedirectUrl(status, params = {}) {
 
 router.post("/subscribe", async (req, res) => {
   try {
-    const wallet = req.body?.wallet ? String(req.body.wallet).trim() : "";
-    const tier = normalizeTier(req.body?.tier);
+    const sessionWallet = getSessionWallet(req);
+    const walletFromBody = req.body?.wallet ? String(req.body.wallet).trim() : "";
+    const wallet = sessionWallet || walletFromBody;
+    const tier = normalizeTier(req.body?.tier) || DEFAULT_SUBSCRIPTION_TIER;
     if (!wallet) {
-      return res.status(400).json({ error: "wallet_required" });
+      return res.status(401).json({ error: "wallet_required" });
     }
     if (!tier) {
       return res.status(400).json({ error: "invalid_tier" });
@@ -176,7 +179,21 @@ router.post("/subscribe", async (req, res) => {
       sessionCreatedAt
     );
 
-    return res.json({ sessionUrl, sessionId });
+    const now = new Date().toISOString();
+    await db.run(
+      `INSERT INTO users (wallet, subscriptionTier, updatedAt)
+       VALUES (?, ?, ?)
+       ON CONFLICT(wallet) DO UPDATE SET subscriptionTier = excluded.subscriptionTier, updatedAt = excluded.updatedAt`,
+      wallet,
+      tier,
+      now
+    );
+
+    if (!sessionWallet) {
+      req.session.wallet = wallet;
+    }
+
+    return res.json({ sessionUrl, sessionId, tier });
   } catch (err) {
     console.error("subscription subscribe error", err);
     return res.status(500).json({ error: "subscription_failed" });
@@ -303,7 +320,8 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
       });
     }
 
-    const renewalDate = dayjs().add(30, "day").toISOString();
+    const paidAt = dayjs().toISOString();
+    const renewalDate = dayjs(paidAt).add(30, "day").toISOString();
 
     await db.run(
       `UPDATE subscriptions SET status = 'active', renewalDate = ?, timestamp = datetime('now') WHERE id = ?`,
@@ -312,11 +330,20 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
     );
 
     await db.run(
-      `INSERT INTO users (wallet, tier, updatedAt)
-       VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-       ON CONFLICT(wallet) DO UPDATE SET tier = excluded.tier, updatedAt = excluded.updatedAt`,
+      `INSERT INTO users (wallet, tier, subscriptionTier, paid, lastPaymentAt, subscriptionPaidAt, updatedAt)
+       VALUES (?, ?, ?, 1, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+       ON CONFLICT(wallet) DO UPDATE SET
+         tier = excluded.tier,
+         subscriptionTier = excluded.subscriptionTier,
+         paid = 1,
+         lastPaymentAt = excluded.lastPaymentAt,
+         subscriptionPaidAt = excluded.subscriptionPaidAt,
+         updatedAt = excluded.updatedAt`,
       record.wallet,
-      record.tier
+      record.tier,
+      record.tier,
+      paidAt,
+      paidAt
     );
 
     return res.json({
@@ -326,6 +353,7 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
       wallet: record.wallet,
       tier: record.tier,
       renewalDate,
+      paidAt,
       redirect: buildRedirectUrl("success", {
         sessionId,
         wallet: record.wallet,
@@ -406,10 +434,24 @@ router.post("/claim", claimLimiter, async (req, res) => {
       SUBSCRIPTION_CLAIM_QUEST_ID
     );
 
+    const claimedAt = claimed?.timestamp || null;
+    if (claimedAt) {
+      try {
+        await db.run(
+          `UPDATE users SET subscriptionClaimedAt = ?, updatedAt = ? WHERE wallet = ?`,
+          claimedAt,
+          claimedAt,
+          wallet
+        );
+      } catch (err) {
+        console.warn("subscription claimedAt update failed", err);
+      }
+    }
+
     return res.json({
       ok: true,
       xpDelta: result.delta ?? SUBSCRIPTION_BONUS_XP,
-      claimedAt: claimed?.timestamp || null,
+      claimedAt,
     });
   } catch (err) {
     console.error("subscription claim error", err);
@@ -431,7 +473,7 @@ router.get("/status", async (req, res) => {
     }
 
     const user = await db.get(
-      `SELECT tier, levelName, levelSymbol, levelProgress, nextXP, xp, paid, lastPaymentAt
+      `SELECT tier, subscriptionTier, subscriptionPaidAt, subscriptionClaimedAt, levelName, levelSymbol, levelProgress, nextXP, xp, paid, lastPaymentAt
          FROM users WHERE wallet = ?`,
       wallet
     );
@@ -442,10 +484,14 @@ router.get("/status", async (req, res) => {
     );
 
     const paid = toBoolean(user?.paid);
-    const canClaim = paid && !completed;
+    const claimedAt = user?.subscriptionClaimedAt || completed?.timestamp || null;
+    const canClaim = paid && !claimedAt;
+    const subscriptionTier = user?.subscriptionTier || user?.tier || "Free";
+    const paidAt = user?.subscriptionPaidAt || user?.lastPaymentAt || null;
 
     return res.json({
-      tier: user?.tier || "Free",
+      tier: subscriptionTier,
+      subscriptionTier,
       levelName: user?.levelName || "Shellborn",
       levelSymbol: user?.levelSymbol || "🐚",
       levelProgress: user?.levelProgress ?? 0,
@@ -454,8 +500,9 @@ router.get("/status", async (req, res) => {
       paid,
       canClaim,
       bonusXp: bonus,
-      lastPaymentAt: user?.lastPaymentAt || null,
-      claimedAt: completed?.timestamp || null,
+      lastPaymentAt: paidAt,
+      subscriptionPaidAt: paidAt,
+      claimedAt,
     });
   } catch (err) {
     console.error("subscription status error", err);

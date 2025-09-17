@@ -47,9 +47,16 @@ test("ton payment verification unlocks subscription claim", async () => {
 
   res = await agent
     .post("/api/v1/payments/verify")
-    .send({ txHash: "0xabc", amount: 12, to: "EQTestReceive", comment: "7GC-SUB:123456" });
+    .send({
+      txHash: "0xabc",
+      amount: 12,
+      to: "EQTestReceive",
+      comment: "7GC-SUB:123456",
+      tier: "Tier 1",
+    });
   expect(res.status).toBe(200);
   expect(res.body.verified).toBe(true);
+  expect(res.body.tier).toBe("Tier 1");
   expect(verifyTonMock).toHaveBeenCalledWith({
     txHash: "0xabc",
     to: "EQTestReceive",
@@ -67,6 +74,10 @@ test("ton payment verification unlocks subscription claim", async () => {
   expect(res.body.paid).toBe(true);
   expect(res.body.canClaim).toBe(true);
   expect(res.body.bonusXp).toBe(120);
+  expect(res.body.tier).toBe("Tier 1");
+  expect(res.body.subscriptionTier).toBe("Tier 1");
+  expect(res.body.lastPaymentAt).toBeTruthy();
+  expect(res.body.subscriptionPaidAt).toBeTruthy();
 
   res = await agent.post("/api/v1/subscription/claim");
   expect(res.status).toBe(200);
@@ -76,4 +87,9 @@ test("ton payment verification unlocks subscription claim", async () => {
   res = await agent.post("/api/v1/subscription/claim");
   expect(res.status).toBe(200);
   expect(res.body.xpDelta).toBe(0);
+
+  res = await agent.get("/api/v1/subscription/status");
+  expect(res.status).toBe(200);
+  expect(res.body.canClaim).toBe(false);
+  expect(res.body.claimedAt).toBeTruthy();
 });

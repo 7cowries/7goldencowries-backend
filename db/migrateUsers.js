@@ -11,6 +11,7 @@ export async function ensureUsersSchema(db) {
     ['wallet', 'TEXT'],
     ['xp', 'INTEGER'],
     ['tier', 'TEXT'],
+    ['subscriptionTier', 'TEXT'],
     ['level', 'INTEGER'],
     ['levelName', 'TEXT'],
     ['levelSymbol', 'TEXT'],
@@ -35,6 +36,8 @@ export async function ensureUsersSchema(db) {
     ['socials', 'TEXT'],
     ['paid', 'INTEGER'],
     ['lastPaymentAt', 'TEXT'],
+    ['subscriptionPaidAt', 'TEXT'],
+    ['subscriptionClaimedAt', 'TEXT'],
     ['createdAt', 'TEXT'],
     ['updatedAt', 'TEXT'],
   ];
@@ -46,6 +49,7 @@ export async function ensureUsersSchema(db) {
       wallet TEXT UNIQUE,
       xp INTEGER DEFAULT 0,
       tier TEXT NOT NULL DEFAULT 'Free',
+      subscriptionTier TEXT DEFAULT 'Free',
       level INTEGER DEFAULT 1,
       levelName TEXT DEFAULT 'Shellborn',
       levelSymbol TEXT DEFAULT '🐚',
@@ -70,6 +74,8 @@ export async function ensureUsersSchema(db) {
       socials TEXT,
       paid INTEGER DEFAULT 0,
       lastPaymentAt TEXT,
+      subscriptionPaidAt TEXT,
+      subscriptionClaimedAt TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       UNIQUE(referral_code)
@@ -113,6 +119,7 @@ export async function ensureUsersSchema(db) {
       wallet TEXT UNIQUE,
       xp INTEGER DEFAULT 0,
       tier TEXT NOT NULL DEFAULT 'Free',
+      subscriptionTier TEXT DEFAULT 'Free',
       level INTEGER DEFAULT 1,
       levelName TEXT DEFAULT 'Shellborn',
       levelSymbol TEXT DEFAULT '🐚',
@@ -137,6 +144,8 @@ export async function ensureUsersSchema(db) {
       socials TEXT,
       paid INTEGER DEFAULT 0,
       lastPaymentAt TEXT,
+      subscriptionPaidAt TEXT,
+      subscriptionClaimedAt TEXT,
       createdAt TEXT DEFAULT (datetime('now')),
       updatedAt TEXT DEFAULT (datetime('now')),
       UNIQUE(referral_code)
@@ -162,6 +171,7 @@ export async function backfillUsersDefaults(db) {
   await db.run(`UPDATE users SET
     xp            = COALESCE(xp, 0),
     tier          = COALESCE(tier, 'Free'),
+    subscriptionTier = COALESCE(subscriptionTier, tier, 'Free'),
     level         = COALESCE(level, 1),
     levelName     = COALESCE(levelName, 'Shellborn'),
     levelSymbol   = COALESCE(levelSymbol, '🐚'),
@@ -170,6 +180,7 @@ export async function backfillUsersDefaults(db) {
     socials       = COALESCE(socials, '{}'),
     discordGuildMember = COALESCE(discordGuildMember, 0),
     paid          = COALESCE(paid, 0),
+    subscriptionPaidAt = COALESCE(subscriptionPaidAt, lastPaymentAt),
     createdAt     = COALESCE(createdAt, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updatedAt     = COALESCE(updatedAt, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   `);
