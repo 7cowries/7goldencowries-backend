@@ -7,7 +7,7 @@ Node/Express backend using SQLite for persistence.
 ```bash
 npm install
 cp .env.example .env
-# edit .env values
+# edit .env values or copy `.env.production` when preparing Render
 ```
 
 ## Environment matrices
@@ -18,7 +18,7 @@ cp .env.example .env
 | --- | --- | --- |
 | `NODE_ENV` | `production` | Enables production logging/helmet defaults. |
 | `PORT` | `4000` | Render service port. |
-| `SQLITE_FILE` | `/var/data/7go.sqlite` | SQLite database file (auto-migrated on boot when the file exists). |
+| `SQLITE_FILE` | `/var/data/7gc.sqlite` | SQLite database file (auto-migrated on boot when the file exists). |
 | `SESSION_SECRET` | _(secret)_ | Session signing secret. |
 | `SESSIONS_DIR` | `/var/data` | Persistent directory for Memorystore. |
 | `COOKIE_SECURE` | `true` | Forces `Secure`/`SameSite=None` cookies in production. |
@@ -42,9 +42,10 @@ cp .env.example .env
 
 ## Manual SLO checks
 
-- Focused flows should issue **≤1** `GET /api/users/me` per user action.
-- Background refresh should poll `GET /api/users/me` at most once per minute.
-- Confirm `/api/v1/payments/status` and `/api/v1/subscription/status` respond in `<500ms` from Render (no CDN caching).
+- Focused flows should issue **≤1** `GET /api/users/me` per user action (200 ms debounce, no storming).
+- Passive refresh should poll `GET /api/users/me` at most once per minute.
+- Confirm `/api/v1/payments/status` and `/api/v1/subscription/status` respond in `<500 ms` from Render (no CDN caching).
+- Social link/unlink flows emit exactly one toast, one confetti event, and a single `profile-updated` dispatch.
 
 ## Migrations
 
@@ -131,15 +132,15 @@ The root route responds with the service name and key health/payment routes. `/h
 
 ## Frontend rewrites
 
-Deployments on Vercel should include the provided `vercel.json` so that `/api/*` and `/ref/*` requests are proxied to the Render backend without triggering CORS preflights. Local development can continue to use the CRA proxy or `REACT_APP_API_URL` for cross-origin testing.
+Deployments on Vercel must include the provided `vercel.json` so that `/api/*` and `/ref/*` requests are proxied to the Render backend without triggering CORS preflights. The frontend ships with an empty `REACT_APP_API_URL`, relying entirely on same-origin rewrites in production. Local development continues to use the CRA proxy (`http://localhost:4000`).
 
 ## Paywall flow
 
 1. Wallet binds to the API session via `POST /api/session/bind-wallet`.
 2. The user signs a TonConnect transfer; the backend verifies it through `POST /api/v1/payments/verify`, marking the wallet `paid` and stamping `subscriptionTier`/`subscriptionPaidAt`.
-3. The frontend immediately issues a best-effort `POST /api/v1/subscription/subscribe` to record the hosted checkout session (ignored if Render is unreachable).
+3. The frontend immediately issues a best-effort `POST /api/v1/subscription/subscribe` to record the hosted checkout session. On backend errors the response still returns `{ ok: true }` so the paywall flow can proceed.
 4. A single `profile-updated` event is dispatched so UI consumers refresh `/api/users/me` and `/api/v1/subscription/status`.
-5. `POST /api/v1/subscription/claim` unlocks the XP bonus once per paid period; re-claims return `{ xpDelta: 0 }`.
+5. `POST /api/v1/subscription/claim` unlocks the XP bonus once per paid period; re-claims return `{ xpDelta: 0 }` and UI disables the claim CTA.
 
 ## Tests
 

@@ -8,7 +8,7 @@
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `PORT` | `4000` |
-| `SQLITE_FILE` | `/var/data/7go.sqlite` |
+| `SQLITE_FILE` | `/var/data/7gc.sqlite` |
 | `SESSION_SECRET` | _(secret)_ |
 | `SESSIONS_DIR` | `/var/data` |
 | `COOKIE_SECURE` | `true` |
@@ -50,11 +50,18 @@ PORT=4000 node server.js
 
 Node web service with 1GB persistent disk at `/var/data`.
 
-## Manual SLO checks
+## Deployment notes
 
-- `/api/users/me` ≤1 call per foreground action, ≤1/minute passive polling.
-- `/api/v1/payments/status` and `/api/v1/subscription/status` return in <500 ms (no CDN cache).
-- Cookies remain `HttpOnly`, `Secure`, `SameSite=None` when `COOKIE_SECURE=true`.
+- Add production domains in Vercel and keep the repo `vercel.json` rewrites intact.
+- Render service mounts a persistent disk at `/var/data`, exports the environment matrix above, and runs `node server.js`.
+
+## Smoke QA
+
+1. Focus/visibility changes trigger at most one `GET /api/users/me` per focus event; passive refresh ≤1/minute.
+2. Paywall flow: TonConnect button stages idle → pending → verifying → success with `POST /api/v1/payments/verify`, best-effort `POST /api/v1/subscription/subscribe`, `profile-updated`, and toast.
+3. Subscription claim: first `POST /api/v1/subscription/claim` returns `{ xpDelta: 120 }`, second returns `{ xpDelta: 0 }` and the UI disables the CTA.
+4. Social link/unlink produces exactly one toast, one confetti burst, and a single `profile-updated` dispatch.
+5. Frontend build honours `GENERATE_SOURCEMAP=false` (no sourcemaps in production bundle).
 
 ## Smoke tests
 
@@ -75,5 +82,5 @@ curl -s -b cookies.txt -c cookies.txt -X POST -H "Content-Type: application/json
 ## Paywall flow validation
 
 1. Bind wallet → verify TON transfer → confirm `/api/v1/payments/status` flips to `{ paid: true }`.
-2. Ensure `/api/v1/subscription/subscribe` responds with a session URL (non-fatal if Render unreachable).
+2. Ensure `/api/v1/subscription/subscribe` responds with a session URL (non-fatal if Render unreachable; response stays `{ ok: true }`).
 3. Claim bonus once; repeat claim returns `{ xpDelta: 0 }`.
