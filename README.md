@@ -19,7 +19,7 @@ npm run migrate:quests
 ## Start
 
 ```bash
-node server.js
+PORT=4000 node server.js
 ```
 
 ## API
@@ -28,8 +28,10 @@ node server.js
 
 - `POST /api/v1/token-sale/purchase` – accepts `{ wallet, amount, referralCode? }` and returns `{ paymentLink, sessionId }` for checkout hand-off.
 - `POST /api/v1/token-sale/webhook` – requires an `X-Signature` HMAC header (see below) and upserts the contribution by `eventId`.
-- `POST /api/v1/subscription/subscribe` – accepts `{ wallet, tier }`, creates a pending subscription session, and returns `{ sessionUrl, sessionId }`.
-- `POST /api/v1/subscription/callback` – requires an HMAC-signed JSON payload, verifies the session with the payment provider stub, and activates the tier idempotently.
+- `GET /api/v1/payments/status` – returns `{ paid: boolean }` for the current session wallet.
+- `POST /api/v1/payments/verify` – accepts `{ txHash }` (TonConnect transfer hash) and verifies the transfer against `TON_RECEIVE_ADDRESS`; on success the user record is marked `paid`.
+- `GET /api/v1/subscription/status` – returns `{ tier, paid, canClaim, bonusXp, claimedAt }` for the current wallet.
+- `POST /api/v1/subscription/claim` – awards the configured `SUBSCRIPTION_BONUS_XP` once per paid wallet and records the event in `quest_history`.
 
 ### Quest claim responses
 
@@ -83,9 +85,16 @@ Provision a 1GB disk mounted at `/var/data`.
 ## Health
 
 ```bash
+curl -s $BACKEND/
 curl -s $BACKEND/healthz
-curl -s $BACKEND/api/health/db
+curl -s $BACKEND/api/health
 ```
+
+The root route responds with the service name and key health/payment routes. `/healthz` and `/api/health` remain JSON health probes for Render/Vercel checks.
+
+## Frontend rewrites
+
+Deployments on Vercel should include the provided `vercel.json` so that `/api/*` and `/ref/*` requests are proxied to the Render backend without triggering CORS preflights. Local development can continue to use the CRA proxy or `REACT_APP_API_URL` for cross-origin testing.
 
 ## Tests
 

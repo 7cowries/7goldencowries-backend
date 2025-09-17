@@ -12,6 +12,18 @@ import { grantXP } from "../../lib/grantXP.js";
 
 const router = express.Router();
 
+const SUBSCRIPTION_BONUS_XP = Math.max(0, Number(process.env.SUBSCRIPTION_BONUS_XP || 120));
+
+function toBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1";
+  }
+  return false;
+}
+
 const TIERS = new Map([
   ["free", "Free"],
   ["tier 1", "Tier 1"],
@@ -348,6 +360,14 @@ router.post("/claim", claimLimiter, async (req, res) => {
       wallet
     );
 
+    const paymentRow = await db.get(
+      "SELECT paid FROM users WHERE wallet = ?",
+      wallet
+    );
+    if (!toBoolean(paymentRow?.paid)) {
+      return res.status(402).json({ error: "payment_required" });
+    }
+
     const inserted = await db.run(
       `INSERT OR IGNORE INTO completed_quests (wallet, quest_id, timestamp)
          VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
@@ -356,11 +376,41 @@ router.post("/claim", claimLimiter, async (req, res) => {
     );
 
     if (inserted.changes === 0) {
-      return res.json({ ok: true, xpDelta: 0 });
+      const existing = await db.get(
+        `SELECT timestamp FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
+        wallet,
+        SUBSCRIPTION_CLAIM_QUEST_ID
+      );
+      return res.json({ ok: true, xpDelta: 0, claimedAt: existing?.timestamp || null });
     }
 
-    const result = await grantXP({ wallet }, 200);
-    return res.json({ ok: true, xpDelta: result.delta ?? 200 });
+    const result = await grantXP({ wallet }, SUBSCRIPTION_BONUS_XP);
+    if ((result.delta ?? 0) > 0) {
+      try {
+        await db.run(
+          `INSERT INTO quest_history (wallet, quest_id, title, xp)
+             VALUES (?, ?, ?, ?)`,
+          wallet,
+          SUBSCRIPTION_CLAIM_QUEST_ID,
+          "Subscription Bonus",
+          result.delta ?? SUBSCRIPTION_BONUS_XP
+        );
+      } catch (err) {
+        console.warn("subscription quest_history insert failed", err);
+      }
+    }
+
+    const claimed = await db.get(
+      `SELECT timestamp FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
+      wallet,
+      SUBSCRIPTION_CLAIM_QUEST_ID
+    );
+
+    return res.json({
+      ok: true,
+      xpDelta: result.delta ?? SUBSCRIPTION_BONUS_XP,
+      claimedAt: claimed?.timestamp || null,
+    });
   } catch (err) {
     console.error("subscription claim error", err);
     return res.status(500).json({ error: "claim_failed" });
@@ -370,18 +420,51 @@ router.post("/claim", claimLimiter, async (req, res) => {
 router.get("/status", async (req, res) => {
   try {
     const wallet = getSessionWallet(req);
+    const bonus = SUBSCRIPTION_BONUS_XP;
     if (!wallet) {
-      return res.json({ tier: "Free" });
+      return res.json({
+        tier: "Free",
+        paid: false,
+        canClaim: false,
+        bonusXp: bonus,
+      });
     }
-    const row = await db.get(
-      "SELECT tier FROM users WHERE wallet = ?",
+
+    const user = await db.get(
+      `SELECT tier, levelName, levelSymbol, levelProgress, nextXP, xp, paid, lastPaymentAt
+         FROM users WHERE wallet = ?`,
       wallet
     );
-    return res.json({ tier: row?.tier || "Free" });
+    const completed = await db.get(
+      `SELECT timestamp FROM completed_quests WHERE wallet = ? AND quest_id = ?`,
+      wallet,
+      SUBSCRIPTION_CLAIM_QUEST_ID
+    );
+
+    const paid = toBoolean(user?.paid);
+    const canClaim = paid && !completed;
+
+    return res.json({
+      tier: user?.tier || "Free",
+      levelName: user?.levelName || "Shellborn",
+      levelSymbol: user?.levelSymbol || "🐚",
+      levelProgress: user?.levelProgress ?? 0,
+      nextXP: user?.nextXP ?? 10000,
+      xp: user?.xp ?? 0,
+      paid,
+      canClaim,
+      bonusXp: bonus,
+      lastPaymentAt: user?.lastPaymentAt || null,
+      claimedAt: completed?.timestamp || null,
+    });
   } catch (err) {
     console.error("subscription status error", err);
     return res.status(500).json({ error: "status_failed" });
   }
+});
+
+router.get("/", (_req, res) => {
+  res.redirect(301, "/api/v1/subscription/status");
 });
 
 export default router;
