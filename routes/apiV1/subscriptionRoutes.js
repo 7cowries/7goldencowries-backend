@@ -198,17 +198,18 @@ router.post("/subscribe", async (req, res) => {
       req.session.wallet = wallet;
     }
 
-    return jsonOk(res, "subscription_session_created", "Subscription checkout created.", {
-      sessionUrl,
-      sessionId,
-      tier,
-    });
-  } catch (err) {
-    console.error("subscription subscribe error", err);
-    return jsonError(res, "subscription_failed", "Subscription subscribe failed.", {
-      status: 500,
-    });
-  }
+return jsonOk(res, "subscription_session_created", "Subscription checkout created.", {
+  sessionUrl,
+  sessionId,
+  tier,
+});
+} catch (err) {
+  console.error("subscription subscribe error", err);
+  return jsonError(res, "subscription_failed", "Subscription subscribe failed.", {
+    status: 500,
+  });
+}
+            
 });
 
 const SUBSCRIPTION_WEBHOOK_SECRET = getRequiredEnv("SUBSCRIPTION_WEBHOOK_SECRET");

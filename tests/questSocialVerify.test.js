@@ -4,7 +4,8 @@ import { jest } from '@jest/globals';
 let app, db, fetchMock;
 
 beforeAll(async () => {
-  process.env.DATABASE_URL = ':memory:';
+  process.env.SQLITE_FILE = ':memory:';
+  process.env.DATABASE_URL = process.env.SQLITE_FILE;
   process.env.NODE_ENV = 'test';
   process.env.TELEGRAM_BOT_TOKEN = '123:abc';
   process.env.TELEGRAM_GROUP_ID = '-100123';

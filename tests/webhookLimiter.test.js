@@ -13,7 +13,8 @@ function signPayload(payload, secret = TOKEN_SECRET) {
 }
 
 beforeAll(async () => {
-  process.env.DATABASE_URL = ':memory:';
+  process.env.SQLITE_FILE = ':memory:';
+  process.env.DATABASE_URL = process.env.SQLITE_FILE;
   process.env.NODE_ENV = 'test';
   process.env.SUBSCRIPTION_WEBHOOK_SECRET = 'sub-secret';
   process.env.TOKEN_SALE_WEBHOOK_SECRET = TOKEN_SECRET;

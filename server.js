@@ -242,7 +242,8 @@ app.use(tonVerifyRoutes);
 app.use(healthRoutes);
 app.get("/", (_req, res) => {
   res.json({
-    name: "7goldencowries-backend",
+    service: "7goldencowries-backend",
+    banner: "7goldencowries Render API ready",
     routes: {
       health: "/healthz",
       apiHealth: "/api/health",
