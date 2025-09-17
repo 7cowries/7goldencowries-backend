@@ -2,6 +2,9 @@ import express from "express";
 import db from "../lib/db.js";
 import { awardQuest } from "../lib/quests.js";
 import { delCache } from "../utils/cache.js";
+import { deriveLevel } from "../config/progression.js";
+
+const BASE_LEVEL = deriveLevel(0);
 
 const router = express.Router();
 
@@ -37,9 +40,14 @@ router.post("/", async (req, res) => {
     );
 
     await db.run(
-      `INSERT OR IGNORE INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
-       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      wallet
+      `INSERT OR IGNORE INTO users (wallet, xp, tier, level, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+       VALUES (?, 0, 'Free', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet,
+      BASE_LEVEL.level,
+      BASE_LEVEL.levelName,
+      BASE_LEVEL.levelSymbol,
+      BASE_LEVEL.progress,
+      BASE_LEVEL.nextNeed
     );
 
     const result = await awardQuest(wallet, quest_id);

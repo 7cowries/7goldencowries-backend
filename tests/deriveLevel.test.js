@@ -7,6 +7,7 @@ describe('deriveLevel', () => {
     expect(lvl.level).toBe(1);
     expect(lvl.levelSymbol).toBe('🐚');
     expect(lvl.progress).toBe(0);
+    expect(lvl.nextNeed).toBe(100);
   });
 
   test('caps at max xp', () => {
@@ -15,5 +16,12 @@ describe('deriveLevel', () => {
     expect(lvl.level).toBe(7);
     expect(lvl.levelSymbol).toBe('🌅');
     expect(lvl.progress).toBe(1);
+    expect(lvl.nextNeed).toBeNull();
+  });
+
+  test('reports remaining xp to the next level', () => {
+    const lvl = deriveLevel(250);
+    expect(lvl.level).toBe(2);
+    expect(lvl.nextNeed).toBe(150);
   });
 });

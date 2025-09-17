@@ -1,3 +1,8 @@
+import { deriveLevel } from '../config/progression.js';
+
+const BASE_LEVEL = deriveLevel(0);
+const DEFAULT_NEXT_XP = BASE_LEVEL.nextNeed ?? 0;
+
 /**
  * Ensure the users table matches the expected schema.
  * @param {import('sqlite').Database} db
@@ -46,7 +51,7 @@ export async function ensureUsersSchema(db) {
       levelName TEXT DEFAULT 'Shellborn',
       levelSymbol TEXT DEFAULT '🐚',
       levelProgress REAL DEFAULT 0,
-      nextXP INTEGER DEFAULT 10000,
+      nextXP INTEGER DEFAULT ${DEFAULT_NEXT_XP},
       twitterHandle TEXT,
       telegramId TEXT,
       telegramHandle TEXT,
@@ -111,7 +116,7 @@ export async function ensureUsersSchema(db) {
       levelName TEXT DEFAULT 'Shellborn',
       levelSymbol TEXT DEFAULT '🐚',
       levelProgress REAL DEFAULT 0,
-      nextXP INTEGER DEFAULT 10000,
+      nextXP INTEGER DEFAULT ${DEFAULT_NEXT_XP},
       twitterHandle TEXT,
       telegramId TEXT,
       telegramHandle TEXT,
@@ -158,7 +163,7 @@ export async function backfillUsersDefaults(db) {
     levelName     = COALESCE(levelName, 'Shellborn'),
     levelSymbol   = COALESCE(levelSymbol, '🐚'),
     levelProgress = COALESCE(levelProgress, 0),
-    nextXP        = COALESCE(nextXP, 10000),
+    nextXP        = COALESCE(nextXP, ${DEFAULT_NEXT_XP}),
     socials       = COALESCE(socials, '{}'),
     discordGuildMember = COALESCE(discordGuildMember, 0),
     createdAt     = COALESCE(createdAt, strftime('%Y-%m-%dT%H:%M:%fZ','now')),

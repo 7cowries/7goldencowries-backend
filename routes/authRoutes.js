@@ -5,6 +5,9 @@ import express from "express";
 import passport from "passport";
 import db from "../lib/db.js";
 import { upsertSocial } from "../utils/socials.js";
+import { deriveLevel } from "../config/progression.js";
+
+const BASE_LEVEL = deriveLevel(0);
 
 const router = express.Router();
 
@@ -32,19 +35,20 @@ async function ensureUser(wallet, extra = {}) {
   if (!row) {
     await db.run(
       `INSERT INTO users (
-         wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP,
+         wallet, xp, tier, level, levelName, levelSymbol, levelProgress, nextXP,
          twitterHandle, telegramId, telegramHandle,
          discordId, discordHandle, discordGuildMember,
          updatedAt
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
       wallet,
       extra.xp ?? 0,
       extra.tier ?? "Free",
-      extra.levelName ?? "Shellborn",
-      extra.levelSymbol ?? "🐚",
-      extra.levelProgress ?? 0,
-      extra.nextXP ?? 10000,
+      extra.level ?? BASE_LEVEL.level,
+      extra.levelName ?? BASE_LEVEL.levelName,
+      extra.levelSymbol ?? BASE_LEVEL.levelSymbol,
+      extra.levelProgress ?? BASE_LEVEL.progress,
+      extra.nextXP ?? BASE_LEVEL.nextNeed,
       extra.twitterHandle ?? null,
       extra.telegramId ?? null,
       extra.telegramHandle ?? null,
@@ -331,12 +335,24 @@ router.post("/api/quest/complete", async (req, res) => {
     await ensureUser(wallet);
     const user = await db.get("SELECT xp FROM users WHERE wallet = ?", wallet);
     const newXp = (user?.xp || 0) + xpInt;
-    const progress = Math.max(0, Math.min(1, newXp / 10000));
+    const derived = deriveLevel(newXp);
 
     await db.run(
-      "UPDATE users SET xp = COALESCE(?,0), levelProgress = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?",
+      `UPDATE users
+          SET xp = COALESCE(?,0),
+              level = ?,
+              levelName = ?,
+              levelSymbol = ?,
+              levelProgress = ?,
+              nextXP = ?,
+              updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE wallet = ?`,
       newXp,
-      progress,
+      derived.level,
+      derived.levelName,
+      derived.levelSymbol,
+      derived.progress,
+      derived.nextNeed,
       wallet
     );
     await db.run(

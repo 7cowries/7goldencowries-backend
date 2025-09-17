@@ -26,7 +26,7 @@ export function deriveLevel(totalXP) {
   const span = next ? next.min - current.min : 1;
   const into = xp - current.min;
   const progress = next ? Math.min(1, Math.max(0, into / span)) : 1;
-  const nextNeed = next ? next.min - current.min : into || 1;
+  const nextNeed = next ? Math.max(0, next.min - xp) : null;
 
   return {
     level: current.level ?? index + 1,

@@ -3,6 +3,8 @@ import db from "../lib/db.js";
 import { deriveLevel } from "../config/progression.js";
 import { getSessionWallet } from "../utils/session.js";
 
+const BASE_LEVEL = deriveLevel(0);
+
 // Fetch recent quest history for a wallet
 async function fetchHistory(wallet) {
   try {
@@ -49,11 +51,11 @@ router.get("/me", async (req, res) => {
       return res.json({
         wallet: null,
         xp: 0,
-        level: 1,
-        nextXP: 10000,
-        levelName: "Shellborn",
-        levelSymbol: "🐚",
-        levelProgress: 0,
+        level: BASE_LEVEL.level,
+        nextXP: BASE_LEVEL.nextNeed,
+        levelName: BASE_LEVEL.levelName,
+        levelSymbol: BASE_LEVEL.levelSymbol,
+        levelProgress: BASE_LEVEL.progress,
         tier: "Free",
         socials: {
           twitter: { connected: false },

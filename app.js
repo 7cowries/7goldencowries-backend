@@ -12,8 +12,11 @@ import discordAuth from './routes/discordAuth.js';
 import questRoutes from './routes/questRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import proofRoutes from './routes/proofRoutes.js';
+import { deriveLevel } from './config/progression.js';
 
 const app = express();
+
+const BASE_LEVEL = deriveLevel(0);
 
 /* ---------- CORS (Render ↔ Vercel with cookies) ---------- */
 const defaultOrigin = 'https://7goldencowries-frontend.vercel.app';
@@ -93,10 +96,10 @@ app.get('/api/users/me', async (req, res) => {
           wallet,
           xp: 0,
           tier: 'Free',
-          levelName: 'Shellborn',
-          levelSymbol: '🐚',
-          levelProgress: 0,
-          nextXP: 10000,
+          levelName: BASE_LEVEL.levelName,
+          levelSymbol: BASE_LEVEL.levelSymbol,
+          levelProgress: BASE_LEVEL.progress,
+          nextXP: BASE_LEVEL.nextNeed,
           links: { twitter: null, telegram: null, discord: null },
         },
         history: [],
@@ -113,10 +116,10 @@ app.get('/api/users/me', async (req, res) => {
       wallet: user.wallet,
       xp: user.xp ?? 0,
       tier: user.tier || 'Free',
-      levelName: user.levelName || 'Shellborn',
-      levelSymbol: user.levelSymbol || '🐚',
-      levelProgress: user.levelProgress ?? 0,
-      nextXP: user.nextXP ?? 10000,
+      levelName: user.levelName || BASE_LEVEL.levelName,
+      levelSymbol: user.levelSymbol || BASE_LEVEL.levelSymbol,
+      levelProgress: user.levelProgress ?? BASE_LEVEL.progress,
+      nextXP: user.nextXP ?? BASE_LEVEL.nextNeed,
       links,
     };
 
@@ -156,10 +159,10 @@ app.get('/api/profile', async (req, res) => {
           wallet,
           xp: 0,
           tier: 'Free',
-          levelName: 'Shellborn',
-          levelSymbol: '🐚',
-          levelProgress: 0,
-          nextXP: 10000,
+          levelName: BASE_LEVEL.levelName,
+          levelSymbol: BASE_LEVEL.levelSymbol,
+          levelProgress: BASE_LEVEL.progress,
+          nextXP: BASE_LEVEL.nextNeed,
           links: { twitter: null, telegram: null, discord: null },
         },
         history: [],
@@ -176,10 +179,10 @@ app.get('/api/profile', async (req, res) => {
       wallet: user.wallet,
       xp: user.xp ?? 0,
       tier: user.tier || 'Free',
-      levelName: user.levelName || 'Shellborn',
-      levelSymbol: user.levelSymbol || '🐚',
-      levelProgress: user.levelProgress ?? 0,
-      nextXP: user.nextXP ?? 10000,
+      levelName: user.levelName || BASE_LEVEL.levelName,
+      levelSymbol: user.levelSymbol || BASE_LEVEL.levelSymbol,
+      levelProgress: user.levelProgress ?? BASE_LEVEL.progress,
+      nextXP: user.nextXP ?? BASE_LEVEL.nextNeed,
       links,
     };
 

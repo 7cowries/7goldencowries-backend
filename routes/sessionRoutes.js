@@ -2,6 +2,9 @@
 import express from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import db from "../lib/db.js";
+import { deriveLevel } from "../config/progression.js";
+
+const BASE_LEVEL = deriveLevel(0);
 
 const r = express.Router();
 const bindLimiter = rateLimit({
@@ -18,9 +21,14 @@ async function ensureUser(wallet) {
   const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
   if (!row) {
     await db.run(
-      `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
-       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      wallet
+      `INSERT INTO users (wallet, xp, tier, level, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+       VALUES (?, 0, 'Free', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet,
+      BASE_LEVEL.level,
+      BASE_LEVEL.levelName,
+      BASE_LEVEL.levelSymbol,
+      BASE_LEVEL.progress,
+      BASE_LEVEL.nextNeed
     );
   }
 }
