@@ -41,6 +41,7 @@ test("ton payment verification unlocks subscription claim", async () => {
     verified: true,
     amount: 12,
     to: "EQTestReceive",
+    from: "EQWallet123",
     comment: "7GC-SUB:123456",
   });
 
@@ -52,6 +53,7 @@ test("ton payment verification unlocks subscription claim", async () => {
   expect(verifyTonMock).toHaveBeenCalledWith({
     txHash: "0xabc",
     to: "EQTestReceive",
+    from: "EQWallet123",
     minAmount: expect.any(Number),
     comment: "7GC-SUB",
   });

@@ -51,6 +51,7 @@ router.post("/verify", async (req, res) => {
     const verification = await verifyTonPayment({
       txHash,
       to: RECEIVE_ADDRESS,
+      from: wallet,
       minAmount,
       comment: COMMENT_TOKEN,
     });
@@ -60,12 +61,17 @@ router.post("/verify", async (req, res) => {
       return res.status(422).json({ verified: false, reason: status });
     }
 
+    const normalizedWallet = verification.from || wallet;
+    if (normalizedWallet && normalizedWallet !== wallet) {
+      req.session.wallet = normalizedWallet;
+    }
+
     const now = new Date().toISOString();
     await db.run(
       `INSERT INTO users (wallet, paid, lastPaymentAt, updatedAt)
        VALUES (?, 1, ?, ?)
        ON CONFLICT(wallet) DO UPDATE SET paid = 1, lastPaymentAt = excluded.lastPaymentAt, updatedAt = excluded.updatedAt`,
-      wallet,
+      normalizedWallet,
       now,
       now
     );
@@ -74,6 +80,7 @@ router.post("/verify", async (req, res) => {
       verified: true,
       amount: verification.amount,
       to: verification.to,
+      from: verification.from,
       comment: verification.comment,
     });
   } catch (err) {
