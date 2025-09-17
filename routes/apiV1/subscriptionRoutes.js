@@ -9,6 +9,7 @@ import { getRequiredEnv } from "../../config/env.js";
 import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
 import { getSessionWallet } from "../../utils/session.js";
 import { grantXP } from "../../lib/grantXP.js";
+import { jsonError, jsonOk } from "../../utils/apiResponse.js";
 
 const router = express.Router();
 
@@ -158,10 +159,14 @@ router.post("/subscribe", async (req, res) => {
     const wallet = sessionWallet || walletFromBody;
     const tier = normalizeTier(req.body?.tier) || DEFAULT_SUBSCRIPTION_TIER;
     if (!wallet) {
-      return res.status(401).json({ error: "wallet_required" });
+      return jsonError(res, "wallet_required", "Wallet session required.", {
+        status: 401,
+      });
     }
     if (!tier) {
-      return res.status(400).json({ error: "invalid_tier" });
+      return jsonError(res, "invalid_tier", "Invalid subscription tier.", {
+        status: 400,
+      });
     }
 
     const sessionId = `sub_${randomUUID()}`;
@@ -193,10 +198,16 @@ router.post("/subscribe", async (req, res) => {
       req.session.wallet = wallet;
     }
 
-    return res.json({ sessionUrl, sessionId, tier });
+    return jsonOk(res, "subscription_session_created", "Subscription checkout created.", {
+      sessionUrl,
+      sessionId,
+      tier,
+    });
   } catch (err) {
     console.error("subscription subscribe error", err);
-    return res.status(500).json({ error: "subscription_failed" });
+    return jsonError(res, "subscription_failed", "Subscription subscribe failed.", {
+      status: 500,
+    });
   }
 });
 
@@ -312,10 +323,10 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
       console.warn(
         `[subscription-callback:${correlationId}] provider status not ready (${status}) reason=${verification?.reason || "unknown"}`
       );
-      return res.status(400).json({
-        error: "session_unverified",
+      return jsonError(res, "session_unverified", "Subscription session not verified.", {
+        status: 400,
         correlationId,
-        status,
+        providerStatus: status,
         reason: verification?.reason || "unverified",
       });
     }
@@ -346,8 +357,7 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
       paidAt
     );
 
-    return res.json({
-      ok: true,
+    return jsonOk(res, "subscription_activated", "Subscription activated.", {
       sessionId,
       status: "active",
       wallet: record.wallet,
@@ -363,7 +373,10 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error(`subscription callback error [${correlationId}]`, err);
-    return res.status(500).json({ error: "callback_failed", correlationId });
+    return jsonError(res, "callback_failed", "Subscription callback failed.", {
+      status: 500,
+      correlationId,
+    });
   }
 });
 
@@ -409,7 +422,10 @@ router.post("/claim", claimLimiter, async (req, res) => {
         wallet,
         SUBSCRIPTION_CLAIM_QUEST_ID
       );
-      return res.json({ ok: true, xpDelta: 0, claimedAt: existing?.timestamp || null });
+      return jsonOk(res, "subscription_bonus_exists", "Subscription bonus already claimed.", {
+        xpDelta: 0,
+        claimedAt: existing?.timestamp || null,
+      });
     }
 
     const result = await grantXP({ wallet }, SUBSCRIPTION_BONUS_XP);
@@ -448,14 +464,24 @@ router.post("/claim", claimLimiter, async (req, res) => {
       }
     }
 
-    return res.json({
-      ok: true,
-      xpDelta: result.delta ?? SUBSCRIPTION_BONUS_XP,
+    const xpDelta = result.delta ?? SUBSCRIPTION_BONUS_XP;
+    const alreadyClaimed = xpDelta <= 0;
+    const claimCode = alreadyClaimed
+      ? "subscription_bonus_exists"
+      : "subscription_bonus_granted";
+    const claimMessage = alreadyClaimed
+      ? "Subscription bonus already claimed."
+      : "Subscription bonus granted.";
+
+    return jsonOk(res, claimCode, claimMessage, {
+      xpDelta,
       claimedAt,
     });
   } catch (err) {
     console.error("subscription claim error", err);
-    return res.status(500).json({ error: "claim_failed" });
+    return jsonError(res, "claim_failed", "Subscription claim failed.", {
+      status: 500,
+    });
   }
 });
 
@@ -464,11 +490,15 @@ router.get("/status", async (req, res) => {
     const wallet = getSessionWallet(req);
     const bonus = SUBSCRIPTION_BONUS_XP;
     if (!wallet) {
-      return res.json({
+      return jsonOk(res, "subscription_status", "Subscription status retrieved.", {
         tier: "Free",
+        subscriptionTier: "Free",
         paid: false,
         canClaim: false,
         bonusXp: bonus,
+        claimedAt: null,
+        lastPaymentAt: null,
+        subscriptionPaidAt: null,
       });
     }
 
@@ -489,7 +519,7 @@ router.get("/status", async (req, res) => {
     const subscriptionTier = user?.subscriptionTier || user?.tier || "Free";
     const paidAt = user?.subscriptionPaidAt || user?.lastPaymentAt || null;
 
-    return res.json({
+    return jsonOk(res, "subscription_status", "Subscription status retrieved.", {
       tier: subscriptionTier,
       subscriptionTier,
       levelName: user?.levelName || "Shellborn",
@@ -506,7 +536,9 @@ router.get("/status", async (req, res) => {
     });
   } catch (err) {
     console.error("subscription status error", err);
-    return res.status(500).json({ error: "status_failed" });
+    return jsonError(res, "status_failed", "Unable to fetch subscription status.", {
+      status: 500,
+    });
   }
 });
 
