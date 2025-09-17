@@ -10,6 +10,42 @@ cp .env.example .env
 # edit .env values
 ```
 
+## Environment matrices
+
+### Render (backend)
+
+| Variable | Value | Notes |
+| --- | --- | --- |
+| `NODE_ENV` | `production` | Enables production logging/helmet defaults. |
+| `PORT` | `4000` | Render service port. |
+| `SQLITE_FILE` | `/var/data/7go.sqlite` | SQLite database file (auto-migrated on boot when the file exists). |
+| `SESSION_SECRET` | _(secret)_ | Session signing secret. |
+| `SESSIONS_DIR` | `/var/data` | Persistent directory for Memorystore. |
+| `COOKIE_SECURE` | `true` | Forces `Secure`/`SameSite=None` cookies in production. |
+| `SUBSCRIPTION_WEBHOOK_SECRET` | _(secret)_ | HMAC key for `/api/v1/subscription/callback`. |
+| `TOKEN_SALE_WEBHOOK_SECRET` | _(secret)_ | HMAC key for `/api/v1/token-sale/webhook`. |
+| `SUBSCRIPTION_BONUS_XP` | `120` | XP reward for subscription claim. |
+| `TON_RECEIVE_ADDRESS` | `EQ…` | Wallet receiving paywall transfers. |
+| `TON_MIN_PAYMENT_TON` | `10` | Minimum TON accepted for paywall unlock. |
+| `TON_VERIFIER` | `toncenter` | Payment verifier implementation. |
+| `TONCENTER_API_KEY` | _(secret)_ | API key for TonCenter verification. |
+| `FRONTEND_URL` | `https://7goldencowries.com` | Used for callback allowlist + redirects. |
+
+### Vercel (frontend)
+
+| Variable | Value | Notes |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend.onrender.com` | Optional override for API base. |
+| `REACT_APP_TON_RECEIVE_ADDRESS` | Mirrors backend `TON_RECEIVE_ADDRESS` | Displayed in UI and used for TonConnect transfer. |
+| `REACT_APP_TON_MIN_PAYMENT_TON` | Mirrors backend minimum | Used to set TonConnect transfer amount. |
+| `REACT_APP_SUBSCRIPTION_CALLBACK` | `https://7goldencowries.com/subscription/callback` | Redirect URL after hosted checkout. |
+
+## Manual SLO checks
+
+- Focused flows should issue **≤1** `GET /api/users/me` per user action.
+- Background refresh should poll `GET /api/users/me` at most once per minute.
+- Confirm `/api/v1/payments/status` and `/api/v1/subscription/status` respond in `<500ms` from Render (no CDN caching).
+
 ## Migrations
 
 ```bash
@@ -32,6 +68,7 @@ PORT=4000 node server.js
 - `POST /api/v1/payments/verify` – accepts `{ txHash }` (TonConnect transfer hash) and verifies the transfer against `TON_RECEIVE_ADDRESS`; on success the user record is marked `paid`.
 - `GET /api/v1/subscription/status` – returns `{ tier, paid, canClaim, bonusXp, claimedAt }` for the current wallet.
 - `POST /api/v1/subscription/claim` – awards the configured `SUBSCRIPTION_BONUS_XP` once per paid wallet and records the event in `quest_history`.
+- `POST /api/v1/subscription/subscribe` – creates a hosted checkout session (best-effort, idempotent) and stores the intended tier for the current wallet session.
 
 ### Quest claim responses
 
@@ -95,6 +132,14 @@ The root route responds with the service name and key health/payment routes. `/h
 ## Frontend rewrites
 
 Deployments on Vercel should include the provided `vercel.json` so that `/api/*` and `/ref/*` requests are proxied to the Render backend without triggering CORS preflights. Local development can continue to use the CRA proxy or `REACT_APP_API_URL` for cross-origin testing.
+
+## Paywall flow
+
+1. Wallet binds to the API session via `POST /api/session/bind-wallet`.
+2. The user signs a TonConnect transfer; the backend verifies it through `POST /api/v1/payments/verify`, marking the wallet `paid` and stamping `subscriptionTier`/`subscriptionPaidAt`.
+3. The frontend immediately issues a best-effort `POST /api/v1/subscription/subscribe` to record the hosted checkout session (ignored if Render is unreachable).
+4. A single `profile-updated` event is dispatched so UI consumers refresh `/api/users/me` and `/api/v1/subscription/status`.
+5. `POST /api/v1/subscription/claim` unlocks the XP bonus once per paid period; re-claims return `{ xpDelta: 0 }`.
 
 ## Tests
 

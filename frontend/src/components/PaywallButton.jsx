@@ -60,11 +60,14 @@ export default function PaywallButton({ onSuccess }) {
     }
     try {
       setSubmitting(true);
+      const walletAddress =
+        wallet?.account?.address || wallet?.address || wallet?.wallet?.address || null;
       await executePaywallPayment({
         tonConnectUI,
         receiver,
         minTon: MIN_TON,
         fetcher: fetchJson,
+        walletAddress,
         onProfileUpdated: () => {
           window.dispatchEvent(new Event('profile-updated'));
           onSuccess?.();
@@ -77,7 +80,7 @@ export default function PaywallButton({ onSuccess }) {
     } finally {
       setSubmitting(false);
     }
-  }, [receiver, onSuccess, tonConnectUI]);
+  }, [receiver, onSuccess, tonConnectUI, wallet]);
 
   return (
     <div className="paywall">

@@ -1,10 +1,13 @@
 const COMMENT_PREFIX = '7GC-SUB:';
+const DEFAULT_SUBSCRIPTION_TIER = 'Tier 1';
 
 export async function executePaywallPayment({
   tonConnectUI,
   receiver,
   minTon,
   fetcher,
+  walletAddress,
+  subscriptionTier = DEFAULT_SUBSCRIPTION_TIER,
   onProfileUpdated,
   onToast,
   now = () => Date.now(),
@@ -43,9 +46,23 @@ export async function executePaywallPayment({
         amount: minTon,
         to: receiver,
         comment,
+        tier: subscriptionTier,
       }),
     });
     if (payload?.verified) {
+      const subscribePayload = { tier: subscriptionTier };
+      if (walletAddress) {
+        subscribePayload.wallet = walletAddress;
+      }
+      try {
+        await fetcher('/api/v1/subscription/subscribe', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(subscribePayload),
+        });
+      } catch (subscribeErr) {
+        console.warn('subscription subscribe failed', subscribeErr);
+      }
       onProfileUpdated?.();
       onToast?.('Payment verified 🎉');
       return true;
