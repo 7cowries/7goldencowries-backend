@@ -17,9 +17,17 @@ async function fetchUser(wallet, res) {
     let user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
 
     if (!user) {
+      const base = deriveLevel(0);
       await db.run(
-        `INSERT INTO users (wallet, xp, tier, levelName, levelProgress, updatedAt)\n         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-        wallet, 0, "Free", "Shellborn", 0
+        `INSERT INTO users (wallet, xp, tier, level, levelName, levelSymbol, levelProgress, nextXP, updatedAt)\n         VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+        wallet,
+        0,
+        "Free",
+        base.level,
+        base.levelName,
+        base.levelSymbol,
+        base.progress,
+        base.nextNeed
       );
       user = await db.get("SELECT * FROM users WHERE wallet = ?", wallet);
     }
@@ -30,7 +38,9 @@ async function fetchUser(wallet, res) {
       xp,
       tier,
       twitter: twitterHandle || null,
+      level: lvl.level,
       levelName: lvl.levelName,
+      levelSymbol: lvl.levelSymbol,
       levelProgress: lvl.progress,
       nextXP: lvl.nextNeed,
     };

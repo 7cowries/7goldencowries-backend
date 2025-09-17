@@ -49,8 +49,10 @@ router.get("/me", async (req, res) => {
       return res.json({
         wallet: null,
         xp: 0,
+        level: 1,
         nextXP: 10000,
         levelName: "Shellborn",
+        levelSymbol: "🐚",
         levelProgress: 0,
         tier: "Free",
         socials: {
@@ -121,7 +123,9 @@ router.get("/me", async (req, res) => {
     const payload = {
       wallet: row.wallet,
       xp,
+      level: lvl.level,
       levelName: lvl.levelName,
+      levelSymbol: lvl.levelSymbol,
       levelProgress: progress,
       nextXP: lvl.nextNeed,
       tier: row.tier || "Free",

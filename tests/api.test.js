@@ -32,6 +32,7 @@ describe('API routes', () => {
   test('returns user stats', async () => {
     const res = await request(app).get('/api/users/w1');
     expect(res.body.xp).toBe(105);
+    expect(res.body.levelSymbol).toBeDefined();
   });
 
   test('leaderboard shows users', async () => {
@@ -45,6 +46,7 @@ describe('API routes', () => {
     expect(res.body.wallet).toBe('w1');
     expect(res.body).toHaveProperty('referral_code');
     expect(res.body.socials.twitter).toBeDefined();
+    expect(res.body.levelSymbol).toBeDefined();
   });
 
   test('/api/users/me returns defaults when wallet missing', async () => {
@@ -52,6 +54,7 @@ describe('API routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.wallet).toBeNull();
     expect(res.body.socials.twitter.connected).toBe(false);
+    expect(res.body.levelSymbol).toBe('🐚');
   });
 
   test('health endpoint works', async () => {

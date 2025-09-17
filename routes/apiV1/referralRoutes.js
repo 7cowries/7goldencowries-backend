@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import db from "../../lib/db.js";
 import { getSessionWallet } from "../../utils/session.js";
 import { grantXP } from "../../lib/grantXP.js";
+import { deriveLevel } from "../../config/progression.js";
 import { crossSiteCookieOptions } from "../../utils/cookies.js";
 
 const router = express.Router();
@@ -35,6 +36,19 @@ router.post("/claim", claimLimiter, async (req, res) => {
     const code = normalizeCode(rawCode);
     if (!code) {
       if (req.session?.referralClaimed) {
+        const refWallet = req.session?.lastReferralReferrer;
+        if (refWallet) {
+          const snapshot = await grantXP({ wallet: refWallet }, 0);
+          const derived = snapshot.level ?? deriveLevel(snapshot.total);
+          return res.json({
+            ok: true,
+            xpDelta: 0,
+            newTotalXp: snapshot.total,
+            level: derived.levelName,
+            levelNumber: derived.level,
+            levelSymbol: derived.levelSymbol,
+          });
+        }
         return res.json({ ok: true, xpDelta: 0 });
       }
       return res.status(400).json({ error: "referral_code_missing" });
@@ -47,12 +61,14 @@ router.post("/claim", claimLimiter, async (req, res) => {
     if (!referrer?.wallet) {
       res.clearCookie("referral_code", crossSiteCookieOptions());
       req.session.referral_code = null;
+      req.session.lastReferralReferrer = null;
       return res.status(404).json({ error: "referrer_not_found" });
     }
 
     if (referrer.wallet === wallet) {
       res.clearCookie("referral_code", crossSiteCookieOptions());
       req.session.referral_code = null;
+      req.session.lastReferralReferrer = null;
       return res.status(400).json({ error: "self_referral" });
     }
 
@@ -72,15 +88,34 @@ router.post("/claim", claimLimiter, async (req, res) => {
 
     res.clearCookie("referral_code", crossSiteCookieOptions());
     req.session.referral_code = null;
+    req.session.lastReferralReferrer = referrer.wallet;
 
     if (inserted.changes === 0) {
+      const snapshot = await grantXP({ wallet: referrer.wallet }, 0);
+      const derived = snapshot.level ?? deriveLevel(snapshot.total);
       req.session.referralClaimed = true;
-      return res.json({ ok: true, xpDelta: 0 });
+      return res.json({
+        ok: true,
+        xpDelta: 0,
+        newTotalXp: snapshot.total,
+        level: derived.levelName,
+        levelNumber: derived.level,
+        levelSymbol: derived.levelSymbol,
+      });
     }
 
     const result = await grantXP({ wallet: referrer.wallet }, 50);
+    const derived = result.level ?? deriveLevel(result.total);
     req.session.referralClaimed = true;
-    return res.json({ ok: true, xpDelta: result.delta ?? 50 });
+    req.session.lastReferralReferrer = referrer.wallet;
+    return res.json({
+      ok: true,
+      xpDelta: result.delta ?? 50,
+      newTotalXp: result.total,
+      level: derived.levelName,
+      levelNumber: derived.level,
+      levelSymbol: derived.levelSymbol,
+    });
   } catch (err) {
     console.error("referral claim error", err);
     return res.status(500).json({ error: "claim_failed" });

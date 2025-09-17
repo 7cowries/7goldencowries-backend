@@ -25,6 +25,7 @@ describe('leaderboard normalization', () => {
     for (const e of res.body.entries) {
       expect(e.progress).toBeGreaterThanOrEqual(0);
       expect(e.progress).toBeLessThanOrEqual(1);
+      expect(e.levelSymbol).toBeDefined();
     }
     const first = res.body.entries.find(e => e.wallet === 'w1');
     expect(first.twitterHandle).toBe('tw1');

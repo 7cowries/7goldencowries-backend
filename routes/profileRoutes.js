@@ -29,10 +29,16 @@ async function ensureUserRow(wallet) {
   if (!wallet) return;
   const row = await db.get("SELECT wallet FROM users WHERE wallet = ?", wallet);
   if (!row) {
+    const base = deriveLevel(0);
     await db.run(
-      `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
-       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      wallet
+      `INSERT INTO users (wallet, xp, tier, level, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+       VALUES (?, 0, 'Free', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet,
+      base.level,
+      base.levelName,
+      base.levelSymbol,
+      base.progress,
+      base.nextNeed
     );
   }
 }
@@ -101,7 +107,9 @@ async function buildProfile(wallet) {
 
   // Compute level info/fallbacks
   const lvl = deriveLevel(u?.xp ?? 0);
+  const levelNumber   = lvl.level;
   const levelName     = lvl.levelName;
+  const levelSymbol   = lvl.levelSymbol;
   const levelProgress = lvl.progress;
   const nextXP        = lvl.nextNeed;
 
@@ -119,7 +127,9 @@ async function buildProfile(wallet) {
       wallet: u?.wallet || wallet,
       xp: u?.xp ?? 0,
       tier: u?.tier || "Free",
+      level: levelNumber,
       levelName,
+      levelSymbol,
       levelProgress,
       nextXP,
       twitterHandle:  u?.twitterHandle  || null,

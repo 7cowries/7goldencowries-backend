@@ -547,6 +547,8 @@ router.post("/api/quests/claim", async (req, res) => {
       xpGain: result.xpGain,
       newTotalXp,
       level: lvl.levelName,
+      levelNumber: lvl.level,
+      levelSymbol: lvl.levelSymbol,
       levelProgress: lvl.progress,
       already: result.already || undefined,
     });

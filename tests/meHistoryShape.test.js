@@ -25,6 +25,7 @@ test('/api/users/me returns normalized progress and history shape', async () => 
   const user = res.body;
   expect(user.levelProgress).toBeGreaterThanOrEqual(0);
   expect(user.levelProgress).toBeLessThanOrEqual(1);
+  expect(user.levelSymbol).toBeDefined();
   expect(Array.isArray(user.questHistory)).toBe(true);
   const entry = user.questHistory[0];
   expect(entry).toHaveProperty('id');

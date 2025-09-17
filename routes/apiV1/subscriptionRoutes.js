@@ -9,6 +9,7 @@ import { getRequiredEnv } from "../../config/env.js";
 import { verifySubscriptionSession } from "../../lib/paymentProvider.js";
 import { getSessionWallet } from "../../utils/session.js";
 import { grantXP } from "../../lib/grantXP.js";
+import { deriveLevel } from "../../config/progression.js";
 
 const router = express.Router();
 
@@ -342,10 +343,16 @@ router.post("/claim", claimLimiter, async (req, res) => {
       return res.status(401).json({ error: "wallet_required" });
     }
 
+    const base = deriveLevel(0);
     await db.run(
-      `INSERT OR IGNORE INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
-         VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-      wallet
+      `INSERT OR IGNORE INTO users (wallet, xp, tier, level, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+         VALUES (?, 0, 'Free', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet,
+      base.level,
+      base.levelName,
+      base.levelSymbol,
+      base.progress,
+      base.nextNeed
     );
 
     const inserted = await db.run(
@@ -356,11 +363,28 @@ router.post("/claim", claimLimiter, async (req, res) => {
     );
 
     if (inserted.changes === 0) {
-      return res.json({ ok: true, xpDelta: 0 });
+      const snapshot = await grantXP({ wallet }, 0);
+      const derived = snapshot.level ?? deriveLevel(snapshot.total);
+      return res.json({
+        ok: true,
+        xpDelta: 0,
+        newTotalXp: snapshot.total,
+        level: derived.levelName,
+        levelNumber: derived.level,
+        levelSymbol: derived.levelSymbol,
+      });
     }
 
     const result = await grantXP({ wallet }, 200);
-    return res.json({ ok: true, xpDelta: result.delta ?? 200 });
+    const derived = result.level ?? deriveLevel(result.total);
+    return res.json({
+      ok: true,
+      xpDelta: result.delta ?? 200,
+      newTotalXp: result.total,
+      level: derived.levelName,
+      levelNumber: derived.level,
+      levelSymbol: derived.levelSymbol,
+    });
   } catch (err) {
     console.error("subscription claim error", err);
     return res.status(500).json({ error: "claim_failed" });

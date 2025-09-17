@@ -26,12 +26,14 @@ describe("session disconnect", () => {
 
     const before = await agent.get("/api/users/me");
     expect(before.body.wallet).toBe("wallet-disconnect");
+    expect(before.body.levelSymbol).toBe("🐚");
 
     const disconnectRes = await agent.post("/api/session/disconnect");
     expect(disconnectRes.body).toEqual({ ok: true });
 
     const after = await agent.get("/api/users/me");
     expect(after.body.wallet).toBeNull();
+    expect(after.body.levelSymbol).toBe("🐚");
   });
 });
 
@@ -42,10 +44,19 @@ describe("subscription claim", () => {
     await agent.post("/api/session/bind-wallet").send({ wallet }).expect(200);
 
     const first = await agent.post("/api/v1/subscription/claim");
-    expect(first.body).toMatchObject({ ok: true, xpDelta: 200 });
+    expect(first.body).toMatchObject({
+      ok: true,
+      xpDelta: 200,
+      levelSymbol: "🌊",
+      levelNumber: 2,
+    });
 
     const second = await agent.post("/api/v1/subscription/claim");
-    expect(second.body).toMatchObject({ ok: true, xpDelta: 0 });
+    expect(second.body).toMatchObject({
+      ok: true,
+      xpDelta: 0,
+      levelNumber: 2,
+    });
 
     const row = await db.get("SELECT xp FROM users WHERE wallet = ?", wallet);
     expect(row?.xp).toBe(200);
@@ -67,10 +78,19 @@ describe("referral claim", () => {
       .expect(200);
 
     const first = await agent.post("/api/v1/referral/claim");
-    expect(first.body).toMatchObject({ ok: true, xpDelta: 50 });
+    expect(first.body).toMatchObject({
+      ok: true,
+      xpDelta: 50,
+      levelSymbol: "🐚",
+      levelNumber: 1,
+    });
 
     const second = await agent.post("/api/v1/referral/claim");
-    expect(second.body).toMatchObject({ ok: true, xpDelta: 0 });
+    expect(second.body).toMatchObject({
+      ok: true,
+      xpDelta: 0,
+      levelNumber: 1,
+    });
 
     let referrer = await db.get(
       "SELECT xp FROM users WHERE wallet = ?",
@@ -95,7 +115,11 @@ describe("referral claim", () => {
       .expect(200);
 
     const third = await secondAgent.post("/api/v1/referral/claim");
-    expect(third.body).toMatchObject({ ok: true, xpDelta: 50 });
+    expect(third.body).toMatchObject({
+      ok: true,
+      xpDelta: 50,
+      levelNumber: 2,
+    });
 
     referrer = await db.get(
       "SELECT xp FROM users WHERE wallet = ?",
