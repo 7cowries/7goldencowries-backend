@@ -2,6 +2,7 @@ import express from "express";
 import db from "../../lib/db.js";
 import { verifyTonPayment } from "../../lib/ton.js";
 import { getSessionWallet } from "../../utils/session.js";
+import { jsonError, jsonOk } from "../../utils/apiResponse.js";
 
 const router = express.Router();
 
@@ -41,13 +42,23 @@ router.get("/status", async (req, res) => {
   try {
     const wallet = getSessionWallet(req);
     if (!wallet) {
-      return res.json({ paid: false });
+      return jsonOk(
+        res,
+        "payments_status",
+        "Payment status retrieved.",
+        { paid: false }
+      );
     }
     const row = await db.get("SELECT paid FROM users WHERE wallet = ?", wallet);
-    return res.json({ paid: toBoolean(row?.paid) });
+    return jsonOk(res, "payments_status", "Payment status retrieved.", {
+      paid: toBoolean(row?.paid),
+    });
   } catch (err) {
     console.error("payments status error", err);
-    return res.status(500).json({ error: "status_failed" });
+    return jsonError(res, "status_failed", "Unable to fetch payment status.", {
+      status: 500,
+      paid: false,
+    });
   }
 });
 
@@ -55,12 +66,18 @@ router.post("/verify", async (req, res) => {
   try {
     const wallet = getSessionWallet(req);
     if (!wallet) {
-      return res.status(401).json({ error: "wallet_required" });
+      return jsonError(res, "wallet_required", "Wallet session required.", {
+        status: 401,
+        verified: false,
+      });
     }
 
     const txHash = String(req.body?.txHash || req.body?.hash || "").trim();
     if (!txHash) {
-      return res.status(400).json({ error: "tx_required" });
+      return jsonError(res, "tx_required", "Transaction hash required.", {
+        status: 400,
+        verified: false,
+      });
     }
 
     const minAmount = CONFIGURED_MIN > 0 ? CONFIGURED_MIN : Number(req.body?.amount || 0);
@@ -75,7 +92,11 @@ router.post("/verify", async (req, res) => {
 
     if (!verification?.verified) {
       const status = verification?.reason || "unverified";
-      return res.status(422).json({ verified: false, reason: status });
+      return jsonError(res, status, "Payment not verified.", {
+        status: 422,
+        verified: false,
+        reason: status,
+      });
     }
 
     const normalizedWallet = verification.from || wallet;
@@ -100,7 +121,7 @@ router.post("/verify", async (req, res) => {
       now
     );
 
-    return res.json({
+    return jsonOk(res, "payment_verified", "Payment verified.", {
       verified: true,
       amount: verification.amount,
       to: verification.to,
@@ -110,7 +131,10 @@ router.post("/verify", async (req, res) => {
     });
   } catch (err) {
     console.error("payments verify error", err);
-    return res.status(500).json({ error: "verification_failed" });
+    return jsonError(res, "verification_failed", "Payment verification failed.", {
+      status: 500,
+      verified: false,
+    });
   }
 });
 

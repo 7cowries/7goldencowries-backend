@@ -36,6 +36,9 @@ test("ton payment verification unlocks subscription claim", async () => {
 
   let res = await agent.get("/api/v1/payments/status");
   expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  expect(res.body.code).toBe("payments_status");
+  expect(res.body.error).toBeNull();
   expect(res.body.paid).toBe(false);
 
   verifyTonMock.mockResolvedValueOnce({
@@ -56,6 +59,9 @@ test("ton payment verification unlocks subscription claim", async () => {
       tier: "Tier 1",
     });
   expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  expect(res.body.code).toBe("payment_verified");
+  expect(res.body.error).toBeNull();
   expect(res.body.verified).toBe(true);
   expect(res.body.tier).toBe("Tier 1");
   expect(verifyTonMock).toHaveBeenCalledWith({
@@ -68,10 +74,14 @@ test("ton payment verification unlocks subscription claim", async () => {
 
   res = await agent.get("/api/v1/payments/status");
   expect(res.status).toBe(200);
+  expect(res.body.code).toBe("payments_status");
   expect(res.body.paid).toBe(true);
 
   res = await agent.get("/api/v1/subscription/status");
   expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  expect(res.body.code).toBe("subscription_status");
+  expect(res.body.error).toBeNull();
   expect(res.body.paid).toBe(true);
   expect(res.body.canClaim).toBe(true);
   expect(res.body.bonusXp).toBe(120);
@@ -82,15 +92,19 @@ test("ton payment verification unlocks subscription claim", async () => {
 
   res = await agent.post("/api/v1/subscription/claim");
   expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  expect(res.body.code).toBe("subscription_bonus_granted");
   expect(res.body.xpDelta).toBe(120);
   expect(res.body.claimedAt).toBeTruthy();
 
   res = await agent.post("/api/v1/subscription/claim");
   expect(res.status).toBe(200);
+  expect(res.body.code).toBe("subscription_bonus_exists");
   expect(res.body.xpDelta).toBe(0);
 
   res = await agent.get("/api/v1/subscription/status");
   expect(res.status).toBe(200);
+  expect(res.body.code).toBe("subscription_status");
   expect(res.body.canClaim).toBe(false);
   expect(res.body.claimedAt).toBeTruthy();
 });
