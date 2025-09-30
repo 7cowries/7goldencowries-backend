@@ -133,7 +133,7 @@ publicRouter.get("/stats", requireAuth, async (req, res) => {
                 WHERE e.referee_user_id = u.id
                 LIMIT 1) AS first_quest_completed_at
          FROM referrals r
-         JOIN users u ON u.wallet = r.referred
+         JOIN users u ON u.id = r.referee_user_id
         WHERE r.referrer_user_id = ?
         ORDER BY r.created_at DESC`,
       [userId]
