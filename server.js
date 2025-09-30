@@ -1,3 +1,6 @@
+/* Auto-run migrations on startup (inserts run-migrations.js). */
+/* This is idempotent — if the migrations script has already run it will exit quickly. */
+try { require('./scripts/run-migrations.js'); } catch(e) { console.warn('Migration runner require failed:', e && e.message); }
 // server.js
 import express from "express";
 import fs from "fs";
