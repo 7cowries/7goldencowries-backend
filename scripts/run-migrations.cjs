@@ -1,7 +1,6 @@
-// scripts/run-migrations.js
-// Idempotent migration runner for SQLite: add 'code' column to referrals if missing.
-// Uses env DATABASE_PATH (default ./data/database.sqlite).
-// Safe to call repeatedly; logs actions.
+// scripts/run-migrations.cjs
+// Idempotent migration runner for SQLite that searches multiple candidate paths.
+// It will act on the first DB file it finds. Logs every step so Render logs show what's happening.
 
 const fs = require('fs');
 const path = require('path');
@@ -9,15 +8,61 @@ const sqlite3 = require('sqlite3').verbose();
 
 (async function main() {
   try {
-    const DB_PATH = process.env.DATABASE_PATH || process.env.DB_PATH || path.resolve(process.cwd(), './data/database.sqlite');
-    console.log('[migrations] using DB path:', DB_PATH);
+    // candidates in order (can be extended)
+    const repoRoot = path.resolve(process.cwd());
+    const candidates = [];
 
-    if (!fs.existsSync(DB_PATH)) {
-      console.warn('[migrations] database file not found at', DB_PATH, '— skipping migrations (this may be expected in some envs)');
+    // allow explicit override
+    if (process.env.DATABASE_PATH) candidates.push(process.env.DATABASE_PATH);
+
+    // common repo/data locations
+    candidates.push(path.join(repoRoot, 'data', 'database.sqlite'));
+    candidates.push(path.join(repoRoot, 'data', 'dev.sqlite'));
+    candidates.push(path.join(repoRoot, 'data', 'db.sqlite'));
+    candidates.push(path.join(repoRoot, 'data', 'production.sqlite'));
+
+    // Render persistent disk typical mount
+    candidates.push('/var/data/database.sqlite');
+    candidates.push('/var/data/dev.sqlite');
+    candidates.push('/var/data/data.sqlite');
+
+    // fallback: any .sqlite file under ./data
+    try {
+      const files = fs.readdirSync(path.join(repoRoot, 'data')).filter(f => f.endsWith('.sqlite') || f.endsWith('.db') || f.endsWith('.sqlite3'));
+      files.forEach(f => candidates.push(path.join(repoRoot, 'data', f)));
+    } catch (e) {
+      // ignore if ./data doesn't exist
+    }
+
+    console.log('[migrations] candidate DB paths to check:', JSON.stringify(candidates, null, 2));
+
+    // find first existing candidate
+    let DB_PATH = null;
+    for (const c of candidates) {
+      if (!c) continue;
+      try {
+        if (fs.existsSync(c)) {
+          DB_PATH = c;
+          break;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    if (!DB_PATH) {
+      console.warn('[migrations] no candidate DB file found — listing ./data (if present):');
+      try {
+        const list = fs.readdirSync(path.join(repoRoot, 'data')).map(f => path.join(repoRoot, 'data', f));
+        console.warn('[migrations] ./data contents:', JSON.stringify(list, null, 2));
+      } catch(e) {
+        console.warn('[migrations] ./data not present or unreadable:', e && e.message);
+      }
+      console.warn('[migrations] skipping migrations (no DB located)');
       return;
     }
 
-    // create a timestamped backup in same directory if possible
+    console.log('[migrations] selected DB path:', DB_PATH);
+
+    // backup DB (safe local copy)
     try {
       const bakPath = DB_PATH + '.bak.' + Date.now();
       fs.copyFileSync(DB_PATH, bakPath);
@@ -27,36 +72,30 @@ const sqlite3 = require('sqlite3').verbose();
     }
 
     const db = new sqlite3.Database(DB_PATH);
-
-    // helper to run SQL as promise
     const run = (sql) => new Promise((res, rej) => db.run(sql, function(err) { if (err) rej(err); else res(this); }));
     const all = (sql) => new Promise((res, rej) => db.all(sql, (err, rows) => { if (err) rej(err); else res(rows); }));
 
-    // check if referrals table exists
     const tbl = await all("SELECT name FROM sqlite_master WHERE type='table' AND name='referrals';");
     if (!tbl || tbl.length === 0) {
-      console.warn("[migrations] table 'referrals' not found — skipping referrals migration");
+      console.warn("[migrations] table 'referrals' not found in " + DB_PATH + " — skipping referrals migration");
       db.close();
       return;
     }
 
-    // check columns
     const cols = await all("PRAGMA table_info('referrals');");
-    // unify col name access for different sqlite3 versions
-    const hasCode = cols.some(c => (c.name && c.name === 'code') || (c[1] && c[1] === 'code') );
+    const hasCode = cols.some(c => (c.name && c.name === 'code') || (c[1] && c[1] === 'code'));
     if (hasCode) {
-      console.log("[migrations] column 'code' already exists — nothing to do");
+      console.log("[migrations] column 'code' already exists in referrals — nothing to do");
       db.close();
       return;
     }
 
     console.log("[migrations] adding column 'code' to referrals (TEXT NULL allowed)");
-    // perform alter within transaction
     try {
       await run("BEGIN TRANSACTION;");
       await run("ALTER TABLE referrals ADD COLUMN code TEXT;");
       await run("COMMIT;");
-      console.log("[migrations] ALTER TABLE successful — 'code' column added");
+      console.log("[migrations] ALTER TABLE successful — 'code' column added in " + DB_PATH);
     } catch (alterErr) {
       console.error("[migrations] ALTER TABLE failed:", alterErr && alterErr.message ? alterErr.message : alterErr);
       try { await run("ROLLBACK;"); } catch(e) { /* ignore */ }
@@ -65,7 +104,6 @@ const sqlite3 = require('sqlite3').verbose();
     db.close();
   } catch (err) {
     console.error('[migrations] migration failed:', err && err.message ? err.message : err);
-    // do not crash the process; migrations should be best-effort
     try { process.exitCode = 0; } catch(e) { /* ignore */ }
   }
 })();
