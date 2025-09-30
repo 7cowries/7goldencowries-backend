@@ -243,3 +243,7 @@ if (entryPath && entryPath === currentPath) {
 }
 
 export default app;
+
+// register placeholder auth routes (auto-added)
+import registerAuthPlaceholders from './routes/auth-placeholders.js';
+registerAuthPlaceholders(app);
