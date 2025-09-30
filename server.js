@@ -1,6 +1,40 @@
-/* Auto-run migrations on startup (inserts run-migrations.js). */
+/* Auto-run migrations on startup (ESM/CJS compatible wrapper).
+   - If running under CommonJS, attempt require('./scripts/run-migrations.cjs')
+   - Otherwise spawn a child Node process to execute the CJS script.
+   This avoids `require is not defined` in ESM environments.
+*/
+(async () => {
+  try {
+    // If require exists (CJS environment), use it.
+    if (typeof require === 'function') {
+      try {
+        require('./scripts/run-migrations.cjs');
+        console.log('[migrations] run-migrations.cjs required via CJS');
+      } catch (e) {
+        console.warn('[migrations] require(./scripts/run-migrations.cjs) failed:', e && e.message);
+      }
+      return;
+    }
+
+    // ESM runtime: spawn a child Node process to run the CJS migration script
+    try {
+      // dynamic import of child_process
+      const { spawn } = await import('node:child_process');
+      const nodeBin = process.execPath;
+      // convert relative path to absolute using import.meta.url
+      const scriptPath = new URL('./scripts/run-migrations.cjs', import.meta.url).pathname;
+      console.log('[migrations] running migration child:', nodeBin, scriptPath);
+      const child = spawn(nodeBin, [scriptPath], { stdio: 'inherit' });
+      child.on('error', (err) => console.warn('[migrations] child process error:', err && err.message));
+      child.on('exit', (code, signal) => console.log('[migrations] child exited with code', code, 'signal', signal));
+    } catch (err2) {
+      console.warn('[migrations] ESM spawn/import failed:', err2 && err2.message);
+    }
+  } catch (outerErr) {
+    console.warn('[migrations] migration wrapper failed:', outerErr && outerErr.message);
+  }
+})();
 /* This is idempotent — if the migrations script has already run it will exit quickly. */
-try { require('./scripts/run-migrations.cjs'); } catch(e) { console.warn('Migration runner require failed:', e && e.message); }
 // server.js
 import express from "express";
 import fs from "fs";
