@@ -1,3 +1,4 @@
+import sessionRouter from "./src/routes/walletSession.js";
 import sessionRouter from './src/routes/session.js';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -45,7 +46,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import winston from "winston";
 import dotenv from "dotenv";
-import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import session from "express-session";
