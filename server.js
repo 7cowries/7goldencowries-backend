@@ -1,5 +1,5 @@
-import cookieParser from "cookie-parser";
 import sessionRouter from "./src/routes/walletSession.js";
+import cookieParser from "cookie-parser";
 import cors from 'cors';
 /* Auto-run migrations on startup (ESM/CJS compatible wrapper).
    - If running under CommonJS, attempt require('./scripts/run-migrations.cjs')
