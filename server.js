@@ -1,4 +1,4 @@
-import cookieParser from 'cookie-parser';
+import cookieParser from "cookie-parser";
 import sessionRouter from "./src/routes/walletSession.js";
 import cors from 'cors';
 /* Auto-run migrations on startup (ESM/CJS compatible wrapper).
@@ -50,7 +50,6 @@ import rateLimit from "express-rate-limit";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import morgan from "morgan";
-import cookieParser from "cookie-parser";
 
 import db from "./lib/db.js";
 import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
@@ -91,6 +90,7 @@ const logger = winston.createLogger({
 });
 
 const app = express();
+app.use(cookieParser());
 app.set('trust proxy', 1);
 app.set("trust proxy", 1);
 app.set("etag", false);
@@ -155,7 +155,6 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 /* ---------------- END CORS CONFIG ---------------- */
 
-app.use(cookieParser());
 
 // No caching
 app.use("/api", (req, res, next) => {
