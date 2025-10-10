@@ -1,3 +1,5 @@
+const walletSession = require('./routes/walletSession');
+const cors = require('cors');
 // app.js
 import 'dotenv/config';
 import express from 'express';
@@ -224,3 +226,31 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`7GC backend listening on :${PORT}`);
 });
+
+/* 7GC_SESSION_BLOCK: begin */
+app.set('trust proxy', 1);
+app.use(require('express').json());
+app.use(cookieParser(process.env.SESSION_SECRET));
+
+app.use(require('cors')({
+  origin: (origin, cb) => {
+    const list = (process.env.ORIGIN_WHITELIST || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (!origin || list.length === 0 || list.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
+
+// Wallet session route (sets secure cookie)
+app.use('/api/auth/wallet', walletSession);
+
+// Minimal /api/me so FE can read session via proxy
+app.get('/api/me', (req, res) => {
+  const name = process.env.COOKIE_NAME || '7gc_sess';
+  const v = (req.signedCookies?.[name]) || (req.cookies?.[name]);
+  return res.json({ ok: true, user: v ? { address: v } : null });
+});
+/* 7GC_SESSION_BLOCK: end */
