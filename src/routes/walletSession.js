@@ -18,3 +18,5 @@ r.post('/session', async (req, res) => {
 });
 
 module.exports = r;
+
+export default sessionRouter;

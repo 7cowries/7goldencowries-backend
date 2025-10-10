@@ -1,6 +1,5 @@
-import sessionRouter from "./src/routes/walletSession.js";
-import sessionRouter from './src/routes/session.js';
 import cookieParser from 'cookie-parser';
+import sessionRouter from "./src/routes/walletSession.js";
 import cors from 'cors';
 /* Auto-run migrations on startup (ESM/CJS compatible wrapper).
    - If running under CommonJS, attempt require('./scripts/run-migrations.cjs')
@@ -153,7 +152,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-app.use('/api', sessionRouter);
 app.options("*", cors(corsOptions));
 /* ---------------- END CORS CONFIG ---------------- */
 
@@ -280,6 +278,7 @@ const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 const currentPath = fileURLToPath(import.meta.url);
 
 if (entryPath && entryPath === currentPath) {
+app.use('/api', sessionRouter);
   app.listen(port, () => {
     logger.info(`API listening on ${port}`);
   });
