@@ -89,6 +89,7 @@ const logger = winston.createLogger({
 });
 
 const app = express();
+app.set('trust proxy', 1);
 app.set("trust proxy", 1);
 app.set("etag", false);
 
@@ -148,6 +149,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+
+app.use('/api', sessionRouter);
 app.options("*", cors(corsOptions));
 /* ---------------- END CORS CONFIG ---------------- */
 
