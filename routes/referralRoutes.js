@@ -55,7 +55,7 @@ async function tierMultiplier(userId){
 }
 
 function requireWallet(req, res){
-  const w = req.session?.wallet;
+  const w = (req.session?.wallet||req.session?.address);
   if(!w){
     res.status(401).json({ ok:false, error:"not_logged_in" });
     return null;
