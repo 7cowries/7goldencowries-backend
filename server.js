@@ -175,43 +175,8 @@ app.use(morgan(":method :url :status :res[content-length] - :response-time ms ui
 
 // Rate limits
 app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
-app.use(session({
-  name: "7gc.sid",
-  secret: process.env.SESSION_SECRET || "change-me",
-  resave: false,
-  saveUninitialized: false,
-  cookie: (function(){
-    const secure = (process.env.NODE_ENV === "production");
-    return { httpOnly: true, sameSite: secure ? "none" : "lax", secure, maxAge: 1000*60*60*24*30 };
-  })()
-}));
 
 // Fallback: accept dev cookie 7gc.sid=w:<wallet> and materialize a session
-app.use(async (req, res, next) => {
-  try {
-    if (!req.session?.userId) {
-      const ck = req.headers.cookie || "";
-      const m = /(?:^|;\s*)7gc\.sid=([^;]+)/.exec(ck);
-      if (m) {
-        const raw = decodeURIComponent(m[1]);
-        if (raw.startsWith("w:")) {
-          const wallet = raw.slice(2).trim();
-          if (wallet) {
-            let row = await db.get("SELECT id FROM users WHERE wallet=?", wallet);
-            let uid = row?.id;
-            if (!uid) {
-              await db.run("INSERT OR IGNORE INTO users(wallet) VALUES(?)", wallet);
-              row = await db.get("SELECT id FROM users WHERE wallet=?", wallet);
-              uid = row?.id;
-            }
-            if (uid) req.session.userId = uid;
-          }
-        }
-      }
-    }
-  } catch {}
-  next();
-});
 
 app.use("/api/quests/claim", rateLimit({ windowMs: 60_000, max: 30 }));
 
@@ -244,26 +209,6 @@ function buildSessionCookieOptions() {
   };
 }
 
-app.use(async (req, res, next) => {
-  try {
-    if (!req.session?.userId) {
-      const ck = req.headers.cookie || "";
-      const m = /(?:^|;\s*)7gc\.sid=([^;]+)/.exec(ck);
-      if (m) {
-        const raw = decodeURIComponent(m[1]);
-        if (raw.startsWith("w:")) {
-          const wallet = raw.slice(2).trim();
-          if (wallet) {
-            await db.run("INSERT OR IGNORE INTO users(wallet) VALUES(?)", wallet);
-            const row = await db.get("SELECT id FROM users WHERE wallet=?", wallet);
-            if (row?.id) { req.session.userId = row.id; req.session.wallet = wallet; }
-          }
-        }
-      }
-    }
-  } catch (e) {}
-  next();
-});
   name: process.env.COOKIE_NAME || "7gc.sid",
   secret: process.env.SESSION_SECRET || "change-me",
   resave: false,
