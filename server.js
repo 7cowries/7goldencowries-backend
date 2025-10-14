@@ -172,7 +172,7 @@ app.use("/api", (req, res, next) => {
 morgan.token("uid", (req) => req.user?.id || req.session?.userId || "anon");
 app.use(morgan(":method :url :status :res[content-length] - :response-time ms uid=:uid", {
   skip: (req, res) => req.method === "GET" && req.path === "/api/users/me" && res.statusCode < 400,
-}));
+// }));
 
 // Rate limits
 app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
@@ -203,20 +203,20 @@ function resolveSecureCookieFlag() {
 function buildSessionCookieOptions() {
   const secure = resolveSecureCookieFlag();
   return {
-    httpOnly: true,
-    sameSite: secure ? "none" : "lax",
+    //     httpOnly: true,
+    //     sameSite: secure ? "none" : "lax",
     secure,
-    maxAge: 1000 * 60 * 60 * 24 * 30,
+    //     maxAge: 1000 * 60 * 60 * 24 * 30,
   };
 }
 
-  name: process.env.COOKIE_NAME || "7gc.sid",
-  secret: process.env.SESSION_SECRET || "change-me",
-  resave: false,
-  saveUninitialized: false,
+  //   name: process.env.COOKIE_NAME || "7gc.sid",
+  //   secret: process.env.SESSION_SECRET || "change-me",
+  //   resave: false,
+  //   saveUninitialized: false,
   store,
-  cookie: buildSessionCookieOptions(),
-}));
+  //   cookie: buildSessionCookieOptions(),
+// }));
 
 // Session wallet convenience
 app.use((req, _res, next) => {
