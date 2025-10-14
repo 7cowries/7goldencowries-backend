@@ -13,7 +13,7 @@ function tierMultiplier(tier) {
   return 1.0;
 }
 
-// BLUEPRINT LEVELS (names only updated to match UI blueprint)
+// Blueprint level names
 function computeLevel(xp) {
   const levels = [
     { name: "Shellborn",        base: 0,      size: 10000 },
@@ -119,11 +119,12 @@ router.get("/quests", async (req, res) => {
   }
 });
 
-/** POST /quests/claim { key } -> mark claimed, award XP with tier multiplier */
+/** POST /quests/claim { key } -> ensure schema+seeds, then award XP */
 router.post("/quests/claim", async (req, res) => {
   const uid = req.session?.userId;
   if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
   try {
+    await ensureQuestSchemaAndSeeds(); // <-- IMPORTANT FIX
     const key = (req.body?.key || "").trim();
     if (!key) return res.status(400).json({ ok: false, error: "key_required" });
 
