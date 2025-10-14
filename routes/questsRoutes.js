@@ -3,7 +3,7 @@ import db from "../db.js";
 
 const router = express.Router();
 
-// --- helpers ---
+/* ---------- helpers ---------- */
 function tierMultiplier(tier) {
   if (!tier) return 1.0;
   const t = String(tier).toLowerCase();
@@ -32,17 +32,18 @@ function computeLevel(xp) {
   return { levelName: current.name, levelProgress: Number(progress.toFixed(3)) };
 }
 
-async function ensureQuestSchemaAndSeeds() {
+/* ---------- v2 schema + seeds (NO collision with any legacy tables) ---------- */
+async function ensureV2SchemaAndSeeds() {
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS quest_categories (
+    CREATE TABLE IF NOT EXISTS quest_categories_v2 (
       key TEXT PRIMARY KEY,
       name TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS quests (
+    CREATE TABLE IF NOT EXISTS quests_v2 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       key TEXT UNIQUE,
       title TEXT NOT NULL,
-      category TEXT NOT NULL,
+      category TEXT NOT NULL, -- daily | social | partner | insider | onchain
       xp INTEGER NOT NULL,
       url TEXT,
       partner TEXT,
@@ -51,16 +52,16 @@ async function ensureQuestSchemaAndSeeds() {
       endsAt TEXT,
       active INTEGER DEFAULT 1
     );
-    CREATE TABLE IF NOT EXISTS user_quests (
+    CREATE TABLE IF NOT EXISTS user_quests_v2 (
       userId INTEGER NOT NULL,
       questId INTEGER NOT NULL,
-      status TEXT DEFAULT 'pending',
+      status TEXT DEFAULT 'pending', -- pending | completed | claimed
       claimedAt TEXT,
       PRIMARY KEY (userId, questId)
     );
   `);
 
-  const row = await db.get("SELECT COUNT(*) as n FROM quests");
+  const row = await db.get("SELECT COUNT(*) as n FROM quests_v2");
   if ((row?.n || 0) === 0) {
     const cats = [
       ["daily", "Daily"],
@@ -70,7 +71,7 @@ async function ensureQuestSchemaAndSeeds() {
       ["onchain", "On-Chain"],
     ];
     for (const [k, n] of cats) {
-      await db.run("INSERT OR IGNORE INTO quest_categories (key, name) VALUES (?,?)", [k, n]);
+      await db.run("INSERT OR IGNORE INTO quest_categories_v2 (key, name) VALUES (?,?)", [k, n]);
     }
     const quests = [
       { key: "daily_checkin",  title: "Daily Check-in",              category: "daily",   xp: 500,  url: "/quests/daily",  isDaily: 1 },
@@ -84,7 +85,7 @@ async function ensureQuestSchemaAndSeeds() {
     ];
     for (const q of quests) {
       await db.run(
-        `INSERT OR IGNORE INTO quests (key, title, category, xp, url, partner, isDaily, active)
+        `INSERT OR IGNORE INTO quests_v2 (key, title, category, xp, url, partner, isDaily, active)
          VALUES (?,?,?,?,?,?,?,1)`,
         [q.key, q.title, q.category, q.xp, q.url || null, q.partner || null, q.isDaily ? 1 : 0]
       );
@@ -92,15 +93,17 @@ async function ensureQuestSchemaAndSeeds() {
   }
 }
 
-/** GET /quests -> active quests + user status */
+/* ---------- endpoints (operate on v2 tables only) ---------- */
+
+// GET /quests  (serve v2 list; if something else also serves /api/quests earlier, our route may not run)
 router.get("/quests", async (req, res) => {
   try {
-    await ensureQuestSchemaAndSeeds();
+    await ensureV2SchemaAndSeeds();
     const uid = req.session?.userId || -1;
     const rows = await db.all(`
       SELECT q.*, COALESCE(uq.status, 'pending') as status, uq.claimedAt
-      FROM quests q
-      LEFT JOIN user_quests uq ON uq.questId = q.id AND uq.userId = ?
+      FROM quests_v2 q
+      LEFT JOIN user_quests_v2 uq ON uq.questId = q.id AND uq.userId = ?
       WHERE q.active = 1
       ORDER BY
         CASE q.category
@@ -114,37 +117,40 @@ router.get("/quests", async (req, res) => {
     `, [uid]);
     return res.json({ ok: true, quests: rows });
   } catch (e) {
-    console.error("GET /quests error", e);
+    console.error("GET /quests (v2) error", e);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
-/** POST /quests/claim { key } -> ensure schema+seeds, then award XP */
+// POST /quests/claim  { key }
 router.post("/quests/claim", async (req, res) => {
   const uid = req.session?.userId;
   if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
   try {
-    await ensureQuestSchemaAndSeeds(); // <-- IMPORTANT FIX
+    await ensureV2SchemaAndSeeds();
+
     const key = (req.body?.key || "").trim();
     if (!key) return res.status(400).json({ ok: false, error: "key_required" });
 
-    const quest = await db.get("SELECT * FROM quests WHERE key = ? AND active = 1", [key]);
+    const quest = await db.get("SELECT * FROM quests_v2 WHERE key = ? AND active = 1", [key]);
     if (!quest) return res.status(404).json({ ok: false, error: "quest_not_found" });
 
-    const uq = await db.get("SELECT status FROM user_quests WHERE userId = ? AND questId = ?", [uid, quest.id]);
+    const uq = await db.get("SELECT status FROM user_quests_v2 WHERE userId = ? AND questId = ?", [uid, quest.id]);
     const user = await db.get("SELECT * FROM users WHERE id = ?", [uid]);
 
     if (uq?.status === "claimed") {
-      return res.json({ ok: true, already: true, quest: { key: quest.key, xp: quest.xp, category: quest.category }, user: {
-        id: user.id, wallet: user.wallet, xp: user.xp, levelName: user.levelName, levelProgress: user.levelProgress, subscriptionTier: user.subscriptionTier
-      }});
+      return res.json({
+        ok: true, already: true,
+        quest: { key: quest.key, xp: quest.xp, category: quest.category },
+        user: { id: user.id, wallet: user.wallet, xp: user.xp, levelName: user.levelName, levelProgress: user.levelProgress, subscriptionTier: user.subscriptionTier }
+      });
     }
 
     const mult = tierMultiplier(user?.subscriptionTier);
     const award = Math.round((quest.xp || 0) * mult);
 
     await db.run(`
-      INSERT INTO user_quests (userId, questId, status, claimedAt)
+      INSERT INTO user_quests_v2 (userId, questId, status, claimedAt)
       VALUES (?,?, 'claimed', datetime('now'))
       ON CONFLICT(userId, questId) DO UPDATE SET status='claimed', claimedAt=datetime('now')
     `, [uid, quest.id]);
@@ -159,11 +165,12 @@ router.post("/quests/claim", async (req, res) => {
       quest: { key: quest.key, xp: quest.xp, category: quest.category },
       awarded: award,
       user: {
-        id: updated.id, wallet: updated.wallet, xp: updated.xp, levelName: updated.levelName, levelProgress: updated.levelProgress, subscriptionTier: updated.subscriptionTier
+        id: updated.id, wallet: updated.wallet, xp: updated.xp,
+        levelName: updated.levelName, levelProgress: updated.levelProgress, subscriptionTier: updated.subscriptionTier
       }
     });
   } catch (e) {
-    console.error("POST /quests/claim error", e);
+    console.error("POST /quests/claim (v2) error", e);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
