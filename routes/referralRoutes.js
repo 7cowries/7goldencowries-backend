@@ -13,26 +13,35 @@ function tierMultiplier(tier){
   return 1.0;
 }
 
-// Ensure schema without illegal ALTER defaults; add indexes safely.
-async function ensureReferralSchema(){
+// Detect which referrals schema exists on the live DB
+async function detectReferralsMode(){
   await db.exec(`
     CREATE TABLE IF NOT EXISTS referrals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId INTEGER,            -- may be NULL until bound
-      code   TEXT,               -- may be NULL in legacy rows
+      referrer TEXT,            -- legacy mode (wallet)
+      userId INTEGER,           -- new mode (user id)
+      code TEXT,
       createdAt TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
   const cols = await db.all(`PRAGMA table_info(referrals)`);
-  const names = (cols||[]).map(c=>c.name);
-  if (!names.includes("userId")) await db.exec(`ALTER TABLE referrals ADD COLUMN userId INTEGER;`);
-  if (!names.includes("code"))   await db.exec(`ALTER TABLE referrals ADD COLUMN code TEXT;`);
+  const names = (cols||[]).map(c => c.name);
+  const hasReferrer = names.includes("referrer");
+  const hasUserId   = names.includes("userId");
 
+  // Add missing 'code' if needed (no default!)
+  if (!names.includes("code")) {
+    await db.exec(`ALTER TABLE referrals ADD COLUMN code TEXT;`);
+  }
+
+  // Create indexes defensively
   await db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_userId ON referrals(userId);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_code   ON referrals(code);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_code ON referrals(code);
   `);
+  if (hasReferrer) await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer);`);
+  if (hasUserId)   await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_userId   ON referrals(userId);`);
 
+  // Claims table (idempotent)
   await db.exec(`
     CREATE TABLE IF NOT EXISTS referral_claims (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,43 +51,43 @@ async function ensureReferralSchema(){
       createdAt TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  return { hasReferrer, hasUserId };
 }
 
-// Upsert + repair legacy NULL-code rows
-async function upsertUserReferral(userId){
-  const u = await db.get(`SELECT id, wallet, subscriptionTier FROM users WHERE id = ?`, userId);
-  if (!u?.wallet) throw new Error("user-wallet-missing");
-
-  const desired = codeFromWallet(u.wallet);
-
-  // If a row already exists for this code, bind userId if missing; else ensure ownership.
-  const byCode = await db.get(`SELECT id, userId FROM referrals WHERE code = ?`, desired);
-  if (byCode){
-    if (!byCode.userId) await db.run(`UPDATE referrals SET userId=? WHERE id=?`, userId, byCode.id);
-    else if (byCode.userId !== userId) throw new Error("code-owned-by-different-user");
-    return { code: desired, user: u };
-  }
-
-  // If a row exists for this user with NULL/other code, repair it.
-  const byUser = await db.get(`SELECT id, code FROM referrals WHERE userId = ?`, userId);
-  if (byUser){
-    if (byUser.code !== desired){
-      await db.run(`UPDATE referrals SET code=? WHERE id=?`, desired, byUser.id);
-    }
-    return { code: desired, user: u };
-  }
-
-  // Fresh insert
-  await db.run(`INSERT INTO referrals (userId, code) VALUES (?, ?)`, userId, desired);
-  return { code: desired, user: u };
+async function getAuthedUser(session){
+  const u = await db.get(`SELECT id, wallet, subscriptionTier FROM users WHERE id = ?`, session.userId);
+  if (!u?.wallet) throw new Error("wallet-required");
+  return u;
 }
 
 router.get("/my-code", async (req, res) => {
   try{
     if (!req.session?.userId) return res.status(401).json({ ok:false, error:"not_logged_in" });
-    await ensureReferralSchema();
-    const { code } = await upsertUserReferral(req.session.userId);
-    return res.json({ ok:true, code });
+    const mode = await detectReferralsMode();
+    const user = await getAuthedUser(req.session);
+    const desired = codeFromWallet(user.wallet);
+
+    if (mode.hasReferrer) {
+      // Legacy mode: key = referrer wallet
+      const row = await db.get(`SELECT id, code FROM referrals WHERE referrer = ?`, user.wallet);
+      if (!row) {
+        // Insert with both referrer + code set to satisfy NOT NULL(referrer)
+        await db.run(`INSERT INTO referrals (referrer, code) VALUES (?, ?)`, user.wallet, desired);
+      } else if (!row.code || row.code !== desired) {
+        await db.run(`UPDATE referrals SET code=? WHERE id=?`, desired, row.id);
+      }
+    } else {
+      // New mode: key = userId
+      const row = await db.get(`SELECT id, code FROM referrals WHERE userId = ?`, user.id);
+      if (!row) {
+        await db.run(`INSERT INTO referrals (userId, code) VALUES (?, ?)`, user.id, desired);
+      } else if (!row.code || row.code !== desired) {
+        await db.run(`UPDATE referrals SET code=? WHERE id=?`, desired, row.id);
+      }
+    }
+
+    return res.json({ ok:true, code: desired });
   }catch(e){
     return res.status(400).json({ ok:false, error:String(e.message||e) });
   }
@@ -90,31 +99,43 @@ router.post("/claim", async (req, res) => {
     const { code } = req.body || {};
     if (!code || String(code).length < 6) return res.status(400).json({ ok:false, error:"invalid-code" });
 
-    await ensureReferralSchema();
+    const mode = await detectReferralsMode();
+    const claimant = await getAuthedUser(req.session);
 
-    const claimant = await db.get(`SELECT id, wallet FROM users WHERE id=?`, req.session.userId);
-    if (!claimant?.wallet) return res.status(400).json({ ok:false, error:"wallet-required" });
+    // Resolve referrerId (user.id) from code
+    let refRow;
+    if (mode.hasReferrer) {
+      refRow = await db.get(`
+        SELECT u.id AS referrerId, u.subscriptionTier
+        FROM referrals r
+        JOIN users u ON u.wallet = r.referrer
+        WHERE r.code = ?
+      `, code);
+    } else {
+      refRow = await db.get(`
+        SELECT r.userId AS referrerId, u.subscriptionTier
+        FROM referrals r
+        JOIN users u ON u.id = r.userId
+        WHERE r.code = ?
+      `, code);
+    }
+    if (!refRow?.referrerId) return res.status(400).json({ ok:false, error:"invalid-code" });
+    if (refRow.referrerId === claimant.id) return res.status(400).json({ ok:false, error:"self-referral-disallowed" });
 
-    const ref = await db.get(`
-      SELECT r.userId AS referrerId, u.subscriptionTier
-      FROM referrals r
-      JOIN users u ON u.id = r.userId
-      WHERE r.code = ? AND r.userId IS NOT NULL
-    `, code);
-    if (!ref?.referrerId) return res.status(400).json({ ok:false, error:"invalid-code" });
-    if (ref.referrerId === claimant.id) return res.status(400).json({ ok:false, error:"self-referral-disallowed" });
-
+    // Idempotent: one claim per referred wallet
     const dup = await db.get(`SELECT id FROM referral_claims WHERE referredWallet = ?`, claimant.wallet);
     if (dup) return res.json({ ok:true, already:true });
 
-    const mult = tierMultiplier(ref.subscriptionTier);
+    const mult = tierMultiplier(refRow.subscriptionTier);
     const awarded = Math.round(REFERRAL_BASE_XP * mult);
 
-    await db.run(`UPDATE users SET xp = COALESCE(xp,0) + ? WHERE id = ?`, awarded, ref.referrerId);
-    await db.run(`INSERT INTO referral_claims (referrerId, referredWallet, awardedXP) VALUES (?, ?, ?)`,
-                 ref.referrerId, claimant.wallet, awarded);
+    await db.run(`UPDATE users SET xp = COALESCE(xp,0) + ? WHERE id = ?`, awarded, refRow.referrerId);
+    await db.run(
+      `INSERT INTO referral_claims (referrerId, referredWallet, awardedXP) VALUES (?, ?, ?)`,
+      refRow.referrerId, claimant.wallet, awarded
+    );
 
-    const refUser = await db.get(`SELECT id, wallet, xp, subscriptionTier FROM users WHERE id = ?`, ref.referrerId);
+    const refUser = await db.get(`SELECT id, wallet, xp, subscriptionTier FROM users WHERE id = ?`, refRow.referrerId);
     return res.json({ ok:true, awarded, referrer: refUser });
   }catch(e){
     return res.status(400).json({ ok:false, error:String(e.message||e) });
@@ -124,7 +145,6 @@ router.post("/claim", async (req, res) => {
 router.get("/stats", async (req, res) => {
   try{
     if (!req.session?.userId) return res.status(401).json({ ok:false, error:"not_logged_in" });
-    await ensureReferralSchema();
     const rows = await db.all(`
       SELECT referredWallet, awardedXP, createdAt
       FROM referral_claims
