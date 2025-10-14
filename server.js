@@ -1,3 +1,5 @@
+import db from './db.js';
+import session from 'express-session';
 import referralRoutes from "./routes/referralRoutes.js";
 import saleRoutes from "./routes/saleRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
@@ -93,6 +95,7 @@ const logger = winston.createLogger({
 });
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(cookieParser());
 app.set('trust proxy', 1);
 app.set("trust proxy", 1);
@@ -206,6 +209,26 @@ function buildSessionCookieOptions() {
 }
 
 app.use(session({
+app.use(async (req, res, next) => {
+  try {
+    if (!req.session?.userId) {
+      const ck = req.headers.cookie || "";
+      const m = /(?:^|;\s*)7gc\.sid=([^;]+)/.exec(ck);
+      if (m) {
+        const raw = decodeURIComponent(m[1]);
+        if (raw.startsWith("w:")) {
+          const wallet = raw.slice(2).trim();
+          if (wallet) {
+            await db.run("INSERT OR IGNORE INTO users(wallet) VALUES(?)", wallet);
+            const row = await db.get("SELECT id FROM users WHERE wallet=?", wallet);
+            if (row?.id) { req.session.userId = row.id; req.session.wallet = wallet; }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+  next();
+});
   name: process.env.COOKIE_NAME || "7gc.sid",
   secret: process.env.SESSION_SECRET || "change-me",
   resave: false,
