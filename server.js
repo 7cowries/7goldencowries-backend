@@ -7,6 +7,7 @@ import questsRoutes from "./routes/questsRoutes.js";
 import sessionRouter from "./routes/walletSession.js";
 import cookieParser from "cookie-parser";
 import cors from 'cors';
+import { installSession } from "./lib/session.js";
 /* Auto-run migrations on startup (ESM/CJS compatible wrapper).
    - If running under CommonJS, attempt require('./scripts/run-migrations.cjs')
    - Otherwise spawn a child Node process to execute the CJS script.
