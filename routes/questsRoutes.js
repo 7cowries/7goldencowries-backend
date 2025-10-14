@@ -32,7 +32,7 @@ function computeLevel(xp) {
   return { levelName: current.name, levelProgress: Number(progress.toFixed(3)) };
 }
 
-/* ---------- v2 schema + seeds (NO collision with any legacy tables) ---------- */
+/* ---------- v2 schema + seeds (quests) ---------- */
 async function ensureV2SchemaAndSeeds() {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS quest_categories_v2 (
@@ -93,9 +93,20 @@ async function ensureV2SchemaAndSeeds() {
   }
 }
 
-/* ---------- endpoints (operate on v2 tables only) ---------- */
+/* ---------- subscriptions schema ---------- */
+async function ensureSubscriptionSchema() {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      wallet    TEXT PRIMARY KEY,
+      tier      TEXT NOT NULL,
+      tonPaid   REAL,
+      usdPaid   REAL,
+      createdAt TEXT DEFAULT (datetime('now'))
+    );
+  `);
+}
 
-// GET /quests  (serve v2 list; if something else also serves /api/quests earlier, our route may not run)
+/* ---------- quests endpoints (v2) ---------- */
 router.get("/quests", async (req, res) => {
   try {
     await ensureV2SchemaAndSeeds();
@@ -122,7 +133,6 @@ router.get("/quests", async (req, res) => {
   }
 });
 
-// POST /quests/claim  { key }
 router.post("/quests/claim", async (req, res) => {
   const uid = req.session?.userId;
   if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
@@ -174,5 +184,51 @@ router.post("/quests/claim", async (req, res) => {
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
+
+/* ---------- subscription endpoints (mounted on same router) ---------- */
+router.get("/subscriptions/status", async (req, res) => {
+  try {
+    await ensureSubscriptionSchema();
+    const uid = req.session?.userId;
+    if (!uid) return res.json({ ok: true, active: false, tier: "Free" });
+    const user = await db.get("SELECT subscriptionTier FROM users WHERE id = ?", [uid]);
+    const tier = user?.subscriptionTier || "Free";
+    return res.json({ ok: true, active: tier !== "Free", tier });
+  } catch (e) {
+    console.error("GET /subscriptions/status error", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+async function handleUpgrade(req, res) {
+  try {
+    await ensureSubscriptionSchema();
+    const uid = req.session?.userId;
+    if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
+
+    const user = await db.get("SELECT wallet FROM users WHERE id = ?", [uid]);
+    if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+
+    const { tier = "Tier 1", txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
+
+    await db.run(
+      `INSERT INTO subscriptions (wallet, tier, tonPaid, usdPaid)
+       VALUES (?,?,?,?)
+       ON CONFLICT(wallet) DO UPDATE SET tier=excluded.tier, tonPaid=excluded.tonPaid, usdPaid=excluded.usdPaid, createdAt=datetime('now')`,
+      [user.wallet, tier, tonPaid, usdPaid]
+    );
+
+    await db.run("UPDATE users SET subscriptionTier = ? WHERE id = ?", [tier, uid]);
+
+    return res.json({ ok: true, tier });
+  } catch (e) {
+    console.error("POST /subscriptions/upgrade error", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+}
+
+// Provide both paths; use /subscriptions/upgrade in tests to avoid any legacy conflicts.
+router.post("/subscriptions/upgrade", handleUpgrade);
+router.post("/subscriptions/subscribe", handleUpgrade);
 
 export default router;
