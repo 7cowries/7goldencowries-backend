@@ -1,3 +1,5 @@
+import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import questsRoutes from "./routes/questsRoutes.js";
 import sessionRouter from "./src/routes/walletSession.js";
 import cookieParser from "cookie-parser";
 import cors from 'cors';
@@ -279,6 +281,9 @@ const currentPath = fileURLToPath(import.meta.url);
 if (entryPath && entryPath === currentPath) {
 app.use('/api', sessionRouter);
 app.use(["/api", "/"], sessionRoutes);
+app.use(["/api", "/"], questsRoutes);
+app.use(["/api", "/"], leaderboardRoutes);
+app.use(["/api", "/"], subscriptionRoutes);
   app.listen(port, () => {
     logger.info(`API listening on ${port}`);
   });
