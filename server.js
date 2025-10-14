@@ -278,6 +278,7 @@ const currentPath = fileURLToPath(import.meta.url);
 
 if (entryPath && entryPath === currentPath) {
 app.use('/api', sessionRouter);
+app.use(["/api", "/"], sessionRoutes);
   app.listen(port, () => {
     logger.info(`API listening on ${port}`);
   });
