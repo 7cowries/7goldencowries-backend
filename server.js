@@ -1,302 +1,162 @@
-import db from "./lib/db.js";
-import session from 'express-session';
-import referralRoutes from "./routes/referralRoutes.js";
-import saleRoutes from "./routes/saleRoutes.js";
-import subscriptionRoutes from "./routes/subscriptionRoutes.js";
-import questsRoutes from "./routes/questsRoutes.js";
-import sessionRouter from "./routes/walletSession.js";
-import cookieParser from "cookie-parser";
-import cors from 'cors';
-import { installSession } from "./lib/session.js";
-/* Auto-run migrations on startup (ESM/CJS compatible wrapper).
-   - If running under CommonJS, attempt require('./scripts/run-migrations.cjs')
-   - Otherwise spawn a child Node process to execute the CJS script.
-   This avoids `require is not defined` in ESM environments.
-*/
-(async () => {
-  try {
-    // If require exists (CJS environment), use it.
-    if (typeof require === 'function') {
-      try {
-        require('./scripts/run-migrations.cjs');
-        console.log('[migrations] run-migrations.cjs required via CJS');
-      } catch (e) {
-        console.warn('[migrations] require(./scripts/run-migrations.cjs) failed:', e && e.message);
-      }
-      return;
-    }
-
-    // ESM runtime: spawn a child Node process to run the CJS migration script
-    try {
-      // dynamic import of child_process
-      const { spawn } = await import('node:child_process');
-      const nodeBin = process.execPath;
-      // convert relative path to absolute using import.meta.url
-      const scriptPath = new URL('./scripts/run-migrations.cjs', import.meta.url).pathname;
-      console.log('[migrations] running migration child:', nodeBin, scriptPath);
-      const child = spawn(nodeBin, [scriptPath], { stdio: 'inherit' });
-      child.on('error', (err) => console.warn('[migrations] child process error:', err && err.message));
-      child.on('exit', (code, signal) => console.log('[migrations] child exited with code', code, 'signal', signal));
-    } catch (err2) {
-      console.warn('[migrations] ESM spawn/import failed:', err2 && err2.message);
-    }
-  } catch (outerErr) {
-    console.warn('[migrations] migration wrapper failed:', outerErr && outerErr.message);
-  }
-})();
-/* This is idempotent — if the migrations script has already run it will exit quickly. */
-// server.js
+import "dotenv/config";
 import express from "express";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import winston from "winston";
-import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import MemoryStore from "memorystore";
-import morgan from "morgan";
-
-import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
-import { ensureUsersSchema } from "./db/migrateUsers.js";
-import runSqliteMigrations from "./db/migrateProofs.js";
-
-// Routes
-import metaRoutes from "./routes/metaRoutes.js";
-import questRoutes from "./routes/questRoutes.js";
-import userRoutes from "./routes/userRoutes.js";
-import profileRoutes from "./routes/profileRoutes.js";
-import leaderboardRoutes from "./routes/leaderboardRoutes.js";
-import sessionRoutes from "./routes/sessionRoutes.js";
-import usersRoutes from "./routes/usersRoutes.js";
-import socialRoutes from "./routes/socialRoutes.js";
-import adminRoutes from "./routes/adminRoutes.js";
-import questTelegramRoutes from "./routes/questTelegramRoutes.js";
-import questDiscordRoutes from "./routes/questDiscordRoutes.js";
-import proofRoutes from "./routes/proofRoutes.js";
-import healthRoutes from "./routes/healthRoutes.js";
-import refRedirectRoutes from "./routes/refRedirectRoutes.js";
-import tonVerifyRoutes from "./routes/tonVerifyRoutes.js";
-import authStartRoutes from "./routes/authStartRoutes.js";
-import referralLookupRoutes from "./routes/referralLookupRoutes.js";
-import apiV1Routes from "./routes/apiV1/index.js";
-import socialApiRoutes from "./routes/socialApiRoutes.js";
-
-dotenv.config();
-
-const logger = winston.createLogger({
-  level: "info",
-  transports: [new winston.transports.Console()],
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.simple()
-  ),
-});
+import cookieParser from "cookie-parser";
+import session from "express-session";
+import path from "node:path";
+import db from "./lib/db.js";                 // will be rewritten below if ./lib/db.js doesn't exist
+import referralRoutes from "./routes/referralRoutes.js";
+import saleRoutes from "./routes/saleRoutes.js";
 
 const app = express();
 app.set("trust proxy", 1);
+
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      "img-src": ["'self'", "data:"],
+      "font-src": ["'self'", "https:", "data:"],
+      "style-src": ["'self'", "https:", "'unsafe-inline'"],
+      "script-src-attr": ["'none'"],
+      "object-src": ["'none'"],
+      "upgrade-insecure-requests": []
+    }
+  }
+}));
+app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-app.set('trust proxy', 1);
-app.set("trust proxy", 1);
-app.set("etag", false);
 
-// Security headers
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(rateLimit({
+  windowMs: 60000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 
-// Raw body saver
-const rawBodySaver = (req, _res, buf) => {
-  if (buf?.length) req.rawBody = buf;
-};
-
-// Body parsers
-app.use(express.json({ limit: "1mb", verify: rawBodySaver }));
-app.use((req,res,next)=>{ try{ if(req.body && req.body.wallet && !req.body.address){ req.body.address=String(req.body.wallet).trim(); } }catch(e){} next(); });
-app.use(express.urlencoded({ extended: true, limit: "1mb", verify: rawBodySaver }));
-app.use(express.raw({ type: "application/octet-stream", limit: "2mb", verify: rawBodySaver }));
-app.use(express.text({ type: "text/*", limit: "2mb", verify: rawBodySaver }));
-
-/* ---------------- CORS CONFIG ---------------- */
-const DEV_CORS = [
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
-
-function parseOrigins(value) {
-  if (!value) return [];
-  return String(value)
-    .split(",")
-    .map((s) => s.trim().replace(/\/+$/, "")) // normalize trailing slashes
-    .filter(Boolean);
-}
-
-const PROD_CORS = [
-  "https://7goldencowries.com",
-  "https://www.7goldencowries.com",
-];
-
-const corsAllowlist = Array.from(
-  new Set([
-    ...DEV_CORS,
-    ...PROD_CORS,
-    ...parseOrigins(process.env.FRONTEND_URL),
-    ...parseOrigins(process.env.CLIENT_URL),
-    ...parseOrigins(process.env.CORS_ORIGINS),
-  ])
-);
-
-const corsOptions = {
-  origin(origin, callback) {
-    if (!origin) return callback(null, true); // SSR / curl
-    const normalized = origin.replace(/\/+$/, "");
-    const ok = corsAllowlist.includes(normalized);
-    return callback(null, ok || false);
-  },
-  credentials: true,
-};
-
-app.use(cors(corsOptions));
-
-app.options("*", cors(corsOptions));
-/* ---------------- END CORS CONFIG ---------------- */
-
-
-// No caching
-app.use("/api", (req, res, next) => {
-  res.set("Cache-Control", "no-store");
-  next();
-});
-
-// Logging
-morgan.token("uid", (req) => req.user?.id || req.session?.userId || "anon");
-app.use(morgan(":method :url :status :res[content-length] - :response-time ms uid=:uid", {
-  skip: (req, res) => req.method === "GET" && req.path === "/api/users/me" && res.statusCode < 400,
-// }));
-
-// Rate limits
-app.use(rateLimit({ windowMs: 60000, max: 200, standardHeaders: true, legacyHeaders: false }));
-
-// Fallback: accept dev cookie 7gc.sid=w:<wallet> and materialize a session
-
-app.use("/api/quests/claim", rateLimit({ windowMs: 60000, max: 30 }));
-
-// Session setup
-const SESSION_DIR = process.env.SESSIONS_DIR || "/var/data";
-const isProd = process.env.NODE_ENV === "production";
-try { fs.mkdirSync(SESSION_DIR, { recursive: true }); } catch (e) { logger.error("Session dir creation failed", e); }
-
-const MemStore = MemoryStore(session);
-const store = new MemStore({ checkPeriod: 864e5, path: SESSION_DIR });
-store.on("error", (err) => logger.error("Session store error", err));
-
-function resolveSecureCookieFlag() {
-  const flag = process.env.COOKIE_SECURE;
-  if (typeof flag === "string") {
-    const normalized = flag.trim().toLowerCase();
-    if (["1", "true", "yes"].includes(normalized)) return true;
-    if (["0", "false", "no"].includes(normalized)) return false;
-  }
-  return isProd;
-}
-
-function buildSessionCookieOptions() {
-  const secure = resolveSecureCookieFlag();
-  return {
-    //     httpOnly: true,
-    //     sameSite: secure ? "none" : "lax",
-    secure,
-    //     maxAge: 1000 * 60 * 60 * 24 * 30,
-  };
-}
-
-  //   name: process.env.COOKIE_NAME || "7gc.sid",
-  //   secret: process.env.SESSION_SECRET || "change-me",
-  //   resave: false,
-  //   saveUninitialized: false,
-  store,
-  //   cookie: buildSessionCookieOptions(),
-// }));
-
-// Session wallet convenience
+// accept {wallet} or {address}
 app.use((req, _res, next) => {
-  if (req.session?.wallet && !req.user) {
-    req.user = { wallet: req.session.wallet };
-  }
+  try {
+    const b = req.body || {};
+    if (b.wallet && !b.address) b.address = String(b.wallet).trim();
+  } catch {}
   next();
 });
 
-// Ensure DB schemas
-await (async function ensureSchema() {
-  await ensureUsersSchema(db);
-  await ensureQuestsSchema();
-  await runSqliteMigrations();
-})();
+const SESSION_NAME = "7gc.sid";
+const isProd = process.env.NODE_ENV === "production";
 
-// Routes
-app.use("/api/v1", apiV1Routes);
-app.use(metaRoutes);
-app.use(questRoutes);
-app.use(questTelegramRoutes);
-app.use(questDiscordRoutes);
-app.use("/api/proofs", proofRoutes);
-app.use("/api/users", usersRoutes);
-app.use(userRoutes);
-app.use("/api/profile", profileRoutes);
-app.use("/api/leaderboard", leaderboardRoutes);
-app.use("/api/session", sessionRoutes);
-app.use("/api/social", socialApiRoutes);
-app.use("/api/auth", authStartRoutes);
-app.use("/auth", socialRoutes);
-app.use("/api/admin", adminRoutes);
-app.use("/referrals", referralLookupRoutes);
-app.use(tonVerifyRoutes);
-app.use(healthRoutes);
-app.use(refRedirectRoutes);
+app.use(session({
+  name: SESSION_NAME,
+  secret: process.env.SESSION_SECRET || "change-me",
+  resave: false,
+  saveUninitialized: false,
+  rolling: true,
+  cookie: {
+    httpOnly: true,
+    sameSite: "none",
+    secure: true,
+    maxAge: 1000 * 60 * 60 * 24 * 30
+  }
+}));
 
-// Service root
-app.get("/", (_req, res) => {
-  res.json({
-    service: "7goldencowries-backend",
-    banner: "7goldencowries Render API ready",
-    routes: {
-      health: "/healthz",
-      apiHealth: "/api/health",
-      paymentsStatus: "/api/v1/payments/status",
-      subscriptionStatus: "/api/v1/subscription/status",
-    },
-  });
-});
+function normalizeAddress(a){ if(!a) return null; const s=String(a).trim(); return s.length?s:null; }
 
-// Temporary redirects
-app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
-app.post("/complete", (req, res) => res.redirect(307, "/api/quests/claim"));
-
-// Error handler
-app.use((err, _req, res, _next) => {
-  logger.error(err);
-  res.status(500).json({ error: "Internal error" });
-});
-
-const port = process.env.PORT || 4000;
-const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
-const currentPath = fileURLToPath(import.meta.url);
-
-if (entryPath && entryPath === currentPath) {
-app.use('/api', sessionRouter);
-app.use(["/api", "/"], sessionRoutes);
-app.use(["/api", "/"], questsRoutes);
-app.use(["/api", "/"], leaderboardRoutes);
-app.use(["/api", "/"], subscriptionRoutes);
-app.use('/api/referrals', referralRoutes);
-app.use('/api/sale', saleRoutes);
-  app.listen(port, () => {
-    logger.info(`API listening on ${port}`);
-  });
+async function materializeUserByAddress(address){
+  const addr = normalizeAddress(address);
+  if (!addr) return null;
+  await db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet TEXT NOT NULL UNIQUE,
+    xp INTEGER NOT NULL DEFAULT 0
+  )`);
+  await db.run(`INSERT OR IGNORE INTO users (wallet) VALUES (?)`, addr);
+  return await db.get(`SELECT id, wallet FROM users WHERE wallet = ?`, addr);
 }
 
-export default app;
+function extractAddressFromReq(req){
+  if (req.session?.address) return req.session.address;
+  const raw = req.cookies?.[SESSION_NAME];
+  if (raw && typeof raw === "string" && raw.startsWith("w:")) return raw.slice(2);
+  const h = req.get("x-wallet"); if (h) return h;
+  if (req.body?.address) return req.body.address;
+  return null;
+}
 
-// register placeholder auth routes (auto-added)
-import registerAuthPlaceholders from './routes/auth-placeholders.js';
-registerAuthPlaceholders(app);
+// lazy binder: hydrate session from any wallet hint
+app.use(async (req, _res, next) => {
+  try{
+    if (req.session?.userId) return next();
+    const address = extractAddressFromReq(req);
+    if (!address) return next();
+    const user = await materializeUserByAddress(address);
+    if (user) {
+      req.session.userId = user.id;
+      req.session.address = user.wallet;
+      req.userId = user.id;
+      req.userAddress = user.wallet;
+    }
+  }catch(e){ console.error("[binder]", e); }
+  next();
+});
+
+// health
+app.get("/api/health", async (_req, res) => {
+  try { await db.get("SELECT 1"); res.json({ ok:true, db:"ok" }); }
+  catch(e){ res.status(500).json({ ok:false, error:e.message }); }
+});
+
+// login
+app.post("/api/auth/wallet/session", async (req, res) => {
+  const address = normalizeAddress(req.body?.address);
+  if (!address) return res.status(400).json({ ok:false, error:"address-required" });
+  const user = await materializeUserByAddress(address);
+  if (!user) return res.status(500).json({ ok:false, error:"user-create-failed" });
+
+  req.session.userId = user.id;
+  req.session.address = user.wallet;
+
+  // legacy readable cookie for existing curl flows
+  res.cookie(SESSION_NAME, `w:${user.wallet}`, {
+    httpOnly: false,
+    sameSite: "none",
+    secure: true,
+    maxAge: 1000 * 60 * 60 * 24 * 30
+  });
+
+  res.json({ ok:true, address:user.wallet, session:"set" });
+});
+
+// simple me
+app.get("/api/me", (req, res) => {
+  if (!req.session?.address) {
+    const a = extractAddressFromReq(req);
+    if (!a) return res.json({ ok:true, authed:false });
+    return res.json({ ok:true, authed:true, wallet:a });
+  }
+  res.json({ ok:true, authed:true, wallet:req.session.address });
+});
+
+// guard
+function requireLogin(req, res, next){
+  if (req.session?.userId) return next();
+  return res.status(401).json({ ok:false, error:"not_logged_in" });
+}
+
+// protected routes
+app.use("/api/referrals", requireLogin, referralRoutes);
+app.use("/api/sale",      requireLogin, saleRoutes);
+
+// 404
+app.use((req, res) => res.status(404).json({ ok:false, error:"not_found" }));
+
+// error last
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ ok:false, error:"internal_error" });
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));

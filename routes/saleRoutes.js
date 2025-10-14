@@ -1,5 +1,5 @@
 import { Router } from "express";
-import db from "../db.js";
+import db from "../lib/db.js";
 const router = Router();
 
 async function ensureTables(){
