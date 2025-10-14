@@ -1,5 +1,5 @@
 import { Router } from "express";
-import db from "../lib/db.js"; // if your db is at ../db.js, server.js already normalizes path
+import db from "../lib/db.js";
 
 const router = Router();
 const REFERRAL_XP = 1500;
@@ -7,7 +7,7 @@ const REFERRAL_XP = 1500;
 function b64url(s){ return Buffer.from(String(s)).toString("base64url"); }
 function codeFromWallet(wallet){ return b64url(wallet).slice(0, 12); }
 
-async function columnSet(table){
+async function tableCols(table){
   try {
     const rows = await db.all(`PRAGMA table_info(${table})`);
     return new Set(rows.map(r => r.name));
@@ -15,7 +15,7 @@ async function columnSet(table){
 }
 
 async function ensureReferralsSchema(){
-  // base tables (create if missing)
+  // Create tables if missing (CREATE supports DEFAULT CURRENT_TIMESTAMP safely)
   await db.exec(`
     CREATE TABLE IF NOT EXISTS referrals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,19 +32,25 @@ async function ensureReferralsSchema(){
     );
   `);
 
-  // add missing columns if table existed with legacy shape
-  const rcols = await columnSet("referrals");
-  if (!rcols.has("userId")) await db.exec(`ALTER TABLE referrals ADD COLUMN userId INTEGER;`);
-  if (!rcols.has("code"))   await db.exec(`ALTER TABLE referrals ADD COLUMN code TEXT;`);
-  if (!rcols.has("createdAt")) await db.exec(`ALTER TABLE referrals ADD COLUMN createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;`);
+  // Add missing columns WITHOUT non-constant defaults, then backfill
+  const r = await tableCols("referrals");
+  if (!r.has("userId"))   await db.exec(`ALTER TABLE referrals ADD COLUMN userId INTEGER;`);
+  if (!r.has("code"))     await db.exec(`ALTER TABLE referrals ADD COLUMN code TEXT;`);
+  if (!r.has("createdAt")) {
+    await db.exec(`ALTER TABLE referrals ADD COLUMN createdAt TEXT;`);
+    await db.exec(`UPDATE referrals SET createdAt = COALESCE(createdAt, CURRENT_TIMESTAMP);`);
+  }
 
-  const ccols = await columnSet("referral_claims");
-  if (!ccols.has("referrerId"))     await db.exec(`ALTER TABLE referral_claims ADD COLUMN referrerId INTEGER;`);
-  if (!ccols.has("referredWallet")) await db.exec(`ALTER TABLE referral_claims ADD COLUMN referredWallet TEXT;`);
-  if (!ccols.has("awardedXP"))      await db.exec(`ALTER TABLE referral_claims ADD COLUMN awardedXP INTEGER NOT NULL DEFAULT 0;`);
-  if (!ccols.has("createdAt"))      await db.exec(`ALTER TABLE referral_claims ADD COLUMN createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;`);
+  const c = await tableCols("referral_claims");
+  if (!c.has("referrerId"))     await db.exec(`ALTER TABLE referral_claims ADD COLUMN referrerId INTEGER;`);
+  if (!c.has("referredWallet")) await db.exec(`ALTER TABLE referral_claims ADD COLUMN referredWallet TEXT;`);
+  if (!c.has("awardedXP"))      await db.exec(`ALTER TABLE referral_claims ADD COLUMN awardedXP INTEGER NOT NULL DEFAULT 0;`);
+  if (!c.has("createdAt")) {
+    await db.exec(`ALTER TABLE referral_claims ADD COLUMN createdAt TEXT;`);
+    await db.exec(`UPDATE referral_claims SET createdAt = COALESCE(createdAt, CURRENT_TIMESTAMP);`);
+  }
 
-  // indices/uniques (partial to avoid legacy NULLs exploding)
+  // Indices/uniques (partial where appropriate)
   await db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_userId ON referrals(userId) WHERE userId IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_referrals_code   ON referrals(code)   WHERE code   IS NOT NULL;
@@ -54,29 +60,28 @@ async function ensureReferralsSchema(){
 }
 
 async function getOrCreateCode(userId, wallet){
-  const row = await db.get(`SELECT code FROM referrals WHERE userId = ?`, userId);
-  if (row?.code) return row.code;
+  const existing = await db.get(`SELECT code FROM referrals WHERE userId = ?`, userId);
+  if (existing?.code) return existing.code;
 
   const code = codeFromWallet(wallet);
-  // prefer to fill (userId, code). Use INSERT OR IGNORE then UPDATE fallback.
-  await db.run(`INSERT OR IGNORE INTO referrals (userId, code) VALUES (?, ?)`, userId, code);
+  // Insert with explicit createdAt to work on legacy tables (no DEFAULT on added column)
+  await db.run(
+    `INSERT OR IGNORE INTO referrals (userId, code, createdAt) VALUES (?,?,CURRENT_TIMESTAMP)`,
+    userId, code
+  );
   const after = await db.get(`SELECT code FROM referrals WHERE userId = ?`, userId);
   if (after?.code) return after.code;
 
-  // last resort: set code where null
   await db.run(`UPDATE referrals SET code = ? WHERE userId = ?`, code, userId);
   const final = await db.get(`SELECT code FROM referrals WHERE userId = ?`, userId);
   return final?.code || code;
 }
 
-// GET /api/referrals/my-code
 router.get("/my-code", async (req, res) => {
   try{
     if (!req.session?.userId) return res.status(401).json({ ok:false, error:"not_logged_in" });
     await ensureReferralsSchema();
-    const userId = req.session.userId;
-    const wallet = req.session.address;
-    const code = await getOrCreateCode(userId, wallet);
+    const code = await getOrCreateCode(req.session.userId, req.session.address);
     return res.json({ ok:true, code });
   }catch(e){
     console.error("[referrals/my-code]", e);
@@ -84,7 +89,6 @@ router.get("/my-code", async (req, res) => {
   }
 });
 
-// POST /api/referrals/claim  { code }
 router.post("/claim", async (req, res) => {
   try{
     if (!req.session?.userId) return res.status(401).json({ ok:false, error:"not_logged_in" });
@@ -102,21 +106,19 @@ router.post("/claim", async (req, res) => {
     const referrerId = refRow.userId;
     const claimantId = req.session.userId;
 
-    if (referrerId === claimantId) {
-      // claiming own code => idempotent "already"
-      return res.json({ ok:true, already:true });
-    }
+    if (referrerId === claimantId) return res.json({ ok:true, already:true });
 
-    // idempotent by referred wallet
-    const existing = await db.get(`SELECT id, awardedXP, createdAt FROM referral_claims WHERE referredWallet = ?`, referredWallet);
-    if (existing) {
-      return res.json({ ok:true, already:true, claim: existing });
-    }
+    const existing = await db.get(
+      `SELECT id, awardedXP, createdAt FROM referral_claims WHERE referredWallet = ?`,
+      referredWallet
+    );
+    if (existing) return res.json({ ok:true, already:true, claim: existing });
 
-    const award = REFERRAL_XP; // keep simple; multiplier can be added if needed
-    await db.run(`INSERT INTO referral_claims (referrerId, referredWallet, awardedXP) VALUES (?,?,?)`,
-                 referrerId, referredWallet, award);
-
+    const award = REFERRAL_XP;
+    await db.run(
+      `INSERT INTO referral_claims (referrerId, referredWallet, awardedXP, createdAt) VALUES (?,?,?,CURRENT_TIMESTAMP)`,
+      referrerId, referredWallet, award
+    );
     await db.run(`UPDATE users SET xp = COALESCE(xp,0) + ? WHERE id = ?`, award, referrerId);
 
     return res.json({ ok:true, awarded: award });
@@ -126,25 +128,20 @@ router.post("/claim", async (req, res) => {
   }
 });
 
-// GET /api/referrals/stats
 router.get("/stats", async (req, res) => {
   try{
     if (!req.session?.userId) return res.status(401).json({ ok:false, error:"not_logged_in" });
     await ensureReferralsSchema();
+
     const referrerId = req.session.userId;
-
-    const agg = await db.get(`
-      SELECT COUNT(*) AS total, COALESCE(SUM(awardedXP),0) AS xp
-      FROM referral_claims WHERE referrerId = ?
-    `, referrerId);
-
-    const recent = await db.all(`
-      SELECT referredWallet, awardedXP, createdAt
-      FROM referral_claims
-      WHERE referrerId = ?
-      ORDER BY id DESC LIMIT 20
-    `, referrerId);
-
+    const agg = await db.get(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(awardedXP),0) AS xp FROM referral_claims WHERE referrerId = ?`,
+      referrerId
+    );
+    const recent = await db.all(
+      `SELECT referredWallet, awardedXP, createdAt FROM referral_claims WHERE referrerId = ? ORDER BY id DESC LIMIT 20`,
+      referrerId
+    );
     return res.json({ ok:true, referrals: { total: agg?.total || 0, xp: agg?.xp || 0, recent: recent || [] } });
   }catch(e){
     console.error("[referrals/stats]", e);
