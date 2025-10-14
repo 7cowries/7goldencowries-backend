@@ -56,7 +56,6 @@ import rateLimit from "express-rate-limit";
 import MemoryStore from "memorystore";
 import morgan from "morgan";
 
-import db from "./lib/db.js";
 import { ensureQuestsSchema } from "./lib/ensureQuestsSchema.js";
 import { ensureUsersSchema } from "./db/migrateUsers.js";
 import runSqliteMigrations from "./db/migrateProofs.js";
