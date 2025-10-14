@@ -43,7 +43,7 @@ async function ensureV2SchemaAndSeeds() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       key TEXT UNIQUE,
       title TEXT NOT NULL,
-      category TEXT NOT NULL, -- daily | social | partner | insider | onchain
+      category TEXT NOT NULL,
       xp INTEGER NOT NULL,
       url TEXT,
       partner TEXT,
@@ -55,7 +55,7 @@ async function ensureV2SchemaAndSeeds() {
     CREATE TABLE IF NOT EXISTS user_quests_v2 (
       userId INTEGER NOT NULL,
       questId INTEGER NOT NULL,
-      status TEXT DEFAULT 'pending', -- pending | completed | claimed
+      status TEXT DEFAULT 'pending',
       claimedAt TEXT,
       PRIMARY KEY (userId, questId)
     );
@@ -185,7 +185,7 @@ router.post("/quests/claim", async (req, res) => {
   }
 });
 
-/* ---------- subscription endpoints (mounted on same router) ---------- */
+/* ---------- subscription endpoints (robust UPSERT) ---------- */
 router.get("/subscriptions/status", async (req, res) => {
   try {
     await ensureSubscriptionSchema();
@@ -201,22 +201,31 @@ router.get("/subscriptions/status", async (req, res) => {
 });
 
 async function handleUpgrade(req, res) {
+  const uid = req.session?.userId;
+  if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
   try {
     await ensureSubscriptionSchema();
-    const uid = req.session?.userId;
-    if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
 
     const user = await db.get("SELECT wallet FROM users WHERE id = ?", [uid]);
-    if (!user) return res.status(404).json({ ok: false, error: "user_not_found" });
+    if (!user?.wallet) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-    const { tier = "Tier 1", txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
+    let { tier = "Tier 1", txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
+    const allowed = new Set(["Free","Tier 1","Tier 2","Tier 3"]);
+    if (!allowed.has(tier)) tier = "Tier 1";
 
-    await db.run(
-      `INSERT INTO subscriptions (wallet, tier, tonPaid, usdPaid)
-       VALUES (?,?,?,?)
-       ON CONFLICT(wallet) DO UPDATE SET tier=excluded.tier, tonPaid=excluded.tonPaid, usdPaid=excluded.usdPaid, createdAt=datetime('now')`,
-      [user.wallet, tier, tonPaid, usdPaid]
-    );
+    // Safe upsert without ON CONFLICT
+    try {
+      await db.run(
+        "INSERT INTO subscriptions (wallet, tier, tonPaid, usdPaid) VALUES (?,?,?,?)",
+        [user.wallet, tier, tonPaid, usdPaid]
+      );
+    } catch (e) {
+      // likely constraint -> update instead
+      await db.run(
+        "UPDATE subscriptions SET tier = ?, tonPaid = ?, usdPaid = ?, createdAt = datetime('now') WHERE wallet = ?",
+        [tier, tonPaid, usdPaid, user.wallet]
+      );
+    }
 
     await db.run("UPDATE users SET subscriptionTier = ? WHERE id = ?", [tier, uid]);
 
@@ -227,7 +236,6 @@ async function handleUpgrade(req, res) {
   }
 }
 
-// Provide both paths; use /subscriptions/upgrade in tests to avoid any legacy conflicts.
 router.post("/subscriptions/upgrade", handleUpgrade);
 router.post("/subscriptions/subscribe", handleUpgrade);
 
