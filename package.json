@@ -12,7 +12,9 @@
     "migrate:quests": "sqlite3 $DATABASE_URL < scripts/migrate-quests.sql",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "smoke": "node scripts/smoke.mjs",
-    "bootstrap": "node scripts/bootstrap-db.js"
+    "bootstrap": "node scripts/bootstrap-db.js",
+    "probe:off": "node scripts/toggleProbe.js",
+    "probe:on": "ACTIVE=1 node scripts/toggleProbe.js"
   },
   "engines": {
     "node": ">=18 <23"
