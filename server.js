@@ -53,7 +53,6 @@ import winston from "winston";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import session from "express-session";
 import MemoryStore from "memorystore";
 import morgan from "morgan";
 
