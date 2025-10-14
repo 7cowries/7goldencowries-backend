@@ -1,3 +1,5 @@
+import saleRoutes from "./routes/saleRoutes.js";
+import referralRoutes from "./routes/referralRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import questsRoutes from "./routes/questsRoutes.js";
 import sessionRouter from "./src/routes/walletSession.js";
@@ -284,6 +286,8 @@ app.use(["/api", "/"], sessionRoutes);
 app.use(["/api", "/"], questsRoutes);
 app.use(["/api", "/"], leaderboardRoutes);
 app.use(["/api", "/"], subscriptionRoutes);
+app.use('/api/referrals', referralRoutes);
+app.use('/api/sale', saleRoutes);
   app.listen(port, () => {
     logger.info(`API listening on ${port}`);
   });

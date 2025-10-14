@@ -1,75 +1,29 @@
-import express from "express";
-import { seedQuestsFromFile } from "../lib/seedQuests.js";
-import path from "path";
-import db from "../lib/db.js";
-
-const router = express.Router();
-const mustAuth = (req, res, next) => {
-  const header = req.get("X-Admin-Secret");
-  if (!process.env.ADMIN_SECRET || header !== process.env.ADMIN_SECRET) {
-    return res.status(401).json({ error: "unauthorized" });
+import { Router } from "express";
+import db from "../db.js";
+const router = Router();
+router.use((req, res, next) => {
+  const hdr = req.headers.authorization || "";
+  const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : "";
+  if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
+    return res.status(401).json({ ok:false, error:"unauthorized" });
   }
   next();
-};
-
-router.post("/quests/seed", mustAuth, async (req, res) => {
-  try {
-    const file = req.body?.file || "data/quests.live.json";
-    const full = path.resolve(file);
-    const result = await seedQuestsFromFile(full);
-    return res.json({ ok: true, ...result, file: full });
-  } catch (e) {
-    console.error("seed quests error", e);
-    return res.status(500).json({ error: "internal" });
-  }
 });
-
-router.post("/quests/toggle", mustAuth, async (req, res) => {
+router.post("/quests/toggle", async (req, res) => {
+  const { key, active } = req.body || {};
+  if (!key || typeof active !== "boolean") {
+    return res.status(400).json({ ok:false, error:"key-and-active-required" });
+  }
   try {
-    const { id, active } = req.body || {};
-    if (!id || typeof active === "undefined") {
-      return res.status(400).json({ error: "id and active required" });
+    const r = await db.run("UPDATE quests_v2 SET active=? WHERE key=?", active ? 1 : 0, key);
+    return res.json({ ok:true, key, active, changes:r?.changes ?? 0 });
+  } catch (e) {
+    try {
+      const r2 = await db.run("UPDATE quests SET active=? WHERE key=?", active ? 1 : 0, key);
+      return res.json({ ok:true, key, active, changes:r2?.changes ?? 0, legacy:true });
+    } catch (e2) {
+      return res.status(500).json({ ok:false, error:e2.message });
     }
-    await db.run(`UPDATE quests SET active=? WHERE id=?`, [active ? 1 : 0, id]);
-    return res.json({ ok: true, id, active: !!active });
-  } catch (e) {
-    console.error("toggle quest error", e);
-    return res.status(500).json({ error: "internal" });
   }
 });
-
-// Update a user's tier
-router.post("/users/tier", mustAuth, async (req, res) => {
-  try {
-    const { wallet, tier } = req.body || {};
-    const allowed = new Set(["free", "tier1", "tier2", "tier3"]);
-    if (!wallet || !tier || !allowed.has(String(tier).toLowerCase())) {
-      return res.status(400).json({ error: "wallet and valid tier required" });
-    }
-    await db.run(
-      `UPDATE users SET tier = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
-      tier,
-      wallet
-    );
-    return res.json({ ok: true, wallet, tier });
-  } catch (e) {
-    console.error("update user tier error", e);
-    return res.status(500).json({ error: "internal" });
-  }
-});
-
-// List available tiers and multipliers
-router.get("/tiers", mustAuth, async (_req, res) => {
-  try {
-    const tiers = await db.all(
-      `SELECT tier, multiplier, label FROM tier_multipliers ORDER BY tier`
-    );
-    return res.json({ tiers });
-  } catch (e) {
-    console.error("list tiers error", e);
-    return res.status(500).json({ error: "internal" });
-  }
-});
-
 export default router;
-

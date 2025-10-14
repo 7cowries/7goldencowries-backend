@@ -20,11 +20,12 @@ router.get("/status", async (req, res) => {
   try{
     if (!req.session?.userId) return res.status(401).json({ ok:false, error:"not_logged_in" });
     await ensureTables();
-    const rows = await db.all("SELECT txHash,tonAmount,usdAmount,tokensPurchased,createdAt FROM token_purchases WHERE userId=? ORDER BY id DESC LIMIT 20", req.session.userId);
+    const rows = await db.all(
+      "SELECT txHash,tonAmount,usdAmount,tokensPurchased,createdAt FROM token_purchases WHERE userId=? ORDER BY id DESC LIMIT 20",
+      req.session.userId
+    );
     return res.json({ ok:true, purchases: rows || [] });
-  }catch(e){
-    return res.status(500).json({ ok:false, error:e.message });
-  }
+  }catch(e){ return res.status(500).json({ ok:false, error:e.message }); }
 });
 
 router.post("/purchase", async (req, res) => {
@@ -44,9 +45,7 @@ router.post("/purchase", async (req, res) => {
 
     const last = await db.get("SELECT txHash,tonAmount,usdAmount,tokensPurchased,createdAt FROM token_purchases WHERE txHash=?", txHash);
     return res.json({ ok:true, purchase:last });
-  }catch(e){
-    return res.status(500).json({ ok:false, error:e.message });
-  }
+  }catch(e){ return res.status(500).json({ ok:false, error:e.message }); }
 });
 
 export default router;
