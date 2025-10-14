@@ -1,12 +1,12 @@
 import "dotenv/config";
 import express from "express";
+import referralRoutes from "./routes/referralRoutes.js";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import session from "express-session";
 import path from "node:path";
 import db from "./lib/db.js";                 // will be rewritten below if ./lib/db.js doesn't exist
-import referralRoutes from "./routes/referralRoutes.js";
 import saleRoutes from "./routes/saleRoutes.js";
 
 const app = express();
