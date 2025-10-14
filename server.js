@@ -108,6 +108,7 @@ const rawBodySaver = (req, _res, buf) => {
 
 // Body parsers
 app.use(express.json({ limit: "1mb", verify: rawBodySaver }));
+app.use((req,res,next)=>{ try{ if(req.body && req.body.wallet && !req.body.address){ req.body.address=String(req.body.wallet).trim(); } }catch(e){} next(); });
 app.use(express.urlencoded({ extended: true, limit: "1mb", verify: rawBodySaver }));
 app.use(express.raw({ type: "application/octet-stream", limit: "2mb", verify: rawBodySaver }));
 app.use(express.text({ type: "text/*", limit: "2mb", verify: rawBodySaver }));
