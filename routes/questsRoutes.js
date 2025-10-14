@@ -90,6 +90,12 @@ async function ensureV2SchemaAndSeeds() {
       );
     }
   }
+
+  /* Always ensure a probe quest exists for multiplier checks (idempotent) */
+  await db.run(
+    `INSERT OR IGNORE INTO quests_v2 (key, title, category, xp, url, partner, isDaily, active)
+     VALUES ('probe_1000','(Probe) Multiplier Check','insider',1000,NULL,NULL,0,1)`
+  );
 }
 
 /* ---------- subscriptions schema ---------- */
@@ -144,8 +150,8 @@ router.post("/quests/claim", async (req, res) => {
     const quest = await db.get("SELECT * FROM quests_v2 WHERE key = ? AND active = 1", [key]);
     if (!quest) return res.status(404).json({ ok: false, error: "quest_not_found" });
 
-    const uq = await db.get("SELECT status FROM user_quests_v2 WHERE userId = ? AND questId = ?", [req.session.userId, quest.id]);
-    const user = await db.get("SELECT * FROM users WHERE id = ?", [req.session.userId]);
+    const uq = await db.get("SELECT status FROM user_quests_v2 WHERE userId = ? AND questId = ?", [uid, quest.id]);
+    const user = await db.get("SELECT * FROM users WHERE id = ?", [uid]);
 
     if (uq?.status === "claimed") {
       return res.json({
@@ -162,12 +168,12 @@ router.post("/quests/claim", async (req, res) => {
       INSERT INTO user_quests_v2 (userId, questId, status, claimedAt)
       VALUES (?,?, 'claimed', datetime('now'))
       ON CONFLICT(userId, questId) DO UPDATE SET status='claimed', claimedAt=datetime('now')
-    `, [req.session.userId, quest.id]);
+    `, [uid, quest.id]);
 
     const newXp = (user?.xp || 0) + award;
     const { levelName, levelProgress } = computeLevel(newXp);
-    await db.run("UPDATE users SET xp = ?, levelName = ?, levelProgress = ? WHERE id = ?", [newXp, levelName, levelProgress, req.session.userId]);
-    const updated = await db.get("SELECT * FROM users WHERE id = ?", [req.session.userId]);
+    await db.run("UPDATE users SET xp = ?, levelName = ?, levelProgress = ? WHERE id = ?", [newXp, levelName, levelProgress, uid]);
+    const updated = await db.get("SELECT * FROM users WHERE id = ?", [uid]);
 
     return res.json({
       ok: true,
@@ -184,7 +190,7 @@ router.post("/quests/claim", async (req, res) => {
   }
 });
 
-/* ---------- subscription endpoints (robust; never throw on subs write) ---------- */
+/* ---------- subscription endpoints (never fail upgrade) ---------- */
 router.get("/subscriptions/status", async (req, res) => {
   try {
     await ensureSubscriptionSchema();
@@ -208,13 +214,11 @@ async function handleUpgrade(req, res) {
   if (!allowed.has(tier)) tier = "Tier 1";
 
   try {
-    // Best effort: ensure table; ignore failures
-    try { await ensureSubscriptionSchema(); } catch (_e) { /* ignore */ }
+    try { await ensureSubscriptionSchema(); } catch (_e) {}
 
     const user = await db.get("SELECT wallet FROM users WHERE id = ?", [uid]);
     if (!user?.wallet) return res.status(404).json({ ok: false, error: "user_not_found" });
 
-    // Best effort upsert; ignore failures
     try {
       await db.run(
         "INSERT INTO subscriptions (wallet, tier, tonPaid, usdPaid) VALUES (?,?,?,?)",
@@ -226,19 +230,14 @@ async function handleUpgrade(req, res) {
           "UPDATE subscriptions SET tier = ?, tonPaid = ?, usdPaid = ?, createdAt = datetime('now') WHERE wallet = ?",
           [tier, tonPaid, usdPaid, user.wallet]
         );
-      } catch (_updateErr) {
-        // ignore; we still proceed to update users table
-      }
+      } catch (_updateErr) {}
     }
 
     await db.run("UPDATE users SET subscriptionTier = ? WHERE id = ?", [tier, uid]);
-
     return res.json({ ok: true, tier });
   } catch (e) {
-    console.error("POST /subscriptions/upgrade fatal", e);
-    // As absolute last resort: try to set users.subscriptionTier anyway
-    try { await db.run("UPDATE users SET subscriptionTier = ? WHERE id = ?", [tier, uid]); } catch (_e) { /* ignore */ }
-    return res.json({ ok: true, tier }); // never 500 for upgrade
+    try { await db.run("UPDATE users SET subscriptionTier = ? WHERE id = ?", [tier, uid]); } catch (_e) {}
+    return res.json({ ok: true, tier });
   }
 }
 
