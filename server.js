@@ -2,7 +2,7 @@ import referralRoutes from "./routes/referralRoutes.js";
 import saleRoutes from "./routes/saleRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import questsRoutes from "./routes/questsRoutes.js";
-import sessionRouter from "./src/routes/walletSession.js";
+import sessionRouter from "./routes/walletSession.js";
 import cookieParser from "cookie-parser";
 import cors from 'cors';
 /* Auto-run migrations on startup (ESM/CJS compatible wrapper).
