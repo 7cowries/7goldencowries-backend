@@ -23,3 +23,9 @@ yarn-error.log*
 
 # misc
 .DS_Store
+
+# Local scratch
+*.bak
+a.txt
+b.txt
+cookie*.txt
