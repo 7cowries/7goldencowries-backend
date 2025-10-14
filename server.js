@@ -175,11 +175,11 @@ app.use(morgan(":method :url :status :res[content-length] - :response-time ms ui
 // }));
 
 // Rate limits
-app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
+app.use(rateLimit({ windowMs: 60000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
 // Fallback: accept dev cookie 7gc.sid=w:<wallet> and materialize a session
 
-app.use("/api/quests/claim", rateLimit({ windowMs: 60_000, max: 30 }));
+app.use("/api/quests/claim", rateLimit({ windowMs: 60000, max: 30 }));
 
 // Session setup
 const SESSION_DIR = process.env.SESSIONS_DIR || "/var/data";
