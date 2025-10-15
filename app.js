@@ -223,6 +223,7 @@ app.use('/api/admin', adminRoutes); // seeding utilities
 
 /* ---------- Start ---------- */
 const PORT = process.env.PORT || 5000;
+app.use('/api/leaderboard', require('./routes/leaderboard'));
 app.listen(PORT, () => {
   console.log(`7GC backend listening on :${PORT}`);
 });
