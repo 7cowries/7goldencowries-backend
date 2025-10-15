@@ -162,6 +162,12 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 // --- listen ---
 
 // --- 7GC fixed tail (auto) ---
+});
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
+
+// --- 7GC normalized tail (auto) ---
 app.use('/api/leaderboard', leaderboardRouter);
 
 app.use((req, res) => {
