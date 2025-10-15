@@ -172,6 +172,21 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok: false, error: 'internal_error' });
 // --- 7GC: Leaderboard mount (keep before 404) ---
+
+// --- 404 (last before error handler) ---
+app.use((req, res) => {
+});
+
+// --- Error handler (very last before listen) ---
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ ok:false, error:"internal_error" });
+});
+
+// --- Listen ---
+const PORT = process.env.PORT || 10000;
+
+// --- 7GC: Leaderboard mount (keep before 404) ---
 app.use('/api/leaderboard', leaderboardRouter);
 
 // --- 404 (last before error handler) ---
