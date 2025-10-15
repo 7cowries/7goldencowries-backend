@@ -14,7 +14,8 @@
     "smoke": "node scripts/smoke.mjs",
     "bootstrap": "node scripts/bootstrap-db.js",
     "probe:off": "node scripts/toggleProbe.js",
-    "probe:on": "ACTIVE=1 node scripts/toggleProbe.js"
+    "probe:on": "ACTIVE=1 node scripts/toggleProbe.js",
+    "migrate:leaderboard": "sqlite3 $DATABASE_URL < scripts/migrate-leaderboard.sql"
   },
   "engines": {
     "node": ">=18 <23"
