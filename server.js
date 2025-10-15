@@ -164,12 +164,10 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 const PORT = process.env.PORT || 10000;
 
 // Mount leaderboard BEFORE the 404
-app.use('/api/leaderboard', leaderboardRouter);
-
-// 404 one-liner
+// 404 one-liner (single)
 app.use((req, res) => res.status(404).json({ ok: false, error: 'not_found' }));
 
-// error handler last
+// error handler last (single)
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok: false, error: 'internal_error' });
