@@ -151,7 +151,6 @@ app.use("/api/referrals", requireLogin, referralRoutes);
 app.use("/api/sale",      requireLogin, saleRoutes);
 
 // 404
-app.use('/api/leaderboard', leaderboardRouter);
 app.use((req, res) => res.status(404).json({ ok:false, error:"not_found" }));
 
 // error last
@@ -161,8 +160,18 @@ app.use((err, _req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 10000;
-  });
+const PORT = process.env.PORT || 10000;
+
+// Mount leaderboard BEFORE 404
+app.use('/api/leaderboard', leaderboardRouter);
+
+// 404 (single)
+app.use((req, res) => res.status(404).json({ ok: false, error: 'not_found' }));
+
+// Error handler (single, last)
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ ok: false, error: 'internal_error' });
+});
 
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
-
-// --- 7GC: Leaderboard route (ESM) ---

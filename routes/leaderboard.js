@@ -3,7 +3,7 @@ const router = Router();
 
 router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: plug real data/aggregation here later
+    const results = []; // TODO: plug real aggregation
     res.json({
       ok: true,
       total: results.length,
