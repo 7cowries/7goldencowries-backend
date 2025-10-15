@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
-router.get('/', async (req, res) => {
+// GET /api/leaderboard
+router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: replace with real aggregation later
+    const results = []; // TODO: replace with real DB aggregation
     res.json({
       ok: true,
       total: results.length,
