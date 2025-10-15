@@ -1,17 +1,17 @@
-const express = require('express');
+import express from 'express';
 const router = express.Router();
 
 // GET /api/leaderboard
 router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: replace with real DB aggregation
+    const results = []; // TODO: replace with real DB aggregation later
     res.json({
       ok: true,
       total: results.length,
       results,
       rows: results,
       items: results,
-      leaderboard: results,
+      leaderboard: results
     });
   } catch (e) {
     console.error('leaderboard error:', e);
@@ -19,4 +19,4 @@ router.get('/', async (_req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
