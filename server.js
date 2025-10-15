@@ -147,8 +147,6 @@ function requireLogin(req, res, next){
 
 // protected routes
 app.use("/api/referrals", requireLogin, referralRoutes);
-
-app.use('/api/leaderboard', require('./routes/leaderboard'));
 app.use("/api/sale",      requireLogin, saleRoutes);
 
 // 404
