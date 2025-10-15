@@ -151,6 +151,7 @@ app.use("/api/referrals", requireLogin, referralRoutes);
 app.use("/api/sale",      requireLogin, saleRoutes);
 
 // 404
+app.use('/api/leaderboard', leaderboardRouter);
 app.use((req, res) => res.status(404).json({ ok:false, error:"not_found" }));
 
 // error last
@@ -160,19 +161,7 @@ app.use((err, _req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 10000;
-  // --- Leaderboard (stub) ---
-  app.get("/api/leaderboard", (req, res) => {
-    const results = [];
-    res.json({
-      ok: true,
-      total: results.length,
-      results,
-      rows: results,
-      items: results,
-      leaderboard: results
-    });
   });
-app.use('/api/leaderboard', leaderboardRouter);
 
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
 
