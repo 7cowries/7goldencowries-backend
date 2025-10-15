@@ -161,10 +161,17 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 
 // --- listen ---
 const PORT = process.env.PORT || 10000;
+
+// Mount leaderboard once
 app.use('/api/leaderboard', leaderboardRouter);
+
+// 404 (json)
 app.use((req, res) => res.status(404).json({ ok:false, error:'not_found' }));
+
+// Error last
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok:false, error:'internal_error' });
 });
+
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
