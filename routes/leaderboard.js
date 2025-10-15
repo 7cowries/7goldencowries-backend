@@ -13,7 +13,7 @@ async function getDb() {
 
 async function tableExists(db, name) {
   const row = await db.get(
-    `SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=? LIMIT 1;`,
+    "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=? LIMIT 1;",
     name
   );
   return !!row;
@@ -26,10 +26,10 @@ router.get('/', async (req, res) => {
   try {
     const db = await getDb();
 
-    // Prefer scores(address, score) > xp(address, xp) > fallback seed table
-    let source = null;
-    if (await tableExists(db, 'scores')) source = { table: 'scores', col: 'score' };
-    else if (await tableExists(db, 'xp')) source = { table: 'xp', col: 'xp' };
+    // Prefer scores(address, score) > xp(address, xp) > fallback placeholder
+    let src = null;
+    if (await tableExists(db, 'scores')) src = { table: 'scores', col: 'score' };
+    else if (await tableExists(db, 'xp')) src = { table: 'xp', col: 'xp' };
     else {
       await db.exec(`
         CREATE TABLE IF NOT EXISTS leaderboard_scores(
@@ -37,28 +37,28 @@ router.get('/', async (req, res) => {
           score   INTEGER NOT NULL DEFAULT 0
         );
       `);
-      source = { table: 'leaderboard_scores', col: 'score' };
+      src = { table: 'leaderboard_scores', col: 'score' };
     }
 
     const totalRow = await db.get(
-      `SELECT COUNT(*) AS c FROM (SELECT address, SUM(${source.col}) AS score FROM ${source.table} GROUP BY address)`
+      \`SELECT COUNT(*) AS c FROM (SELECT address, SUM(\${src.col}) AS score FROM \${src.table} GROUP BY address)\`
     );
     const total = totalRow?.c || 0;
 
     const rows = await db.all(
-      `
+      \`
       SELECT
         address,
         score,
         RANK() OVER (ORDER BY score DESC, address ASC) AS rank
       FROM (
-        SELECT address, SUM(${source.col}) AS score
-        FROM ${source.table}
+        SELECT address, SUM(\${src.col}) AS score
+        FROM \${src.table}
         GROUP BY address
       )
       ORDER BY score DESC, address ASC
       LIMIT ? OFFSET ?;
-      `,
+      \`,
       limit, offset
     );
 
@@ -72,7 +72,7 @@ router.get('/', async (req, res) => {
     });
   } catch (e) {
     console.error('leaderboard error:', e);
-    res.status(500).json({ ok: false, error: 'internal_error' });
+    res.status(500).json({ ok:false, error:'internal_error' });
   }
 });
 
