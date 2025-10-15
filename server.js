@@ -162,7 +162,6 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 // --- 7GC fixed tail (auto) ---
 
 // --- 7GC normalized tail (auto) ---
-app.use('/api/leaderboard', leaderboardRouter);
 
 app.use((req, res) => {
   res.status(404).json({ ok:false, error:'not_found' });

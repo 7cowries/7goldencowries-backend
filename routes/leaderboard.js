@@ -1,4 +1,3 @@
-// routes/leaderboard.js
 import { Router } from 'express';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
@@ -11,7 +10,6 @@ async function getDb() {
   });
 }
 
-// Ensure schema once per process
 let didInit = false;
 async function ensureSchema(db) {
   if (didInit) return;
@@ -23,17 +21,12 @@ async function ensureSchema(db) {
       score   INTEGER NOT NULL DEFAULT 0
     );
 
-    -- index helps ORDER BY score DESC, address ASC
     CREATE INDEX IF NOT EXISTS idx_leaderboard_score
       ON leaderboard_scores(score DESC, address ASC);
   `);
   didInit = true;
 }
 
-/**
- * GET /api/leaderboard?limit=50&offset=0
- * Returns: { ok, total, results[], rows[], items[], leaderboard[] }
- */
 router.get('/', async (req, res) => {
   const limit  = Math.max(1, Math.min(100, parseInt(req.query.limit  ?? '50', 10)));
   const offset = Math.max(0,                  parseInt(req.query.offset ?? '0', 10));
@@ -56,24 +49,13 @@ router.get('/', async (req, res) => {
       limit, offset
     );
 
-    res.json({
-      ok: true,
-      total,
-      results: rows,
-      rows,
-      items: rows,
-      leaderboard: rows,
-    });
+    res.json({ ok:true, total, results:rows, rows, items:rows, leaderboard:rows });
   } catch (e) {
     console.error('leaderboard error:', e);
     res.status(500).json({ ok:false, error:'internal_error' });
   }
 });
 
-/**
- * POST /api/leaderboard/award  body: { address, delta }
- * Upserts/increments a score (useful for tests / later hooks).
- */
 router.post('/award', async (req, res) => {
   try {
     const { address, delta } = req.body || {};
