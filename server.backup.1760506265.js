@@ -153,19 +153,27 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 // 404
   // --- Leaderboard mount (ESM) ---
   app.use('/api/leaderboard', leaderboardRouter);
-
-// --- Leaderboard (ESM) ---
-app.use('/api/leaderboard', leaderboardRouter);
-
-// --- 404 ---
 app.use((req, res) => res.status(404).json({ ok:false, error:"not_found" }));
 
-// --- error last ---
+// error last
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok:false, error:"internal_error" });
 });
 
-// --- listen ---
+
+/** ---------- 7GC canonical tail (do not duplicate) ---------- **/
+
 const PORT = process.env.PORT || 10000;
+
+/* Mount new routes BEFORE 404 */
+
+/* 404 (keep single) */
+app.use((req, res) => res.status(404).json({ ok: false, error: 'not_found' }));
+
+/* Error handler (keep single, last) */
+});
+
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
+
+/** ----------------------------------------------------------- **/
