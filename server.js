@@ -159,6 +159,19 @@ app.use((err, _req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 10000;
+  // --- Leaderboard (stub) ---
+  app.get("/api/leaderboard", (req, res) => {
+    const results = [];
+    res.json({
+      ok: true,
+      total: results.length,
+      results,
+      rows: results,
+      items: results,
+      leaderboard: results
+    });
+  });
+
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
 
 // --- 7GC: Leaderboard route (ESM) ---
