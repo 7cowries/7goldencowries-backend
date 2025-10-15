@@ -28,6 +28,7 @@ app.use(helmet({
   }
 }));
 app.use(express.json({ limit: "1mb" }));
+app.use('/api/leaderboard', leaderboardRouter);
 app.use(cookieParser());
 
 app.use(rateLimit({
@@ -156,7 +157,6 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 // --- Leaderboard (ESM) ---
 
 // --- 404 ---
-app.use((req, res) => app.use('/api/leaderboard', leaderboardRouter);
 res.status(404).json({ ok:false, error:"not_found" }));
 
 // --- error last ---
