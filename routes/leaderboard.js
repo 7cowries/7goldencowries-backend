@@ -3,7 +3,7 @@ const router = Router();
 
 router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: replace with real aggregation later
+    const results = []; // TODO: plug real data/aggregation here later
     res.json({
       ok: true,
       total: results.length,
@@ -14,7 +14,7 @@ router.get('/', async (_req, res) => {
     });
   } catch (e) {
     console.error('leaderboard error:', e);
-    res.status(500).json({ ok: false, error: 'internal_error' });
+    res.status(500).json({ ok:false, error:'internal_error' });
   }
 });
 
