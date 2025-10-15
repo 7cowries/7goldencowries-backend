@@ -44,7 +44,6 @@ app.use((req, _res, next) => {
     if (b.wallet && !b.address) b.address = String(b.wallet).trim();
   } catch {}
   next();
-});
 
 const SESSION_NAME = "7gc.sid";
 const isProd = process.env.NODE_ENV === "production";
@@ -101,13 +100,11 @@ app.use(async (req, _res, next) => {
     }
   }catch(e){ console.error("[binder]", e); }
   next();
-});
 
 // health
 app.get("/api/health", async (_req, res) => {
   try { await db.get("SELECT 1"); res.json({ ok:true, db:"ok" }); }
   catch(e){ res.status(500).json({ ok:false, error:e.message }); }
-});
 
 // login
 app.post("/api/auth/wallet/session", async (req, res) => {
@@ -125,10 +122,8 @@ app.post("/api/auth/wallet/session", async (req, res) => {
     sameSite: "none",
     secure: true,
     maxAge: 1000 * 60 * 60 * 24 * 30
-  });
 
   res.json({ ok:true, address:user.wallet, session:"set" });
-});
 
 // simple me
 app.get("/api/me", (req, res) => {
@@ -138,7 +133,6 @@ app.get("/api/me", (req, res) => {
     return res.json({ ok:true, authed:true, wallet:a });
   }
   res.json({ ok:true, authed:true, wallet:req.session.address });
-});
 
 // guard
 function requireLogin(req, res, next){
@@ -157,21 +151,10 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 
 // --- 404 ---
 // --- error last ---
-});
 
 // --- listen ---
 
 // --- 7GC fixed tail (auto) ---
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
-
-// --- 7GC normalized tail (auto) ---
-});
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
 
 // --- 7GC normalized tail (auto) ---
 app.use('/api/leaderboard', leaderboardRouter);
