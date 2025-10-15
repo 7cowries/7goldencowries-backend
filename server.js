@@ -1,14 +1,17 @@
+// server.js — 7GC backend (Express + SQLite), fixed mounts & JSON endpoints
 import "dotenv/config";
 import express from "express";
-import referralRoutes from "./routes/referralRoutes.js";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import session from "express-session";
-import path from "node:path";
-import db from "./lib/db.js";                 // will be rewritten below if ./lib/db.js doesn't exist
-import saleRoutes from "./routes/saleRoutes.js";
-import leaderboardRouter from './routes/leaderboard.js';
+
+import db from "./lib/db.js";                    // async sqlite wrapper used already in the repo
+import leaderboardRouter from "./routes/leaderboard.js";
+
+// Optional: these routes can remain no-ops for now
+// import referralRoutes from "./routes/referralRoutes.js";
+// import saleRoutes from "./routes/saleRoutes.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -27,28 +30,36 @@ app.use(helmet({
     }
   }
 }));
+
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
-app.use(rateLimit({
-  windowMs: 60000,
-  max: 200,
-  standardHeaders: true,
-  legacyHeaders: false
-}));
-
-// accept {wallet} or {address}
-app.use((req, _res, next) => {
-  try {
-    const b = req.body || {};
-    if (b.wallet && !b.address) b.address = String(b.wallet).trim();
-  } catch {}
-  next();
-
-  });
 const SESSION_NAME = "7gc.sid";
-const isProd = process.env.NODE_ENV === "production";
 
+// Normalize helpers
+function normalizeAddress(a) { if (!a) return null; const s = String(a).trim(); return s.length ? s : null; }
+
+// Materialize user on demand
+async function materializeUserByAddress(address) {
+  const addr = normalizeAddress(address);
+  if (!addr) return null;
+  await db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet TEXT NOT NULL UNIQUE,
+    xp INTEGER NOT NULL DEFAULT 0
+  )`);
+  await db.run(`INSERT OR IGNORE INTO users (wallet) VALUES (?)`, addr);
+  return await db.get(`SELECT id, wallet FROM users WHERE wallet = ?`, addr);
+}
+
+// Accept {wallet} or {address} bodies
+app.use((req, _res, next) => {
+  try { const b = req.body || {}; if (b.wallet && !b.address) b.address = String(b.wallet).trim(); } catch {}
+  next();
+});
+
+// Session
 app.use(session({
   name: SESSION_NAME,
   secret: process.env.SESSION_SECRET || "change-me",
@@ -63,21 +74,8 @@ app.use(session({
   }
 }));
 
-function normalizeAddress(a){ if(!a) return null; const s=String(a).trim(); return s.length?s:null; }
-
-async function materializeUserByAddress(address){
-  const addr = normalizeAddress(address);
-  if (!addr) return null;
-  await db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    wallet TEXT NOT NULL UNIQUE,
-    xp INTEGER NOT NULL DEFAULT 0
-  )`);
-  await db.run(`INSERT OR IGNORE INTO users (wallet) VALUES (?)`, addr);
-  return await db.get(`SELECT id, wallet FROM users WHERE wallet = ?`, addr);
-}
-
-function extractAddressFromReq(req){
+// Binder: auto-hydrate session from cookie/header/body
+function extractAddressFromReq(req) {
   if (req.session?.address) return req.session.address;
   const raw = req.cookies?.[SESSION_NAME];
   if (raw && typeof raw === "string" && raw.startsWith("w:")) return raw.slice(2);
@@ -86,91 +84,84 @@ function extractAddressFromReq(req){
   return null;
 }
 
-// lazy binder: hydrate session from any wallet hint
 app.use(async (req, _res, next) => {
-  try{
+  try {
     if (req.session?.userId) return next();
-    const address = extractAddressFromReq(req);
-    if (!address) return next();
-    const user = await materializeUserByAddress(address);
+    const hint = extractAddressFromReq(req);
+    if (!hint) return next();
+    const user = await materializeUserByAddress(hint);
     if (user) {
       req.session.userId = user.id;
       req.session.address = user.wallet;
       req.userId = user.id;
       req.userAddress = user.wallet;
     }
-  }catch(e){ console.error("[binder]", e); }
+  } catch (e) { console.error("[binder]", e); }
   next();
-  });
+});
 
-// health
+// --- Health ---------------------------------------------------------------
 app.get("/api/health", async (_req, res) => {
-  });
-  try { await db.get("SELECT 1"); res.json({ ok:true, db:"ok" }); }
-  catch(e){ res.status(500).json({ ok:false, error:e.message }); }
+  try { await db.get("SELECT 1"); return res.json({ ok: true, db: "ok" }); }
+  catch (e) { return res.status(500).json({ ok: false, error: e.message }); }
+});
 
-// login
+// --- Auth: wallet session -------------------------------------------------
 app.post("/api/auth/wallet/session", async (req, res) => {
   const address = normalizeAddress(req.body?.address);
-  if (!address) return res.status(400).json({ ok:false, error:"address-required" });
+  if (!address) return res.status(400).json({ ok: false, error: "address-required" });
+
   const user = await materializeUserByAddress(address);
-  if (!user) return res.status(500).json({ ok:false, error:"user-create-failed" });
+  if (!user) return res.status(500).json({ ok: false, error: "user-create-failed" });
 
   req.session.userId = user.id;
   req.session.address = user.wallet;
 
-  // legacy readable cookie for existing curl flows
+  // legacy readable cookie for curl flows (non-httpOnly by design here)
   res.cookie(SESSION_NAME, `w:${user.wallet}`, {
-    httpOnly: false,
-    sameSite: "none",
-    });
+    httpOnly: false, sameSite: "none", secure: true, maxAge: 1000 * 60 * 60 * 24 * 30
   });
-    secure: true,
-    maxAge: 1000 * 60 * 60 * 24 * 30
 
-  res.json({ ok:true, address:user.wallet, session:"set" });
+  return res.json({ ok: true, address: user.wallet, session: "set" });
+});
 
-// simple me
+// --- Me -------------------------------------------------------------------
 app.get("/api/me", (req, res) => {
   if (!req.session?.address) {
-    const a = extractAddressFromReq(req);
-    if (!a) return res.json({ ok:true, authed:false });
-    return res.json({ ok:true, authed:true, wallet:a });
+    const hint = extractAddressFromReq(req);
+    if (!hint) return res.json({ ok: true, authed: false });
+    return res.json({ ok: true, authed: true, wallet: hint });
   }
-  res.json({ ok:true, authed:true, wallet:req.session.address });
-
-// guard
-function requireLogin(req, res, next){
-  if (req.session?.userId) return next();
-  return res.status(401).json({ ok:false, error:"not_logged_in" });
-}
-
-// protected routes
-app.use("/api/referrals", requireLogin, referralRoutes);
-app.use("/api/sale",      requireLogin, saleRoutes);
-
-// 404
-  // --- Leaderboard mount (ESM) ---
-
-// --- Leaderboard (ESM) ---
-
-// --- 404 ---
-// --- error last ---
-
-// --- listen ---
-
-// --- 7GC fixed tail (auto) ---
-
-// --- 7GC normalized tail (auto) ---
-
-app.use((req, res) => {
-  res.status(404).json({ ok:false, error:'not_found' });
+  return res.json({ ok: true, authed: true, wallet: req.session.address });
 });
 
+// --- Minimal stubs so pages never crash ----------------------------------
+// Quests
+app.get("/api/quests", async (_req, res) => res.json({ ok: true, quests: [] }));
+app.post("/api/quests/claim", async (_req, res) => res.json({ ok: true, claimed: true }));
+app.post("/api/quests/proof", async (_req, res) => res.json({ ok: true }));
+
+// Subscriptions
+app.get("/api/subscriptions/status", async (req, res) => {
+  const wallet = req.session?.address || extractAddressFromReq(req);
+  res.json({ ok: true, wallet, tier: "Free", xpBoost: 1.0 });
+});
+app.post("/api/subscriptions/subscribe", async (_req, res) => res.json({ ok: true }));
+app.post("/api/subscriptions/claim-bonus", async (_req, res) => res.json({ ok: true, bonus: 0 }));
+
+// Token sale
+app.post("/api/token-sale/start", async (_req, res) => res.json({ ok: false, error: "not_enabled" }));
+
+// --- Leaderboard (real route) ---------------------------------------------
+app.use("/api/leaderboard", leaderboardRouter);
+
+// --- 404 / error ----------------------------------------------------------
+app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
 app.use((err, _req, res, _next) => {
   console.error(err);
-  res.status(500).json({ ok:false, error:'internal_error' });
+  res.status(500).json({ ok: false, error: "internal_error" });
 });
 
+// --- listen ---------------------------------------------------------------
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
