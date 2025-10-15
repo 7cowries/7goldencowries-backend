@@ -28,7 +28,6 @@ app.use(helmet({
   }
 }));
 app.use(express.json({ limit: "1mb" }));
-app.use('/api/leaderboard', leaderboardRouter);
 app.use(cookieParser());
 
 app.use(rateLimit({
@@ -157,14 +156,15 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 // --- Leaderboard (ESM) ---
 
 // --- 404 ---
-res.status(404).json({ ok:false, error:"not_found" }));
-
 // --- error last ---
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(500).json({ ok:false, error:"internal_error" });
 });
 
 // --- listen ---
 const PORT = process.env.PORT || 10000;
+app.use('/api/leaderboard', leaderboardRouter);
+app.use((req, res) => res.status(404).json({ ok:false, error:'not_found' }));
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ ok:false, error:'internal_error' });
+});
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
