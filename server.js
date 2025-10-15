@@ -8,6 +8,7 @@ import session from "express-session";
 import path from "node:path";
 import db from "./lib/db.js";                 // will be rewritten below if ./lib/db.js doesn't exist
 import saleRoutes from "./routes/saleRoutes.js";
+import leaderboardRouter from './routes/leaderboard.js';
 
 const app = express();
 app.set("trust proxy", 1);
@@ -171,6 +172,7 @@ const PORT = process.env.PORT || 10000;
       leaderboard: results
     });
   });
+app.use('/api/leaderboard', leaderboardRouter);
 
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
 

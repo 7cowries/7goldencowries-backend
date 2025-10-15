@@ -1,9 +1,9 @@
-const { Router } = require('express');
+import { Router } from 'express';
 const router = Router();
 
 router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: real aggregation later
+    const results = []; // TODO: replace with real aggregation later
     res.json({
       ok: true,
       total: results.length,
@@ -18,4 +18,4 @@ router.get('/', async (_req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
