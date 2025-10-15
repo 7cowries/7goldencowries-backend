@@ -161,22 +161,8 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 
 // --- listen ---
 
-const PORT = process.env.PORT || 10000;
-
-// Mount leaderboard BEFORE the 404
-
-// 404 handler (single)
-
-// Error handler (single, last)
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(500).json({ ok: false, error: 'internal_error' });
-// --- 7GC: Leaderboard mount (keep before 404) ---
-
-// --- 404 (last before error handler) ---
-
-// --- 7GC fixed tail (auto-patched) ---
-app.use(/api/leaderboard, leaderboardRouter);
+// --- 7GC fixed tail (auto) ---
+app.use('/api/leaderboard', leaderboardRouter);
 
 app.use((req, res) => {
   res.status(404).json({ ok:false, error:'not_found' });

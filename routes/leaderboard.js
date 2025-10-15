@@ -3,7 +3,7 @@ const router = Router();
 
 router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: wire real aggregation later
+    const results = []; // TODO: swap for real aggregation later
     res.json({
       ok: true,
       total: results.length,
