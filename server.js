@@ -45,6 +45,7 @@ app.use((req, _res, next) => {
   } catch {}
   next();
 
+  });
 const SESSION_NAME = "7gc.sid";
 const isProd = process.env.NODE_ENV === "production";
 
@@ -100,9 +101,11 @@ app.use(async (req, _res, next) => {
     }
   }catch(e){ console.error("[binder]", e); }
   next();
+  });
 
 // health
 app.get("/api/health", async (_req, res) => {
+  });
   try { await db.get("SELECT 1"); res.json({ ok:true, db:"ok" }); }
   catch(e){ res.status(500).json({ ok:false, error:e.message }); }
 
@@ -120,6 +123,8 @@ app.post("/api/auth/wallet/session", async (req, res) => {
   res.cookie(SESSION_NAME, `w:${user.wallet}`, {
     httpOnly: false,
     sameSite: "none",
+    });
+  });
     secure: true,
     maxAge: 1000 * 60 * 60 * 24 * 30
 
