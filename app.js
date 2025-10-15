@@ -254,3 +254,21 @@ app.get('/api/me', (req, res) => {
   return res.json({ ok: true, user: v ? { address: v } : null });
 });
 /* 7GC_SESSION_BLOCK: end */
+
+// APP_LEADERBOARD_ADDED
+const express = require('express');
+/**
+ * Minimal no-break leaderboard endpoint to avoid 404s on the frontend.
+ * Replace with real aggregation later; keep the shape stable.
+ */
+app.get('/api/leaderboard', async (req, res) => {
+  try {
+    return res.json({
+      ok: true,
+      leaderboard: [],   // populate later with real data
+      updatedAt: new Date().toISOString()
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'leaderboard_failed' });
+  }
+});
