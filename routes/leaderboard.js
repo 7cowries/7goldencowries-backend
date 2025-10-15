@@ -1,20 +1,18 @@
-const express = require('express');
-const router = express.Router();
-
-/**
- * Temporary stub — prevents 404s on FE.
- * Replace `leaderboard: []` with real data later.
- */
-router.get('/', async (req, res) => {
-  try {
-    return res.json({
-      ok: true,
-      leaderboard: [],
-      updatedAt: new Date().toISOString()
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: 'leaderboard_failed' });
-  }
-});
-
-module.exports = router;
+module.exports = function (app) {
+  app.get('/api/leaderboard', async (req, res) => {
+    try {
+      const results = []; // TODO: replace with real aggregation later
+      res.json({
+        ok: true,
+        total: results.length,
+        results,
+        rows: results,
+        items: results,
+        leaderboard: results
+      });
+    } catch (e) {
+      console.error('leaderboard error:', e);
+      res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+  });
+};

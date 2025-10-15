@@ -16,6 +16,8 @@ import adminRoutes from './routes/adminRoutes.js';
 import proofRoutes from './routes/proofRoutes.js';
 
 const app = express();
+require('./routes/leaderboard')(app);
+
 
 /* ---------- CORS (Render ↔ Vercel with cookies) ---------- */
 const defaultOrigin = 'https://7goldencowries.com';
