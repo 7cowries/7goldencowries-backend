@@ -246,6 +246,7 @@ app.use(require('cors')({
 
 // Wallet session route (sets secure cookie)
 app.use('/api/auth/wallet', walletSession);
+app.use('/api/leaderboard', require('./routes/leaderboard'));
 
 // Minimal /api/me so FE can read session via proxy
 app.get('/api/me', (req, res) => {

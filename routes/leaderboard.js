@@ -1,10 +1,9 @@
 const { Router } = require('express');
 const router = Router();
 
-// GET /api/leaderboard
 router.get('/', async (_req, res) => {
   try {
-    const results = []; // TODO: replace with real aggregation
+    const results = []; // TODO: real aggregation later
     res.json({
       ok: true,
       total: results.length,
