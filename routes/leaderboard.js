@@ -26,12 +26,11 @@ router.get('/', async (req, res) => {
   try {
     const db = await getDb();
 
-    // Determine source: scores > xp > leaderboard_scores
+    // Prefer scores(address, score) > xp(address, xp) > fallback seed table
     let source = null;
     if (await tableExists(db, 'scores')) source = { table: 'scores', col: 'score' };
     else if (await tableExists(db, 'xp')) source = { table: 'xp', col: 'xp' };
     else {
-      // ensure seed table exists
       await db.exec(`
         CREATE TABLE IF NOT EXISTS leaderboard_scores(
           address TEXT PRIMARY KEY,
@@ -41,7 +40,6 @@ router.get('/', async (req, res) => {
       source = { table: 'leaderboard_scores', col: 'score' };
     }
 
-    // Build a materialized view in memory via subquery for rank() over totals
     const totalRow = await db.get(
       `SELECT COUNT(*) AS c FROM (SELECT address, SUM(${source.col}) AS score FROM ${source.table} GROUP BY address)`
     );
