@@ -152,13 +152,12 @@ app.use("/api/sale",      requireLogin, saleRoutes);
 
 // 404
   // --- Leaderboard mount (ESM) ---
-  app.use('/api/leaderboard', leaderboardRouter);
 
 // --- Leaderboard (ESM) ---
-app.use('/api/leaderboard', leaderboardRouter);
 
 // --- 404 ---
-app.use((req, res) => res.status(404).json({ ok:false, error:"not_found" }));
+app.use((req, res) => app.use('/api/leaderboard', leaderboardRouter);
+res.status(404).json({ ok:false, error:"not_found" }));
 
 // --- error last ---
 app.use((err, _req, res, _next) => {
