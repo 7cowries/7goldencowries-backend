@@ -1,5 +1,5 @@
-const corsMW   = require('./api/cors');
-const apiStubs = require('./api/stubs');
+import corsMW from './api/cors.js';
+import apiStubs from './api/stubs.js';
 // server.js — 7GC backend (Express + SQLite), fixed mounts & JSON endpoints
 import "dotenv/config";
 import express from "express";
@@ -170,7 +170,7 @@ app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
 
 // ---- 7GC stub API mount ----
 try {
-  const expressJson = require('express').json;
+  const expressJson = (await import('express')).json;
   if (typeof expressJson === 'function') app.use(expressJson());
   app.use(corsMW);
   app.use('/api', apiStubs);
