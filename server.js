@@ -1,3 +1,4 @@
+(async () => {
 import corsMW from './api/cors.js';
 import apiStubs from './api/stubs.js';
 // server.js — 7GC backend (Express + SQLite), fixed mounts & JSON endpoints
@@ -177,3 +178,5 @@ try {
   console.log('7GC stub API mounted');
 } catch (e) { console.error('7GC stub mount error', e); }
 // ---- end 7GC stub API mount ----
+
+})();
