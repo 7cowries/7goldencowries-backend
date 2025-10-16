@@ -1,7 +1,7 @@
-import express from 'express';
+const express = require('express');
 (async () => {
-import corsMW from './api/cors.js';
-import apiStubs from './api/stubs.js';
+const corsMW = require('./api/cors');
+const apiStubs = require('./api/stubs');
 // server.js — 7GC backend (Express + SQLite), fixed mounts & JSON endpoints
 import "dotenv/config";
 import express from "express";
