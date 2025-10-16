@@ -1,3 +1,4 @@
+import express from 'express';
 (async () => {
 import corsMW from './api/cors.js';
 import apiStubs from './api/stubs.js';
@@ -17,6 +18,7 @@ import leaderboardRouter from "./routes/leaderboard.js";
 // import saleRoutes from "./routes/saleRoutes.js";
 
 const app = express();
+app.use(express.json());
 app.set("trust proxy", 1);
 
 app.use(helmet({
@@ -171,9 +173,10 @@ app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
 
 // ---- 7GC stub API mount ----
 try {
-  const expressJson = (await import('express')).json;
+  const expressJson = express.json;
   if (typeof expressJson === 'function') app.use(expressJson());
   app.use(corsMW);
+apiStubs(app);
   app.use('/api', apiStubs);
   console.log('7GC stub API mounted');
 } catch (e) { console.error('7GC stub mount error', e); }
