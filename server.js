@@ -3,8 +3,8 @@ const express = require('express');
 const corsMW = require('./api/cors');
 const apiStubs = require('./api/stubs');
 // server.js — 7GC backend (Express + SQLite), fixed mounts & JSON endpoints
-import "dotenv/config";
-import express from "express";
+require('dotenv').config();
+const express = require('express');
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
