@@ -1,5 +1,5 @@
-// server.js — 7 Golden Cowries (final updated)
-// Runs as ESM (package.json must have: { "type": "module" })
+// server.js — 7 Golden Cowries (final, with leaderboard payload shim)
+// Requires package.json { "type": "module" }
 import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
@@ -12,7 +12,7 @@ import leaderboardRouter from "./routes/leaderboard.js";
 
 const app = express();
 
-// Behind Render/Vercel so secure cookies work when original req is HTTPS
+// Trust proxy (Render/Vercel) so secure cookies work
 app.set("trust proxy", 1);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,8 +117,6 @@ app.use(async (req, _res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API routes
-
 // Health
 app.get("/api/health", async (_req, res) => {
   try {
@@ -140,7 +138,7 @@ app.post("/api/auth/wallet/session", async (req, res) => {
   req.session.userId = user.id;
   req.session.address = user.wallet;
 
-  // non-httpOnly cookie (convenient for curl)
+  // readable cookie for curl/dev flows
   res.cookie(SESSION_NAME, `w:${user.wallet}`, {
     httpOnly: false,
     sameSite: "none",
@@ -161,34 +159,13 @@ app.get("/api/me", (req, res) => {
   res.json({ ok: true, authed: true, wallet: req.session.address });
 });
 
-// Quests (seeded so FE renders items)
+// ─────────────────────────────────────────────────────────────────────────────
+// Quests (seed so UI isn’t empty)
 app.get("/api/quests", async (_req, res) => {
   const quests = [
-    {
-      id: "daily-checkin",
-      title: "Daily Check-in",
-      description: "Open the app today.",
-      type: "daily",
-      xp: 10,
-      completed: false
-    },
-    {
-      id: "follow-twitter",
-      title: "Follow @7goldencowries",
-      description: "Follow the X (Twitter) account to earn XP.",
-      type: "oneoff",
-      xp: 50,
-      completed: false,
-      link: "https://x.com/7goldencowries"
-    },
-    {
-      id: "invite-a-friend",
-      title: "Invite a Friend",
-      description: "Share your referral link and have 1 friend join.",
-      type: "referral",
-      xp: 100,
-      completed: false
-    }
+    { id: "daily-checkin",  title: "Daily Check-in",      description: "Open the app today.",                             type: "daily",   xp: 10,  completed: false },
+    { id: "follow-twitter", title: "Follow @7goldencowries", description: "Follow our X (Twitter) account to earn XP.",   type: "oneoff",  xp: 50,  completed: false, link: "https://x.com/7goldencowries" },
+    { id: "invite-a-friend",title: "Invite a Friend",     description: "Share your referral link and have 1 friend join.", type: "referral",xp: 100, completed: false }
   ];
   res.json({ ok: true, quests });
 });
@@ -206,17 +183,31 @@ app.post("/api/subscriptions/claim-bonus", async (_req, res) => res.json({ ok: t
 // Referrals (harmless stub)
 app.post("/api/referrals/claim", async (_req, res) => res.json({ ok: true, xpDelta: 0 }));
 
-// Token sale (disabled until enabled)
-app.post("/api/token-sale/start", async (_req, res) => res.json({ ok: false, error: "not_enabled" }));
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaderboard compatibility shim (adds `payload`, optional deep nesting)
+app.use((req, res, next) => {
+  const send = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      if (req.path.startsWith("/api/leaderboard") && req.query?.compat === "deep" && body && body.ok) {
+        body = { ok: true, data: { results: body.results ?? body.rows ?? body.items ?? body.leaderboard ?? [] } };
+      } else if (req.path.startsWith("/api/leaderboard") && body && body.ok) {
+        const rows = body.results ?? body.rows ?? body.items ?? body.leaderboard ?? body.data ?? body.scores ?? [];
+        body.payload = rows;               // for UIs expecting `payload`
+        if (!body.data) body.data = rows;  // ensure `data` exists too
+      }
+    } catch {}
+    return send(body);
+  };
+  next();
+});
 
-// Leaderboard routes (mount at both paths for FE compatibility)
+// Leaderboard routes (mount multiple paths for FE compatibility)
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
 
-// 404 for everything else (kept JSON so FE never parses HTML)
+// 404 + error handlers (always JSON)
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
-
-// Error handler
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok: false, error: "internal_error" });
