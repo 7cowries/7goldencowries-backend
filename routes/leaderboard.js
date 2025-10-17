@@ -28,14 +28,11 @@ async function ensureSchema(db) {
 
 /**
  * GET /
- * Returns a page of leaderboard rows with multiple alias keys to be
- * compatible with different FE expectations (results, rows, items,
- * leaderboard, data, scores).
+ * Return leaderboard page with multiple alias keys so FE can read any shape.
  */
 router.get("/", async (req, res) => {
   const limit  = Math.max(1, Math.min(100, parseInt(req.query.limit  ?? "50", 10)));
   const offset = Math.max(0,                  parseInt(req.query.offset ?? "0", 10));
-
   try {
     const db = await getDb();
     await ensureSchema(db);
@@ -71,36 +68,23 @@ router.get("/", async (req, res) => {
 /**
  * POST /award
  * Body: { address: string, delta: number }
- * Increments a user's score (creates row if missing) and returns their updated row.
  */
 router.post("/award", async (req, res) => {
   try {
     const { address, delta } = req.body || {};
     const addr = String(address || "").trim();
     const inc  = Number.isFinite(+delta) ? +delta : 0;
-
-    if (!addr || !inc) {
-      return res.status(400).json({ ok: false, error: "bad_request" });
-    }
+    if (!addr || !inc) return res.status(400).json({ ok: false, error: "bad_request" });
 
     const db = await getDb();
     await ensureSchema(db);
 
     await db.exec("BEGIN;");
-    const existing = await db.get(
-      `SELECT score FROM leaderboard_scores WHERE address = ?;`, addr
-    );
-
+    const existing = await db.get(`SELECT score FROM leaderboard_scores WHERE address = ?;`, addr);
     if (existing) {
-      await db.run(
-        `UPDATE leaderboard_scores SET score = score + ? WHERE address = ?;`,
-        inc, addr
-      );
+      await db.run(`UPDATE leaderboard_scores SET score = score + ? WHERE address = ?;`, inc, addr);
     } else {
-      await db.run(
-        `INSERT INTO leaderboard_scores(address, score) VALUES(?, ?);`,
-        addr, inc
-      );
+      await db.run(`INSERT INTO leaderboard_scores(address, score) VALUES(?, ?);`, addr, inc);
     }
     await db.exec("COMMIT;");
 
@@ -111,7 +95,6 @@ router.post("/award", async (req, res) => {
         WHERE address = ?;`,
       addr
     );
-
     res.json({ ok: true, updated: row });
   } catch (e) {
     try { (await getDb()).exec("ROLLBACK;"); } catch {}
