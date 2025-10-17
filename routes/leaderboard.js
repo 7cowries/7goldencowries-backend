@@ -26,11 +26,8 @@ async function ensureSchema(db) {
   didInit = true;
 }
 
-/**
- * GET /
- * Return leaderboard page with multiple alias keys so FE can read any shape.
- */
-router.get("/", async (req, res) => {
+// One handler for "/", "/top", and "/list"
+async function listHandler(req, res) {
   const limit  = Math.max(1, Math.min(100, parseInt(req.query.limit  ?? "50", 10)));
   const offset = Math.max(0,                  parseInt(req.query.offset ?? "0", 10));
   try {
@@ -63,12 +60,13 @@ router.get("/", async (req, res) => {
     console.error("leaderboard error:", e);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
-});
+}
 
-/**
- * POST /award
- * Body: { address: string, delta: number }
- */
+router.get("/",     listHandler);
+router.get("/top",  listHandler);
+router.get("/list", listHandler);
+
+// POST /award
 router.post("/award", async (req, res) => {
   try {
     const { address, delta } = req.body || {};
