@@ -300,7 +300,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
       return res.json({ ok: false, error: "expired" });
     }
 
-    const data = await fetchIncomingTxFromTonApi(inv.to_addr, 30);
+    const data = await fetchIncomingTxFromToncenter(inv.to_addr, 30);
     const txs = data?.transactions ?? data ?? [];
 
     let matched = null;
@@ -381,3 +381,41 @@ app.use((err, _req, res, _next) => {
 // Start
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`7GC backend listening on :${PORT}`));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Toncenter adapter (returns TonAPI-like shape: { transactions: [...] })
+async function fetchIncomingTxFromToncenter(address, limit = 30) {
+  const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(address)}&limit=${limit}`;
+  const r = await fetch(url, {
+    headers: { "X-Api-Key": process.env.TONCENTER_KEY || "" }
+  });
+  if (!r.ok) throw new Error(`Toncenter ${r.status}`);
+  const j = await r.json();
+  const raw = j?.result || j?.transactions || [];
+
+  // Normalize Toncenter txs to what the verifier expects (in_msg/out_msgs, value, message/comment, hash/lt).
+  const transactions = raw.map((t) => ({
+    hash: t?.transaction_id?.hash,
+    lt: t?.transaction_id?.lt,
+    in_msg: t?.in_msg
+      ? {
+          value: t.in_msg.value,
+          message: t.in_msg.message,
+          comment: t.in_msg.message,
+          destination: t.in_msg.destination,
+          source: t.in_msg.source
+        }
+      : null,
+    out_msgs: Array.isArray(t?.out_msgs)
+      ? t.out_msgs.map((m) => ({
+          value: m.value,
+          message: m.message,
+          comment: m.message,
+          destination: m.destination,
+          source: m.source
+        }))
+      : []
+  }));
+
+  return { transactions };
+}
