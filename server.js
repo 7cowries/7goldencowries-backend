@@ -300,7 +300,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
       return res.json({ ok: false, error: "expired" });
     }
 
-    const data = await fetchIncomingTxFromToncenter(inv.to_addr, 30);
+    const data = await fetchIncomingTx(inv.to_addr, 30);
     const txs = data?.transactions ?? data ?? [];
 
     let matched = null;
@@ -418,4 +418,14 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
   }));
 
   return { transactions };
+
+// Fallback wrapper: try Toncenter, then TonAPI
+async function fetchIncomingTx(address, limit=30) {
+  try { return await fetchIncomingTxFromToncenter(address, limit); }
+  catch(e){ /* Toncenter failed; try TonAPI if key present */ }
+  if(process.env.TONAPI_KEY){
+    try { return await fetchIncomingTxFromTonApi(address, limit); } catch(e){}
+  }
+  throw new Error("no-indexer-available");
+}
 }
