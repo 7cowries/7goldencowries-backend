@@ -10,6 +10,8 @@ import crypto from "node:crypto";
 
 import db from "./lib/db.js";
 import leaderboardRouter from "./routes/leaderboard.js";
+import questsRouter from "./routes/quests.js";
+import referralsRouter from "./routes/referrals.js";
 
 const app = express();
 
@@ -372,6 +374,11 @@ app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
 
 // 404 + error handlers (always JSON)
+app.use("/api/quests", questsRouter);
+app.use("/api/v1/quests", questsRouter);
+app.use("/api/referrals", referralsRouter);
+app.use("/api/v1/referrals", referralsRouter);
+
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
 app.use((err, _req, res, _next) => {
   console.error(err);
