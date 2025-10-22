@@ -240,6 +240,16 @@ async function fetchIncomingTxFromTonApi(address, limit = 30) {
 
 // Create invoice & return ton:// deeplink and TON Connect payload
 app.post("/api/v1/payments/ton/checkout", async (req, res) => {
+  // --- wallet resolver (session or body) ---
+  const body = req.body || {};
+  const sessWallet = req?.session?.wallet ? String(req.session.wallet).trim() : null;
+  const bodyAddr   = body.address ? String(body.address).trim() : null;
+  const bodyWallet = body.wallet ? String(body.wallet).trim() : null;
+  const payerWallet = sessWallet || bodyAddr || bodyWallet || null;
+  if (!payerWallet) return res.status(400).json({ ok:false, error:"wallet-required" });
+  // normalize back into body to keep downstream logic unchanged
+  req.body.address = payerWallet;
+  req.body.wallet  = payerWallet;
   try {
     const wallet = req.session?.address || req.get("x-wallet");
     if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
