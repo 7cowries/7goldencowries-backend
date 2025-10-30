@@ -1,5 +1,13 @@
 // server.js — 7 Golden Cowries
-// render-safe, migrations-first, dynamic route imports, live quests, twitter verify, subscriptions, TON, referrals
+// render-safe with PRE-FLIGHT DB fix for subscriptions.active
+// order:
+// 1) open sqlite directly
+// 2) create/fix subscriptions table (active, provider, tx_id, timestamps)
+// 3) close preflight
+// 4) import real ./db.js (which used to crash)
+// 5) run normal migrations (users, quests, referrals, invoices)
+// 6) dynamically import routers
+// 7) mount routes
 
 import "dotenv/config";
 import express from "express";
@@ -8,43 +16,109 @@ import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
-import dbp from "./db.js";
-
-const app = express();
 
 // ─────────────────────────────────────────────────────────────
-// 1) open DB (never crash)
+// 0) PRE-FLIGHT: open sqlite BEFORE importing ./db.js
+const SQLITE_FILE =
+  process.env.DATABASE_URL ||
+  process.env.DATABASE_PATH ||
+  process.env.SQLITE_FILE ||
+  "/var/data/7gc.sqlite3";
+
+const sqlite3 = (await import("sqlite3")).default;
+const { open } = await import("sqlite");
+
+// open preflight connection
+const predb = await open({
+  filename: SQLITE_FILE,
+  driver: sqlite3.Database,
+});
+
+console.log("[preflight] opened", SQLITE_FILE);
+
+// make sure subscriptions is exactly what we want
+await predb.exec(`
+  CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'Free',
+    active INTEGER NOT NULL DEFAULT 0,
+    provider TEXT,
+    tx_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
+console.log("[preflight] ensured subscriptions base table");
+
+// some very old DBs might miss columns — add them unconditionally/defensively
+try {
+  await predb.exec(
+    `ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`
+  );
+  console.log("[preflight] added column subscriptions.active");
+} catch (_) {
+  // already exists
+}
+try {
+  await predb.exec(`ALTER TABLE subscriptions ADD COLUMN provider TEXT;`);
+  console.log("[preflight] added column subscriptions.provider");
+} catch (_) {}
+try {
+  await predb.exec(`ALTER TABLE subscriptions ADD COLUMN tx_id TEXT;`);
+  console.log("[preflight] added column subscriptions.tx_id");
+} catch (_) {}
+try {
+  await predb.exec(
+    `ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`
+  );
+  console.log("[preflight] added column subscriptions.created_at");
+} catch (_) {}
+try {
+  await predb.exec(
+    `ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`
+  );
+  console.log("[preflight] added column subscriptions.updated_at");
+} catch (_) {}
+
+// index for wallet
+await predb.exec(
+  `CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`
+);
+
+await predb.close();
+console.log("[preflight] done, closing preflight DB");
+
+// ─────────────────────────────────────────────────────────────
+// 1) NOW import the real db.js (this was crashing before)
+const { default: dbp } = await import("./db.js");
+
+// get main DB (the one used by the whole app)
 let db;
 try {
   db = await dbp;
-  console.log(
-    "[db] opened sqlite at",
-    process.env.DATABASE_URL ||
-      process.env.DATABASE_PATH ||
-      process.env.SQLITE_FILE ||
-      "(default)"
-  );
+  console.log("[db] opened sqlite at", SQLITE_FILE);
 } catch (err) {
   console.error("[db/open] failed, falling back to in-memory:", err);
-  const sqlite3 = (await import("sqlite3")).default;
-  const { open } = await import("sqlite");
   db = await open({ filename: ":memory:", driver: sqlite3.Database });
   console.warn("[db/open] using in-memory sqlite — non persistent");
 }
 
-// helper: does table have column?
+// helper: check if a column exists
 async function tableHasColumn(table, column) {
   try {
     const rows = await db.all(`PRAGMA table_info(${table});`);
     return Array.isArray(rows) && rows.some((r) => r.name === column);
-  } catch (e) {
-    console.warn(`[pragma] failed for ${table}.${column}:`, e.message);
+  } catch {
     return false;
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// 2) idempotent migrations — MUST run BEFORE we import routers
+// 2) normal migrations (users, quests, user_quests, referrals, invoices)
+// we still keep this here for safety
+
 async function ensureSchemaSafe() {
   // USERS
   try {
@@ -64,54 +138,36 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] users failed:", e.message);
   }
 
-  // SUBSCRIPTIONS (create + self-heal)
+  // SUBSCRIPTIONS (second pass, just in case)
   try {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS subscriptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        wallet TEXT NOT NULL,
-        tier TEXT NOT NULL DEFAULT 'Free',
-        active INTEGER NOT NULL DEFAULT 0,
-        provider TEXT,
-        tx_id TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-
-    // very old DBs on Render: make sure columns exist
     if (!(await tableHasColumn("subscriptions", "active"))) {
       await db.exec(
         `ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`
       );
-      console.log("[migrate] subscriptions: added column active");
+      console.log("[migrate] subscriptions: added active (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "provider"))) {
       await db.exec(`ALTER TABLE subscriptions ADD COLUMN provider TEXT;`);
-      console.log("[migrate] subscriptions: added column provider");
+      console.log("[migrate] subscriptions: added provider (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "tx_id"))) {
       await db.exec(`ALTER TABLE subscriptions ADD COLUMN tx_id TEXT;`);
-      console.log("[migrate] subscriptions: added column tx_id");
+      console.log("[migrate] subscriptions: added tx_id (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "created_at"))) {
       await db.exec(
         `ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`
       );
-      console.log("[migrate] subscriptions: added column created_at");
+      console.log("[migrate] subscriptions: added created_at (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "updated_at"))) {
       await db.exec(
         `ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`
       );
-      console.log("[migrate] subscriptions: added column updated_at");
+      console.log("[migrate] subscriptions: added updated_at (second pass)");
     }
-
-    await db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`
-    );
   } catch (e) {
-    console.warn("[migrate] subscriptions failed:", e.message);
+    console.warn("[migrate] subscriptions second pass failed:", e.message);
   }
 
   // TON INVOICES
@@ -246,10 +302,12 @@ async function ensureSchemaSafe() {
           link: "https://7goldencowries.com/ref",
         },
       ];
+
       const stmt = await db.prepare(`
         INSERT INTO quests (id, title, description, category, type, xp, link, meta)
         VALUES (?, ?, ?, ?, ?, ?, ?, NULL);
       `);
+
       for (const q of questsToInsert) {
         await stmt.run(
           q.id,
@@ -269,11 +327,10 @@ async function ensureSchemaSafe() {
   }
 }
 
-// run migrations FIRST
 await ensureSchemaSafe();
 
 // ─────────────────────────────────────────────────────────────
-// 3) NOW import routers dynamically (so above code runs first)
+// 3) ONLY NOW import the routers (after DB is good)
 const { default: leaderboardRouter } = await import(
   "./routes/leaderboard.js"
 );
@@ -285,6 +342,7 @@ const { default: twitterVerifyRouter } = await import(
 
 // ─────────────────────────────────────────────────────────────
 // 4) express base
+const app = express(); // we can re-use the earlier 'app' but keeping it consistent
 app.set("trust proxy", 1);
 app.use(
   helmet({
@@ -331,7 +389,6 @@ app.use(
   })
 );
 
-// ─────────────────────────────────────────────────────────────
 // helpers
 function normalizeAddress(a) {
   if (!a) return null;
@@ -452,7 +509,7 @@ app.get("/api/subscriptions/status", async (req, res) => {
   res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
 });
 
-// TON payments
+// TON payments (same as earlier)
 async function fetchIncomingTxFromToncenter(address, limit = 30) {
   const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(
     address
@@ -660,7 +717,7 @@ app.get("/api/payments/status", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 11) MOUNT ROUTES (now routers are safely imported)
+// 5) mount routers
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
 app.use("/api/quests", questsRouter);
@@ -686,3 +743,4 @@ app.listen(PORT, () => {
     console.log("TWITTER_BEARER_TOKEN missing");
   }
 });
+
