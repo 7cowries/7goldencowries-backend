@@ -1,5 +1,5 @@
 // server.js — 7 Golden Cowries
-// ESM, Render-safe, self-healing SQLite, live quests, TON, referrals, Twitter verify
+// ESM, works on Render, does its own SQLITE migrations, no stubs.
 
 import "dotenv/config";
 import express from "express";
@@ -9,41 +9,36 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
 
-import dbp from "./db.js";                         // default export only (Render has this)
+import dbp from "./db.js"; // <-- your repo exports ONLY the promise
+
+// routers (all final)
 import leaderboardRouter from "./routes/leaderboard.js";
 import questsRouter from "./routes/quests.js";
 import referralsRouter from "./routes/referrals.js";
-import twitterVerifyRouter from "./routes/twitterVerify.js"; // make sure this file does `export default router;`
+// this file in your repo exports a *named* router, not default
+import { router as twitterVerifyRouter } from "./routes/twitterVerify.js";
 
 const app = express();
 
-// get real sqlite db connection from db.js
+// ─────────────────────────────────────────────────────────────
+// 0) open DB and do inline migrations (idempotent)
 const db = await dbp;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DB SELF-HEAL HELPERS
-async function tableInfo(table) {
-  try {
-    return await db.all(`PRAGMA table_info(${table});`);
-  } catch {
-    return [];
-  }
+/**
+ * return array of column names for a table
+ */
+async function getTableCols(table) {
+  const rows = await db.all(`PRAGMA table_info(${table});`);
+  return rows.map((r) => r.name);
 }
 
-async function addColumnIfMissing(table, colName, colDef) {
-  const cols = await tableInfo(table);
-  if (!cols.find((c) => c.name === colName)) {
-    try {
-      await db.run(`ALTER TABLE ${table} ADD COLUMN ${colDef};`);
-      console.log(`[migrate] ${table}: added column ${colName}`);
-    } catch (e) {
-      console.log(`[migrate] ${table}: add column ${colName} failed:`, e.message);
-    }
-  }
-}
-
-async function ensureCoreTables() {
-  // users
+/**
+ * Inline, render-safe migrations.
+ * We DO NOT do "ADD COLUMN user_id INTEGER" twice.
+ * We also normalize user_quests to the shape we want.
+ */
+async function ensureSchema() {
+  // base users table
   await db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,7 +67,7 @@ async function ensureCoreTables() {
   `);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`);
 
-  // ton_invoices
+  // ton invoices
   await db.run(`
     CREATE TABLE IF NOT EXISTS ton_invoices (
       id TEXT PRIMARY KEY,
@@ -89,145 +84,148 @@ async function ensureCoreTables() {
     );
   `);
 
-  // quests (we want description + category + xp + twitter_target)
+  // quests (canonical table, with description; this killed earlier deploys)
   await db.run(`
     CREATE TABLE IF NOT EXISTS quests (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       description TEXT,
       category TEXT,
+      quest_type TEXT,
       xp INTEGER NOT NULL DEFAULT 0,
-      twitter_target TEXT,
       link TEXT,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  // user_quests (this is where Render was crashing: missing user_id)
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS user_quests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT,
-      quest_id TEXT,
-      claimed_at TEXT NOT NULL DEFAULT (datetime('now')),
-      tx_hash TEXT
-    );
-  `);
-
-  // self-heal user_quests to have real user_id + wallet + quest_id
-  await addColumnIfMissing("user_quests", "user_id", "INTEGER");
-  await addColumnIfMissing("user_quests", "wallet", "TEXT");
-  await addColumnIfMissing("user_quests", "quest_id", "TEXT");
-
-  // referrals
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS referrals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT NOT NULL UNIQUE,
-      owner_wallet TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS referral_claims (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT NOT NULL,
-      invited_wallet TEXT NOT NULL,
-      inviter_wallet TEXT,
-      xp_awarded INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  // leaderboard
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS leaderboard (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT NOT NULL,
-      xp INTEGER NOT NULL DEFAULT 0,
-      level INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 
-  // seed live quests (idempotent)
-  const liveQuests = [
-    {
-      id: "follow-twitter",
-      title: "Follow @7goldencowries",
-      description: "Follow the official X account.",
-      category: "social",
-      xp: 50,
-      twitter_target: "7goldencowries",
-      link: "https://x.com/7goldencowries"
-    },
-    {
-      id: "retweet-pinned",
-      title: "Retweet the pinned post",
-      description: "Retweet the pinned quest announcement.",
-      category: "social",
-      xp: 80,
-      twitter_target: "https://x.com/7goldencowries/status/1947595024117502145",
-      link: "https://x.com/7goldencowries/status/1947595024117502145"
-    },
-    {
-      id: "quote-tweet",
-      title: "Quote the pinned post",
-      description: "Add your voice to the tide.",
-      category: "social",
-      xp: 100,
-      twitter_target: "https://x.com/7goldencowries/status/1947595024117502145",
-      link: "https://x.com/7goldencowries/status/1947595024117502145"
-    },
-    {
-      id: "join-telegram",
-      title: "Join Telegram Portal",
-      description: "Enter the GigiP2Bot tide.",
-      category: "onchain",
-      xp: 40,
-      link: "https://t.me/GOLDENCOWRIEBOT"
-    },
-    {
-      id: "join-discord",
-      title: "Join Discord crew",
-      description: "Sail with the guild.",
-      category: "community",
-      xp: 40,
-      link: "https://7goldencowries.com/discord"
-    },
-    {
-      id: "daily-checkin",
-      title: "Daily check-in",
-      description: "Return to the Isles today.",
-      category: "daily",
-      xp: 15
-    }
-  ];
-
-  for (const q of liveQuests) {
-    await db.run(
-      `INSERT OR IGNORE INTO quests (id, title, description, category, xp, twitter_target, link)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      q.id,
-      q.title,
-      q.description ?? "",
-      q.category ?? "",
-      q.xp ?? 0,
-      q.twitter_target ?? "",
-      q.link ?? ""
+  // user_quests may already exist from old runs, so patch it carefully
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS user_quests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT,
+      quest_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      completed_at TEXT
     );
+  `);
+
+  // Now check its columns
+  const uqCols = await getTableCols("user_quests");
+
+  // add user_id if missing
+  if (!uqCols.includes("user_id")) {
+    // safe alter
+    await db.run(`ALTER TABLE user_quests ADD COLUMN user_id INTEGER;`);
+    console.log("[migrate] user_quests: added column user_id");
   }
 
-  console.log("[migrate] core tables ensured + live quests seeded");
-}
-await ensureCoreTables();
+  // add wallet if missing (some earlier runs had wallet already; this is safe)
+  if (!uqCols.includes("wallet")) {
+    await db.run(`ALTER TABLE user_quests ADD COLUMN wallet TEXT;`);
+    console.log("[migrate] user_quests: added column wallet");
+  }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// APP BASICS
+  // add referral tables if not present
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS referrals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_wallet TEXT NOT NULL,
+      code TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS referral_uses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL,
+      invited_wallet TEXT NOT NULL,
+      rewarded INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // seed canonical live quests (idempotent)
+  const existing = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
+  if (!existing || !existing.c) {
+    console.log("[migrate] seeding quests");
+    const liveQuests = [
+      {
+        id: "daily-checkin",
+        title: "Daily Check-in",
+        description: "Open 7 Golden Cowries today.",
+        category: "daily",
+        quest_type: "daily",
+        xp: 25,
+        link: null,
+      },
+      {
+        id: "follow-twitter",
+        title: "Follow @7goldencowries",
+        description: "Follow our X account to unlock social quests.",
+        category: "social",
+        quest_type: "twitter-follow",
+        xp: 120,
+        link: "https://x.com/7goldencowries",
+      },
+      {
+        id: "retweet-pinned",
+        title: "Retweet the pinned post",
+        description: "Retweet our pinned campaign on X.",
+        category: "social",
+        quest_type: "twitter-retweet",
+        xp: 150,
+        link: "https://x.com/7goldencowries/status/1947595024117502145",
+      },
+      {
+        id: "quote-tweet",
+        title: "Quote tweet with your wallet",
+        description: "Quote our pinned tweet and add your TON address.",
+        category: "social",
+        quest_type: "twitter-quote",
+        xp: 180,
+        link: "https://x.com/7goldencowries/status/1947595024117502145",
+      },
+      {
+        id: "join-telegram",
+        title: "Join the Cowrie Telegram",
+        description: "Join the community chat.",
+        category: "social",
+        quest_type: "telegram-join",
+        xp: 90,
+        link: "https://t.me/7goldencowries", // adjust to real
+      },
+    ];
+
+    for (const q of liveQuests) {
+      await db.run(
+        `INSERT OR IGNORE INTO quests (id, title, description, category, quest_type, xp, link)
+         VALUES (?, ?, ?, ?, ?, ?, ?);`,
+        q.id,
+        q.title,
+        q.description,
+        q.category,
+        q.quest_type,
+        q.xp,
+        q.link
+      );
+    }
+  }
+
+  // ton service wallet check (not fatal)
+  if (!process.env.TON_SERVICE_WALLET) {
+    console.log("WARN: TON_SERVICE_WALLET not set — TON subscribe will return 500");
+  }
+}
+
+await ensureSchema();
+// ─────────────────────────────────────────────────────────────
+
+// behind Render
 app.set("trust proxy", 1);
 
+// security + basics
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
@@ -239,12 +237,11 @@ app.use(
         "style-src": ["'self'", "https:", "'unsafe-inline'"],
         "script-src-attr": ["'none'"],
         "object-src": ["'none'"],
-        "upgrade-insecure-requests": []
-      }
-    }
+        "upgrade-insecure-requests": [],
+      },
+    },
   })
 );
-
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(
@@ -252,12 +249,11 @@ app.use(
     windowMs: 60_000,
     max: 200,
     standardHeaders: true,
-    legacyHeaders: false
+    legacyHeaders: false,
   })
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS
+// sessions
 const SESSION_NAME = "7gc.sid";
 app.use(
   session({
@@ -270,13 +266,12 @@ app.use(
       httpOnly: true,
       sameSite: "none",
       secure: true,
-      maxAge: 1000 * 60 * 60 * 24 * 30
-    }
+      maxAge: 1000 * 60 * 60 * 24 * 30,
+    },
   })
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPERS
+// helpers
 function normalizeAddress(a) {
   if (!a) return null;
   const s = String(a).trim();
@@ -286,11 +281,15 @@ function normalizeAddress(a) {
 async function materializeUserByAddress(address) {
   const addr = normalizeAddress(address);
   if (!addr) return null;
-  await db.run(
-    `INSERT OR IGNORE INTO users (wallet) VALUES (?);`,
+
+  await db.run(`
+    INSERT OR IGNORE INTO users (wallet) VALUES (?);
+  `, addr);
+
+  return await db.get(
+    `SELECT id, wallet, xp, level, level_name FROM users WHERE wallet = ?;`,
     addr
   );
-  return await db.get(`SELECT id, wallet, xp, level FROM users WHERE wallet = ?;`, addr);
 }
 
 function extractAddressFromReq(req) {
@@ -303,7 +302,7 @@ function extractAddressFromReq(req) {
   return null;
 }
 
-// normalize body wallet→address
+// body normalizer
 app.use((req, _res, next) => {
   const b = req.body || {};
   if (b.wallet && !b.address) b.address = String(b.wallet).trim();
@@ -329,8 +328,7 @@ app.use(async (req, _res, next) => {
   next();
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HEALTH
+// health
 app.get("/api/health", async (_req, res) => {
   try {
     await db.get("SELECT 1;");
@@ -340,7 +338,7 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-// WALLET SESSION
+// wallet session bind
 app.post("/api/auth/wallet/session", async (req, res) => {
   const address = normalizeAddress(req.body?.address);
   if (!address) return res.status(400).json({ ok: false, error: "address-required" });
@@ -355,13 +353,13 @@ app.post("/api/auth/wallet/session", async (req, res) => {
     httpOnly: false,
     sameSite: "none",
     secure: true,
-    maxAge: 1000 * 60 * 60 * 24 * 30
+    maxAge: 1000 * 60 * 60 * 24 * 30,
   });
 
   res.json({ ok: true, address: user.wallet, session: "set" });
 });
 
-// ME
+// me
 app.get("/api/me", (req, res) => {
   if (!req.session?.address) {
     const hint = extractAddressFromReq(req);
@@ -371,8 +369,7 @@ app.get("/api/me", (req, res) => {
   res.json({ ok: true, authed: true, wallet: req.session.address });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUBSCRIPTIONS + TON
+// subscription helpers
 function boostForTier(tier) {
   return tier === "Gold" ? 2.0 : tier === "Explorer" ? 1.5 : 1.0;
 }
@@ -385,220 +382,23 @@ async function getSubStatus(wallet) {
   if (!row) return { active: false, tier: "Free", xpBoost: 1.0 };
   return { active: !!row.active, tier: row.tier, xpBoost: boostForTier(row.tier) };
 }
+
+// subscriptions status
 app.get("/api/subscriptions/status", async (req, res) => {
   const wallet = req.session?.address || extractAddressFromReq(req);
   const s = await getSubStatus(wallet);
   res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
 });
 
-// --- TON helpers (same idea as before) ---
-async function fetchIncomingTxFromToncenter(address, limit = 30) {
-  const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(address)}&limit=${limit}`;
-  const r = await fetch(url, {
-    headers: { "X-Api-Key": process.env.TONCENTER_KEY || "" }
-  });
-  if (!r.ok) throw new Error(`Toncenter ${r.status}`);
-  const j = await r.json();
-  const raw = j?.result || j?.transactions || [];
-  const transactions = raw.map((t) => ({
-    hash: t?.transaction_id?.hash,
-    lt: t?.transaction_id?.lt,
-    in_msg: t?.in_msg
-      ? {
-          value: t.in_msg.value,
-          message: t.in_msg.message,
-          comment: t.in_msg.message,
-          destination: t.in_msg.destination,
-          source: t.in_msg.source
-        }
-      : null,
-    out_msgs: Array.isArray(t?.out_msgs)
-      ? t.out_msgs.map((m) => ({
-          value: m.value,
-          message: m.message,
-          comment: m.message,
-          destination: m.destination,
-          source: m.source
-        }))
-      : []
-  }));
-  return { transactions };
-}
-
-async function fetchIncomingTxFromTonApi(address, limit = 30) {
-  const r = await fetch(
-    `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
-    {
-      headers: { Authorization: `Bearer ${process.env.TONAPI_KEY || ""}` }
-    }
-  );
-  if (!r.ok) throw new Error(`TonAPI ${r.status}`);
-  return r.json();
-}
-
-async function fetchIncomingTx(address, limit = 30) {
-  try {
-    return await fetchIncomingTxFromToncenter(address, limit);
-  } catch (e) {
-    // fall back
-  }
-  if (process.env.TONAPI_KEY) {
-    try {
-      return await fetchIncomingTxFromTonApi(address, limit);
-    } catch (e) {
-      // ignore
-    }
-  }
-  throw new Error("no-indexer-available");
-}
-
-function priceForTier(tier) {
-  const map = {
-    Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
-    Gold: Number(process.env.TON_PRICE_GOLD || 0)
-  };
-  return map[tier] || map.Explorer || 0;
-}
-
-app.post("/api/v1/payments/ton/checkout", async (req, res) => {
-  const wallet =
-    req.session?.address ||
-    req.get("x-wallet") ||
-    req.body?.address ||
-    req.body?.wallet ||
-    null;
-  if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
-
-  const tier = (req.body?.tier || "Explorer").trim();
-  const amount = priceForTier(tier);
-  if (!amount || amount <= 0) return res.status(400).json({ ok: false, error: "bad-tier" });
-
-  const toAddr = process.env.TON_SERVICE_WALLET;
-  if (!toAddr) return res.status(500).json({ ok: false, error: "service-wallet-missing" });
-
-  const invoiceId = crypto.randomBytes(6).toString("hex");
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-
-  await db.run(
-    `INSERT INTO ton_invoices (id, wallet, tier, to_addr, amount, comment, status, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    invoiceId,
-    wallet,
-    tier,
-    toAddr,
-    amount,
-    invoiceId,
-    expiresAt
-  );
-
-  const tonDeepLink = `ton://transfer/${toAddr}?amount=${amount}&text=${invoiceId}`;
-  const tonConnectPayload = {
-    validUntil: Math.floor(Date.now() / 1000) + 60 * 30,
-    messages: [{ address: toAddr, amount: String(amount) }]
-  };
-
-  res.json({
-    ok: true,
-    provider: "ton",
-    invoiceId,
-    tier,
-    amount,
-    to: toAddr,
-    comment: invoiceId,
-    expiresAt,
-    tonDeepLink,
-    tonConnectPayload
-  });
-});
-
-app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const inv = await db.get(`SELECT * FROM ton_invoices WHERE id = ?`, id);
-    if (!inv) return res.status(404).json({ ok: false, error: "invoice-not-found" });
-
-    if (inv.status === "confirmed") {
-      const s = await getSubStatus(inv.wallet);
-      return res.json({ ok: true, invoice: inv, subscription: s });
-    }
-    if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) {
-      await db.run(
-        `UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?`,
-        id
-      );
-      return res.json({ ok: false, error: "expired" });
-    }
-
-    const data = await fetchIncomingTx(inv.to_addr, 30);
-    const txs = data?.transactions ?? data ?? [];
-
-    let matched = null;
-    for (const t of txs) {
-      const msg =
-        t.in_msg || (t.out_msgs ? t.out_msgs.find((m) => m.destination === inv.to_addr) : null);
-      if (!msg) continue;
-
-      const text = msg?.message || msg?.comment || "";
-      const amount = Number(msg?.value || 0);
-      if (text && text.includes(inv.comment) && amount >= Number(inv.amount)) {
-        matched = { tx_hash: t.hash || t.transaction_id?.hash || t.lt, amount, text };
-        break;
-      }
-    }
-
-    if (!matched) return res.json({ ok: true, invoice: inv, pending: true });
-
-    await db.run(
-      `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`,
-      String(matched.tx_hash || ""),
-      id
-    );
-    await db.run(
-      `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
-       VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
-      inv.wallet,
-      inv.tier,
-      String(matched.tx_hash || "")
-    );
-
-    const s = await getSubStatus(inv.wallet);
-    res.json({
-      ok: true,
-      invoice: { ...inv, status: "confirmed", tx_hash: matched.tx_hash },
-      subscription: s
-    });
-  } catch (e) {
-    console.error("ton invoice verify error", e);
-    res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
-app.get("/api/v1/payments/status", async (req, res) => {
-  const wallet = req.session?.address || req.get("x-wallet") || null;
-  const s = await getSubStatus(wallet);
-  res.json({
-    ok: true,
-    wallet,
-    active: s.active,
-    provider: s.active ? "ton" : null,
-    tier: s.tier,
-    xpBoost: s.xpBoost
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MOUNT ROUTERS (all live, no stubs)
+// ─────────────────────────────────────────────────────────────
+// mount real routers
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
-
 app.use("/api/quests", questsRouter);
 app.use("/api/v1/quests", questsRouter);
-
 app.use("/api/referrals", referralsRouter);
 app.use("/api/v1/referrals", referralsRouter);
-
 app.use("/api/twitter", twitterVerifyRouter);
-app.use("/api/v1/twitter", twitterVerifyRouter);
 
 // 404
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
