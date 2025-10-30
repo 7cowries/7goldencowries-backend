@@ -8,10 +8,11 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
 
-// IMPORTANT: your db.js currently exports a *default* promise/instance.
-// do NOT destructure here — Render logs showed "does not provide an export named 'get'".
+// IMPORTANT: your db.js exports a *default* (a promise / opened db).
+// DO NOT destructure here — Render already showed errors when we tried.
 import dbp from "./db.js";
 
+// live routers (all real, no stubs)
 import leaderboardRouter from "./routes/leaderboard.js";
 import questsRouter from "./routes/quests.js";
 import referralsRouter from "./routes/referrals.js";
@@ -21,25 +22,28 @@ import twitterVerifyRouter from "./routes/twitterVerify.js";
 const app = express();
 
 // ─────────────────────────────────────────────────────────────
-// 1) get DB, but NEVER crash if Render volume is weird
+// 1) open DB but NEVER let Render crash if volume is weird
 let db;
 try {
-  db = await dbp; // what your db.js returns
+  db = await dbp; // whatever ./db.js returns
 } catch (err) {
   console.error("[db/open] failed to open main sqlite db:", err);
-
-  // last resort: in-memory db so service boots
+  // last resort: in-memory so the service boots
   const sqlite3 = (await import("sqlite3")).default;
   const { open } = await import("sqlite");
   db = await open({
     filename: ":memory:",
     driver: sqlite3.Database,
   });
-  console.warn("[db/open] using in-memory sqlite db — data will not persist on Render restarts");
+  console.warn("[db/open] using in-memory sqlite db — data will NOT persist on Render restarts");
 }
 
 // ─────────────────────────────────────────────────────────────
-// 2) idempotent migrations — NEVER throw
+// 2) idempotent migrations — ONLY CREATE TABLE IF NOT EXISTS (no ALTER)
+// this is exactly to avoid the errors you saw:
+//  - "no such column: user_id"
+//  - "datatype mismatch"
+//  - "duplicate column name: INTEGER/TEXT"
 async function ensureSchemaSafe() {
   // USERS
   try {
@@ -118,7 +122,7 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] quests failed:", e.message);
   }
 
-  // USER QUESTS (per-user progress) — we will NOT do ALTER that crashes old DB
+  // USER QUESTS (per-user) — NO ALTER
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS user_quests (
@@ -135,7 +139,7 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] user_quests failed:", e.message);
   }
 
-  // REFERRALS (simple)
+  // REFERRALS
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS referrals (
@@ -150,7 +154,7 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] referrals failed:", e.message);
   }
 
-  // SEED 6 LIVE QUESTS (only if table is empty)
+  // SEED 6 REAL QUESTS (only if empty)
   try {
     const row = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
     if (!row || !row.c) {
@@ -185,7 +189,7 @@ async function ensureSchemaSafe() {
         {
           id: "quote-tweet",
           title: "Quote our announcement",
-          description: "Quote our pinned tweet with your ton wallet.",
+          description: "Quote our pinned tweet with your TON wallet.",
           category: "social",
           type: "oneoff",
           xp: 100,
@@ -260,7 +264,7 @@ app.use(
   })
 );
 
-// sessions
+// sessions (stays MemoryStore for now — already working on Render)
 const SESSION_NAME = "7gc.sid";
 app.use(
   session({
@@ -405,8 +409,7 @@ app.get("/api/subscriptions/status", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 9) TON payments (same logic you had, just wrapped so it can't crash)
-// fetch tx from toncenter
+// 9) TON payments (render-safe)
 async function fetchIncomingTxFromToncenter(address, limit = 30) {
   const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(
     address
@@ -442,7 +445,6 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
   return { transactions };
 }
 
-// optionally tonapi
 async function fetchIncomingTxFromTonApi(address, limit = 30) {
   const r = await fetch(
     `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
@@ -462,7 +464,7 @@ async function fetchIncomingTx(address, limit = 30) {
       try {
         return await fetchIncomingTxFromTonApi(address, limit);
       } catch (e2) {
-        // fall
+        // ignore
       }
     }
   }
@@ -564,7 +566,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   );
   await db.run(
     `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
-       VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
+     VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
     inv.wallet,
     inv.tier,
     String(matched.tx_hash || "")
@@ -578,7 +580,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   });
 });
 
-// unified alias
+// payment status alias
 app.get("/api/v1/payments/status", async (req, res) => {
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
@@ -605,14 +607,14 @@ app.get("/api/payments/status", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 10) MOUNT ROUTES (all live)
+// 10) MOUNT ALL LIVE ROUTES
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
-app.use("/api/quests", questsRouter); // this now reads the real quests we seeded
+app.use("/api/quests", questsRouter);          // real, DB-backed, 6 quests already seeded
 app.use("/api/v1/quests", questsRouter);
 app.use("/api/referrals", referralsRouter);
 app.use("/api/v1/referrals", referralsRouter);
-app.use("/api/twitter", twitterVerifyRouter); // /api/twitter/follow, /api/twitter/retweet, etc.
+app.use("/api/twitter", twitterVerifyRouter);  // verify follow / retweet / quote (uses bearer)
 
 // 404
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
