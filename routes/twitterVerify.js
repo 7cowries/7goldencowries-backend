@@ -1,54 +1,145 @@
-// routes/twitterVerify.js — verify follow/retweet/quote on X
-import { Router } from "express";
+// routes/twitterVerify.js — ESM, default export
+import express from "express";
+import dbp from "../db.js";
 
-const router = Router();
-const BEARER = process.env.TWITTER_BEARER_TOKEN || "";
+const router = express.Router();
 
-function needBearer(res) {
-  res.status(500).json({ ok: false, error: "TWITTER_BEARER_TOKEN missing" });
+const TW_BEARER = process.env.TWITTER_BEARER_TOKEN || "";
+
+async function getDb() {
+  return dbp;
 }
 
-// GET /api/twitter/verify-follow?wallet=...&target=@7goldencowries
-router.get("/verify-follow", async (req, res) => {
-  if (!BEARER) return needBearer(res);
-  const target = req.query.target || "7goldencowries";
-  const wallet = req.query.wallet || req.get("x-wallet") || null;
-  const userHandle = req.query.handle;
+// make sure user exists
+async function ensureUser(wallet) {
+  const db = await getDb();
+  await db.run(
+    `INSERT OR IGNORE INTO users (wallet, xp, level, level_name)
+     VALUES (?, 0, 1, 'Shellborn')`,
+    wallet
+  );
+  return db.get(`SELECT * FROM users WHERE wallet = ?`, wallet);
+}
 
-  if (!wallet && !userHandle) {
-    return res.status(400).json({ ok: false, error: "wallet-or-handle-required" });
+async function awardQuest(wallet, questId, xp) {
+  const db = await getDb();
+  if (!wallet) return;
+  // check if already awarded
+  const already = await db.get(
+    `SELECT id FROM user_quests WHERE wallet = ? AND quest_id = ? LIMIT 1`,
+    wallet,
+    questId
+  );
+  if (already) return;
+
+  await db.run(
+    `INSERT INTO user_quests (wallet, quest_id, status, xp_awarded)
+     VALUES (?, ?, 'completed', ?)`,
+    wallet,
+    questId,
+    xp
+  );
+  await db.run(
+    `UPDATE users SET xp = COALESCE(xp,0) + ? WHERE wallet = ?`,
+    xp,
+    wallet
+  );
+}
+
+async function twitterGet(path) {
+  if (!TW_BEARER) {
+    return { ok: false, error: "TWITTER_BEARER_TOKEN missing" };
+  }
+  const r = await fetch(`https://api.twitter.com/2${path}`, {
+    headers: {
+      Authorization: `Bearer ${TW_BEARER}`,
+    },
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    return { ok: false, error: text || r.statusText };
+  }
+  return { ok: true, data: await r.json() };
+}
+
+// verify follow
+router.post("/follow", async (req, res) => {
+  const wallet = req.session?.address || req.body?.wallet || req.body?.address;
+  const userToCheck = req.body?.user_id; // twitter user id of the player
+  const targetHandle = "7goldencowries";
+
+  if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
+  if (!userToCheck) return res.status(400).json({ ok: false, error: "twitter-user-id-required" });
+
+  // get our account id
+  const me = await twitterGet(`/users/by/username/${targetHandle}`);
+  if (!me.ok) return res.status(500).json(me);
+  const targetId = me.data?.data?.id;
+  if (!targetId) return res.status(500).json({ ok: false, error: "target-id-missing" });
+
+  // check if userToCheck follows targetId
+  const flw = await twitterGet(`/users/${userToCheck}/following`);
+  if (!flw.ok) return res.status(500).json(flw);
+  const arr = flw.data?.data || [];
+  const isFollowing = arr.some((x) => x.id === targetId);
+
+  if (!isFollowing) {
+    return res.json({ ok: false, followed: false });
   }
 
-  // in real flow you would map wallet -> twitter_handle from DB
-  // here we accept ?handle=...
-  const handle = userHandle || "7goldencowries"; // placeholder user
+  await ensureUser(wallet);
+  await awardQuest(wallet, "follow-twitter", 50);
 
-  const r = await fetch(
-    `https://api.twitter.com/2/users/by/username/${encodeURIComponent(handle)}`,
-    {
-      headers: { Authorization: `Bearer ${BEARER}` },
-    }
-  );
-  if (!r.ok) return res.status(500).json({ ok: false, error: "twitter-lookup-failed" });
-  const user = await r.json();
-  const userId = user?.data?.id;
-  if (!userId) return res.status(404).json({ ok: false, error: "twitter-user-not-found" });
-
-  const r2 = await fetch(
-    `https://api.twitter.com/2/users/${userId}/following?max_results=1000`,
-    {
-      headers: { Authorization: `Bearer ${BEARER}` },
-    }
-  );
-  if (!r2.ok) return res.status(500).json({ ok: false, error: "twitter-following-failed" });
-  const following = await r2.json();
-  const followed = (following.data || []).some(
-    (f) => f.username?.toLowerCase() === String(target).toLowerCase()
-  );
-
-  res.json({ ok: true, followed, wallet, target });
+  res.json({ ok: true, followed: true, xp: 50 });
 });
 
-// you can add verify-retweet, verify-quote here the same way
+// verify retweet of pinned tweet
+router.post("/retweet", async (req, res) => {
+  const wallet = req.session?.address || req.body?.wallet || req.body?.address;
+  const userToCheck = req.body?.user_id; // twitter user id of the player
+  const tweetId = "1947595024117502145";
+
+  if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
+  if (!userToCheck) return res.status(400).json({ ok: false, error: "twitter-user-id-required" });
+
+  const rts = await twitterGet(`/tweets/${tweetId}/retweeted_by`);
+  if (!rts.ok) return res.status(500).json(rts);
+  const arr = rts.data?.data || [];
+  const hasRt = arr.some((x) => x.id === userToCheck);
+
+  if (!hasRt) {
+    return res.json({ ok: false, retweeted: false });
+  }
+
+  await ensureUser(wallet);
+  await awardQuest(wallet, "retweet-pinned", 75);
+
+  res.json({ ok: true, retweeted: true, xp: 75 });
+});
+
+// verify quote
+router.post("/quote", async (req, res) => {
+  const wallet = req.session?.address || req.body?.wallet || req.body?.address;
+  const userToCheck = req.body?.user_id;
+  const tweetId = "1947595024117502145";
+
+  if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
+  if (!userToCheck) return res.status(400).json({ ok: false, error: "twitter-user-id-required" });
+
+  // get quote tweets
+  const qt = await twitterGet(`/tweets/${tweetId}/quote_tweets`);
+  if (!qt.ok) return res.status(500).json(qt);
+  const arr = qt.data?.data || [];
+  const hasQuote = arr.some((x) => x.author_id === userToCheck);
+
+  if (!hasQuote) {
+    return res.json({ ok: false, quoted: false });
+  }
+
+  await ensureUser(wallet);
+  await awardQuest(wallet, "quote-tweet", 100);
+
+  res.json({ ok: true, quoted: true, xp: 100 });
+});
 
 export default router;

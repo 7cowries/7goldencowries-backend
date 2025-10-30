@@ -1,81 +1,63 @@
-// routes/quests.js — live quests, NO schema changes here
-import { Router } from "express";
+// routes/quests.js — live, uses DB quests table
+import express from "express";
 import dbp from "../db.js";
 
-const router = Router();
-const dbPromise = dbp;
+const router = express.Router();
 
-// GET /api/quests
+async function getDb() {
+  return dbp;
+}
+
+// list quests
 router.get("/", async (req, res) => {
-  const db = await dbPromise;
-  const rows = await db.all(
-    `SELECT id, title, description, category, xp, link, sort_order, is_active
-     FROM quests
-     WHERE is_active = 1
-     ORDER BY sort_order, title;`
-  );
+  const db = await getDb();
+  const rows = await db.all(`SELECT id, title, description, category, type, xp, link FROM quests ORDER BY created_at DESC;`);
   res.json({ ok: true, quests: rows });
 });
 
-// POST /api/quests/claim
+// claim quest (idempotent)
 router.post("/claim", async (req, res) => {
-  const db = await dbPromise;
-  const wallet =
-    req.session?.address || req.get("x-wallet") || req.body?.address || req.body?.wallet || null;
+  const db = await getDb();
+  const wallet = req.session?.address || req.body?.wallet || req.body?.address;
+  const questId = req.body?.id;
   if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
-
-  const questId = (req.body?.questId || req.body?.id || "").trim();
   if (!questId) return res.status(400).json({ ok: false, error: "quest-id-required" });
 
-  const quest = await db.get(`SELECT * FROM quests WHERE id = ? AND is_active = 1;`, questId);
+  // get quest
+  const quest = await db.get(`SELECT * FROM quests WHERE id = ?`, questId);
   if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
 
-  // ensure user exists
-  await db.run(`INSERT OR IGNORE INTO users (wallet) VALUES (?);`, wallet);
-  const user = await db.get(`SELECT id, xp FROM users WHERE wallet = ?;`, wallet);
-
-  // insert completion
-  await db.run(
-    `INSERT OR IGNORE INTO user_quests (user_id, wallet, quest_id, completed_at)
-     VALUES (?, ?, ?, datetime('now'));`,
-    user.id,
+  // check if already claimed
+  const already = await db.get(
+    `SELECT id FROM user_quests WHERE wallet = ? AND quest_id = ? LIMIT 1`,
     wallet,
     questId
   );
-
-  // award XP
-  await db.run(
-    `UPDATE users SET xp = xp + ?, updated_at = datetime('now') WHERE id = ?;`,
-    quest.xp,
-    user.id
-  );
-
-  // soft leaderboard bump (ignore errors)
-  try {
-    await db.run(
-      `INSERT INTO leaderboard (wallet, xp, updated_at)
-       VALUES (?, ?, datetime('now'))
-       ON CONFLICT(wallet) DO UPDATE SET
-         xp = xp + excluded.xp,
-         updated_at = datetime('now');`,
-      wallet,
-      quest.xp
-    );
-  } catch (_) {
-    // ignore if leaderboard table not present
+  if (already) {
+    return res.json({ ok: true, claimed: false, reason: "already-claimed" });
   }
 
-  res.json({
-    ok: true,
-    claimed: true,
+  // insert completion
+  await db.run(
+    `INSERT INTO user_quests (wallet, quest_id, status, xp_awarded)
+     VALUES (?, ?, 'completed', ?)`,
+    wallet,
     questId,
-    xpDelta: quest.xp,
-  });
-});
+    quest.xp || 0
+  );
 
-// optional proof
-router.post("/proof", async (_req, res) => {
-  res.json({ ok: true });
+  // add xp to user
+  await db.run(
+    `INSERT OR IGNORE INTO users (wallet, xp, level, level_name) VALUES (?, 0, 1, 'Shellborn')`,
+    wallet
+  );
+  await db.run(
+    `UPDATE users SET xp = COALESCE(xp,0) + ? WHERE wallet = ?`,
+    quest.xp || 0,
+    wallet
+  );
+
+  res.json({ ok: true, claimed: true, xp: quest.xp || 0 });
 });
 
 export default router;
