@@ -2,27 +2,25 @@
   "name": "7goldencowries-backend",
   "version": "1.0.0",
   "description": "Backend for 7 Golden Cowries",
-  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "start:prod": "NODE_ENV=production node server.js",
-    "dev": "NODE_ENV=development node server.js",
     "render-start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "start:prod": "NODE_ENV=production node server.js",
     "migrate:quests": "sqlite3 $DATABASE_URL < scripts/migrate-quests.sql",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
-    "smoke": "node scripts/smoke.mjs",
+    "migrate:leaderboard": "sqlite3 $DATABASE_URL < scripts/migrate-leaderboard.sql",
     "bootstrap": "node scripts/bootstrap-db.js",
+    "smoke": "node scripts/smoke.mjs",
     "probe:off": "node scripts/toggleProbe.js",
     "probe:on": "ACTIVE=1 node scripts/toggleProbe.js",
-    "migrate:leaderboard": "sqlite3 $DATABASE_URL < scripts/migrate-leaderboard.sql"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
   },
   "engines": {
-    "node": ">=18 <23"
+    "node": "20.x"
   },
   "license": "ISC",
   "dependencies": {
-    "@tonconnect/ui-react": "^2.3.0",
     "axios": "^1.6.0",
     "body-parser": "^1.20.3",
     "compression": "^1.8.1",
