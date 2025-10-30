@@ -1,5 +1,6 @@
 // server.js — 7 Golden Cowries
-// render-safe / sqlite-safe / no stubs / live quests / twitter verify / TON / referrals
+// render-safe, migrations-first, dynamic route imports, live quests, twitter verify, subscriptions, TON, referrals
+
 import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
@@ -7,15 +8,7 @@ import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
-
-// your db.js returns a default sqlite *promise* (NOT named exports)
 import dbp from "./db.js";
-
-// routers (all live)
-import leaderboardRouter from "./routes/leaderboard.js";
-import questsRouter from "./routes/quests.js";
-import referralsRouter from "./routes/referrals.js";
-import twitterVerifyRouter from "./routes/twitterVerify.js";
 
 const app = express();
 
@@ -39,18 +32,19 @@ try {
   console.warn("[db/open] using in-memory sqlite — non persistent");
 }
 
-// helper: check if a table already has a column
+// helper: does table have column?
 async function tableHasColumn(table, column) {
   try {
     const rows = await db.all(`PRAGMA table_info(${table});`);
     return Array.isArray(rows) && rows.some((r) => r.name === column);
-  } catch {
+  } catch (e) {
+    console.warn(`[pragma] failed for ${table}.${column}:`, e.message);
     return false;
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// 2) idempotent migrations — do NOT throw, just log
+// 2) idempotent migrations — MUST run BEFORE we import routers
 async function ensureSchemaSafe() {
   // USERS
   try {
@@ -70,7 +64,7 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] users failed:", e.message);
   }
 
-  // SUBSCRIPTIONS — create + heal (this is the one Render kept shouting about)
+  // SUBSCRIPTIONS (create + self-heal)
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS subscriptions (
@@ -85,7 +79,7 @@ async function ensureSchemaSafe() {
       );
     `);
 
-    // some old DBs on Render were created without "active"
+    // very old DBs on Render: make sure columns exist
     if (!(await tableHasColumn("subscriptions", "active"))) {
       await db.exec(
         `ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`
@@ -141,7 +135,7 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] ton_invoices failed:", e.message);
   }
 
-  // QUESTS (master)
+  // QUESTS
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS quests (
@@ -192,7 +186,7 @@ async function ensureSchemaSafe() {
     console.warn("[migrate] referrals failed:", e.message);
   }
 
-  // SEED 6 LIVE QUESTS — only if empty
+  // SEED 6 LIVE QUESTS
   try {
     const row = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
     if (!row || !row.c) {
@@ -275,10 +269,22 @@ async function ensureSchemaSafe() {
   }
 }
 
+// run migrations FIRST
 await ensureSchemaSafe();
 
 // ─────────────────────────────────────────────────────────────
-// 3) express base
+// 3) NOW import routers dynamically (so above code runs first)
+const { default: leaderboardRouter } = await import(
+  "./routes/leaderboard.js"
+);
+const { default: questsRouter } = await import("./routes/quests.js");
+const { default: referralsRouter } = await import("./routes/referrals.js");
+const { default: twitterVerifyRouter } = await import(
+  "./routes/twitterVerify.js"
+);
+
+// ─────────────────────────────────────────────────────────────
+// 4) express base
 app.set("trust proxy", 1);
 app.use(
   helmet({
@@ -326,7 +332,7 @@ app.use(
 );
 
 // ─────────────────────────────────────────────────────────────
-// 4) helpers
+// helpers
 function normalizeAddress(a) {
   if (!a) return null;
   const s = String(a).trim();
@@ -338,8 +344,7 @@ async function materializeUserByAddress(address) {
   if (!addr) return null;
   try {
     await db.run(
-      `INSERT OR IGNORE INTO users (wallet, xp, level, level_name)
-       VALUES (?, 0, 1, 'Shellborn');`,
+      `INSERT OR IGNORE INTO users (wallet, xp, level, level_name) VALUES (?, 0, 1, 'Shellborn');`,
       addr
     );
     return await db.get(
@@ -362,7 +367,7 @@ function extractAddressFromReq(req) {
   return null;
 }
 
-// normalize body wallet -> address
+// normalize body
 app.use((req, _res, next) => {
   const b = req.body || {};
   if (b.wallet && !b.address) b.address = String(b.wallet).trim();
@@ -388,8 +393,7 @@ app.use(async (req, _res, next) => {
   next();
 });
 
-// ─────────────────────────────────────────────────────────────
-// 5) HEALTH
+// HEALTH
 app.get("/api/health", async (_req, res) => {
   try {
     await db.get("SELECT 1;");
@@ -399,11 +403,10 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-// 6) AUTH (wallet session)
+// AUTH
 app.post("/api/auth/wallet/session", async (req, res) => {
   const address = normalizeAddress(req.body?.address);
   if (!address) return res.status(400).json({ ok: false, error: "address-required" });
-
   const user = await materializeUserByAddress(address);
   if (!user) return res.status(500).json({ ok: false, error: "user-create-failed" });
 
@@ -420,7 +423,7 @@ app.post("/api/auth/wallet/session", async (req, res) => {
   res.json({ ok: true, address: user.wallet, session: "set" });
 });
 
-// 7) ME
+// ME
 app.get("/api/me", (req, res) => {
   if (!req.session?.address) {
     const hint = extractAddressFromReq(req);
@@ -430,60 +433,26 @@ app.get("/api/me", (req, res) => {
   res.json({ ok: true, authed: true, wallet: req.session.address });
 });
 
-// ─────────────────────────────────────────────────────────────
-// 8) SUBSCRIPTIONS (bulletproof)
+// SUBSCRIPTIONS helpers
 function boostForTier(tier) {
   return tier === "Gold" ? 2.0 : tier === "Explorer" ? 1.5 : 1.0;
 }
-
 async function getSubStatus(wallet) {
-  // no wallet → free
   if (!wallet) return { active: false, tier: "Free", xpBoost: 1.0 };
-
-  // NEW SCHEMA path (has active)
-  try {
-    const row = await db.get(
-      `SELECT tier, active
-       FROM subscriptions
-       WHERE wallet = ?
-       ORDER BY id DESC
-       LIMIT 1`,
-      wallet
-    );
-    if (!row) return { active: false, tier: "Free", xpBoost: 1.0 };
-    return {
-      active: !!row.active,
-      tier: row.tier,
-      xpBoost: boostForTier(row.tier),
-    };
-  } catch (err) {
-    // OLD SCHEMA path (no active column) → treat any row as active
-    console.warn("[getSubStatus] active column missing, using legacy mode:", err.message);
-    const legacy = await db.get(
-      `SELECT tier
-       FROM subscriptions
-       WHERE wallet = ?
-       ORDER BY id DESC
-       LIMIT 1`,
-      wallet
-    );
-    if (!legacy) return { active: false, tier: "Free", xpBoost: 1.0 };
-    return {
-      active: true,
-      tier: legacy.tier,
-      xpBoost: boostForTier(legacy.tier),
-    };
-  }
+  const row = await db.get(
+    `SELECT tier, active FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
+    wallet
+  );
+  if (!row) return { active: false, tier: "Free", xpBoost: 1.0 };
+  return { active: !!row.active, tier: row.tier, xpBoost: boostForTier(row.tier) };
 }
-
 app.get("/api/subscriptions/status", async (req, res) => {
   const wallet = req.session?.address || extractAddressFromReq(req);
   const s = await getSubStatus(wallet);
-  res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost, active: s.active });
+  res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
 });
 
-// ─────────────────────────────────────────────────────────────
-// 9) TON PAYMENTS (same logic, just using getSubStatus above)
+// TON payments
 async function fetchIncomingTxFromToncenter(address, limit = 30) {
   const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(
     address
@@ -518,7 +487,6 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
   }));
   return { transactions };
 }
-
 async function fetchIncomingTxFromTonApi(address, limit = 30) {
   const r = await fetch(
     `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
@@ -529,7 +497,6 @@ async function fetchIncomingTxFromTonApi(address, limit = 30) {
   if (!r.ok) throw new Error(`TonAPI ${r.status}`);
   return r.json();
 }
-
 async function fetchIncomingTx(address, limit = 30) {
   try {
     return await fetchIncomingTxFromToncenter(address, limit);
@@ -544,7 +511,6 @@ async function fetchIncomingTx(address, limit = 30) {
   }
   throw new Error("no-indexer-available");
 }
-
 function priceForTier(tier) {
   const map = {
     Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
@@ -553,7 +519,7 @@ function priceForTier(tier) {
   return map[tier] || map.Explorer || 0;
 }
 
-// create TON invoice
+// create invoice
 app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   const wallet =
     req.session?.address ||
@@ -604,19 +570,17 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   });
 });
 
-// verify TON invoice
+// verify invoice
 app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   const id = req.params.id;
   const inv = await db.get(`SELECT * FROM ton_invoices WHERE id = ?`, id);
   if (!inv) return res.status(404).json({ ok: false, error: "invoice-not-found" });
 
-  // already confirmed
   if (inv.status === "confirmed") {
     const s = await getSubStatus(inv.wallet);
     return res.json({ ok: true, invoice: inv, subscription: s });
   }
 
-  // expired
   if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) {
     await db.run(
       `UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?`,
@@ -649,13 +613,10 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   if (!matched) return res.json({ ok: true, invoice: inv, pending: true });
 
   await db.run(
-    `UPDATE ton_invoices
-     SET status='confirmed', tx_hash=?, updated_at=datetime('now')
-     WHERE id=?`,
+    `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`,
     String(matched.tx_hash || ""),
     id
   );
-
   await db.run(
     `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
      VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
@@ -672,7 +633,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   });
 });
 
-// simple aliases
+// unified alias
 app.get("/api/v1/payments/status", async (req, res) => {
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
@@ -699,7 +660,7 @@ app.get("/api/payments/status", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// 10) mount live routers
+// 11) MOUNT ROUTES (now routers are safely imported)
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
 app.use("/api/quests", questsRouter);
@@ -711,7 +672,7 @@ app.use("/api/twitter", twitterVerifyRouter);
 // 404
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
 
-// error handler
+// error
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok: false, error: "internal_error" });
