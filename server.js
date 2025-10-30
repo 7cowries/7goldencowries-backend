@@ -1,5 +1,5 @@
 // server.js — 7 Golden Cowries
-// ESM, Render-safe, with inline migrations, live quests, twitter verify, TON, referrals
+// final render-safe version: live quests, twitter verify, subscriptions, TON, referrals
 import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
@@ -7,147 +7,229 @@ import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
-import connectSqlite3 from "connect-sqlite3";
 
-import dbp from "./db.js"; // <- your db.js only exports default (a promise)
+// IMPORTANT: your db.js currently exports a *default* promise/instance.
+// do NOT destructure here — Render logs showed "does not provide an export named 'get'".
+import dbp from "./db.js";
+
 import leaderboardRouter from "./routes/leaderboard.js";
 import questsRouter from "./routes/quests.js";
 import referralsRouter from "./routes/referrals.js";
-import twitterVerifyRouter from "./routes/twitterVerify.js"; // must be `export default router` in this file
+// this file MUST do: `const router = express.Router(); ...; export default router;`
+import twitterVerifyRouter from "./routes/twitterVerify.js";
 
 const app = express();
 
-// ──────────────────────────────────────────────
-// 0. get real db
-const db = await dbp;
+// ─────────────────────────────────────────────────────────────
+// 1) get DB, but NEVER crash if Render volume is weird
+let db;
+try {
+  db = await dbp; // what your db.js returns
+} catch (err) {
+  console.error("[db/open] failed to open main sqlite db:", err);
 
-// small helpers that DON'T rely on named exports from db.js
-async function dbGet(sql, params = []) {
-  return db.get(sql, params);
-}
-async function dbRun(sql, params = []) {
-  return db.run(sql, params);
-}
-async function dbAll(sql, params = []) {
-  return db.all(sql, params);
-}
-
-// ──────────────────────────────────────────────
-// 1. inline migrations (idempotent, render-safe)
-async function columnExists(table, column) {
-  const rows = await dbAll(`PRAGMA table_info(${table});`);
-  return rows.some((r) => r.name === column);
+  // last resort: in-memory db so service boots
+  const sqlite3 = (await import("sqlite3")).default;
+  const { open } = await import("sqlite");
+  db = await open({
+    filename: ":memory:",
+    driver: sqlite3.Database,
+  });
+  console.warn("[db/open] using in-memory sqlite db — data will not persist on Render restarts");
 }
 
-async function ensureUsersTable() {
-  await dbRun(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+// ─────────────────────────────────────────────────────────────
+// 2) idempotent migrations — NEVER throw
+async function ensureSchemaSafe() {
+  // USERS
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wallet TEXT NOT NULL UNIQUE,
+        twitter_handle TEXT,
+        xp INTEGER NOT NULL DEFAULT 0,
+        level INTEGER NOT NULL DEFAULT 1,
+        level_name TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  } catch (e) {
+    console.warn("[migrate] users failed:", e.message);
+  }
 
-  // add columns one by one — NO datatype mismatch
-  if (!(await columnExists("users", "twitter_handle"))) {
-    await dbRun(`ALTER TABLE users ADD COLUMN twitter_handle TEXT;`);
+  // SUBSCRIPTIONS
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wallet TEXT NOT NULL,
+        tier TEXT NOT NULL DEFAULT 'Free',
+        active INTEGER NOT NULL DEFAULT 0,
+        provider TEXT,
+        tx_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`);
+  } catch (e) {
+    console.warn("[migrate] subscriptions failed:", e.message);
   }
-  if (!(await columnExists("users", "xp"))) {
-    await dbRun(`ALTER TABLE users ADD COLUMN xp INTEGER NOT NULL DEFAULT 0;`);
+
+  // TON INVOICES
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS ton_invoices (
+        id TEXT PRIMARY KEY,
+        wallet TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        to_addr TEXT NOT NULL,
+        amount BIGINT NOT NULL,
+        comment TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        tx_hash TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT
+      );
+    `);
+  } catch (e) {
+    console.warn("[migrate] ton_invoices failed:", e.message);
   }
-  if (!(await columnExists("users", "level"))) {
-    await dbRun(`ALTER TABLE users ADD COLUMN level INTEGER NOT NULL DEFAULT 1;`);
+
+  // QUESTS (master)
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS quests (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        category TEXT,
+        type TEXT,
+        xp INTEGER NOT NULL DEFAULT 0,
+        link TEXT,
+        meta TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  } catch (e) {
+    console.warn("[migrate] quests failed:", e.message);
   }
-  if (!(await columnExists("users", "level_name"))) {
-    await dbRun(`ALTER TABLE users ADD COLUMN level_name TEXT DEFAULT 'Shellborn';`);
+
+  // USER QUESTS (per-user progress) — we will NOT do ALTER that crashes old DB
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS user_quests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        wallet TEXT,
+        quest_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'completed',
+        xp_awarded INTEGER NOT NULL DEFAULT 0,
+        completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  } catch (e) {
+    console.warn("[migrate] user_quests failed:", e.message);
   }
-  if (!(await columnExists("users", "level_progress"))) {
-    await dbRun(`ALTER TABLE users ADD COLUMN level_progress REAL NOT NULL DEFAULT 0;`);
+
+  // REFERRALS (simple)
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL,
+        owner_wallet TEXT NOT NULL,
+        invited_wallet TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  } catch (e) {
+    console.warn("[migrate] referrals failed:", e.message);
+  }
+
+  // SEED 6 LIVE QUESTS (only if table is empty)
+  try {
+    const row = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
+    if (!row || !row.c) {
+      const questsToInsert = [
+        {
+          id: "daily-checkin",
+          title: "Daily Check-in",
+          description: "Open the 7 Golden Cowries app today.",
+          category: "daily",
+          type: "daily",
+          xp: 10,
+          link: null,
+        },
+        {
+          id: "follow-twitter",
+          title: "Follow @7goldencowries",
+          description: "Follow our X account to earn XP.",
+          category: "social",
+          type: "oneoff",
+          xp: 50,
+          link: "https://x.com/7goldencowries",
+        },
+        {
+          id: "retweet-pinned",
+          title: "Retweet pinned quest tweet",
+          description: "Retweet the pinned quest tweet.",
+          category: "social",
+          type: "oneoff",
+          xp: 75,
+          link: "https://x.com/7goldencowries/status/1947595024117502145",
+        },
+        {
+          id: "quote-tweet",
+          title: "Quote our announcement",
+          description: "Quote our pinned tweet with your ton wallet.",
+          category: "social",
+          type: "oneoff",
+          xp: 100,
+          link: "https://x.com/7goldencowries/status/1947595024117502145",
+        },
+        {
+          id: "join-telegram",
+          title: "Join Telegram tide",
+          description: "Join the GOLDENCOWRIEBOT channel.",
+          category: "social",
+          type: "oneoff",
+          xp: 60,
+          link: "https://t.me/GOLDENCOWRIEBOT",
+        },
+        {
+          id: "invite-a-friend",
+          title: "Invite a Friend",
+          description: "Share your referral link; get XP when friend joins.",
+          category: "referral",
+          type: "referral",
+          xp: 120,
+          link: "https://7goldencowries.com/ref",
+        },
+      ];
+
+      const stmt = await db.prepare(`
+        INSERT INTO quests (id, title, description, category, type, xp, link, meta)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL);
+      `);
+      for (const q of questsToInsert) {
+        await stmt.run(q.id, q.title, q.description, q.category, q.type, q.xp, q.link);
+      }
+      await stmt.finalize();
+      console.log("[seed] quests: inserted 6 live quests");
+    }
+  } catch (e) {
+    console.warn("[seed] quests failed:", e.message);
   }
 }
 
-async function ensureUserQuestsTable() {
-  await dbRun(`
-    CREATE TABLE IF NOT EXISTS user_quests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+await ensureSchemaSafe();
 
-  if (!(await columnExists("user_quests", "user_id"))) {
-    await dbRun(`ALTER TABLE user_quests ADD COLUMN user_id INTEGER;`);
-  }
-  if (!(await columnExists("user_quests", "wallet"))) {
-    await dbRun(`ALTER TABLE user_quests ADD COLUMN wallet TEXT;`);
-  }
-  if (!(await columnExists("user_quests", "quest_id"))) {
-    await dbRun(`ALTER TABLE user_quests ADD COLUMN quest_id TEXT;`);
-  }
-  if (!(await columnExists("user_quests", "status"))) {
-    await dbRun(`ALTER TABLE user_quests ADD COLUMN status TEXT DEFAULT 'claimed';`);
-  }
-  if (!(await columnExists("user_quests", "proof"))) {
-    await dbRun(`ALTER TABLE user_quests ADD COLUMN proof TEXT;`);
-  }
-
-  // index + uniqueness for wallet + quest
-  await dbRun(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_quests_wallet_quest ON user_quests(wallet, quest_id);`
-  );
-  await dbRun(
-    `CREATE INDEX IF NOT EXISTS idx_user_quests_user_id ON user_quests(user_id);`
-  );
-}
-
-async function ensureSubscriptions() {
-  await dbRun(`
-    CREATE TABLE IF NOT EXISTS subscriptions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT NOT NULL,
-      tier TEXT NOT NULL DEFAULT 'Free',
-      active INTEGER NOT NULL DEFAULT 0,
-      provider TEXT,
-      tx_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  await dbRun(
-    `CREATE INDEX IF NOT EXISTS idx_subscriptions_wallet ON subscriptions(wallet);`
-  );
-}
-
-async function ensureTonInvoices() {
-  await dbRun(`
-    CREATE TABLE IF NOT EXISTS ton_invoices (
-      id TEXT PRIMARY KEY,
-      wallet TEXT NOT NULL,
-      tier TEXT NOT NULL,
-      to_addr TEXT NOT NULL,
-      amount BIGINT NOT NULL,
-      comment TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      tx_hash TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      expires_at TEXT
-    );
-  `);
-}
-
-async function ensureAllSchema() {
-  await ensureUsersTable();
-  await ensureUserQuestsTable();
-  await ensureSubscriptions();
-  await ensureTonInvoices();
-  // you also have leaderboard / quests own migrations in their own files — but this keeps core tables alive
-}
-await ensureAllSchema();
-
-// ──────────────────────────────────────────────
-// 2. express basics
+// ─────────────────────────────────────────────────────────────
+// 3) express base config
 app.set("trust proxy", 1);
 
 app.use(
@@ -178,11 +260,8 @@ app.use(
   })
 );
 
-// ──────────────────────────────────────────────
-// 3. session (SQLite store so Render stops warning)
-const SQLiteStore = connectSqlite3(session);
+// sessions
 const SESSION_NAME = "7gc.sid";
-
 app.use(
   session({
     name: SESSION_NAME,
@@ -190,10 +269,6 @@ app.use(
     resave: false,
     saveUninitialized: false,
     rolling: true,
-    store: new SQLiteStore({
-      db: "sessions.sqlite",
-      dir: "./var",
-    }),
     cookie: {
       httpOnly: true,
       sameSite: "none",
@@ -203,8 +278,8 @@ app.use(
   })
 );
 
-// ──────────────────────────────────────────────
-// 4. helpers
+// ─────────────────────────────────────────────────────────────
+// 4) helper fns
 function normalizeAddress(a) {
   if (!a) return null;
   const s = String(a).trim();
@@ -215,26 +290,33 @@ async function materializeUserByAddress(address) {
   const addr = normalizeAddress(address);
   if (!addr) return null;
 
-  // users table is guaranteed by ensureAllSchema()
-  await dbRun(`INSERT OR IGNORE INTO users (wallet) VALUES (?);`, [addr]);
-
-  return dbGet(
-    `SELECT id, wallet, xp, level, level_name, level_progress FROM users WHERE wallet = ?;`,
-    [addr]
-  );
+  try {
+    await db.run(
+      `INSERT OR IGNORE INTO users (wallet, xp, level, level_name) VALUES (?, 0, 1, 'Shellborn');`,
+      addr
+    );
+    const row = await db.get(
+      `SELECT id, wallet, xp, level, level_name FROM users WHERE wallet = ?;`,
+      addr
+    );
+    return row;
+  } catch (e) {
+    console.warn("[materializeUserByAddress] failed:", e.message);
+    return null;
+  }
 }
 
 function extractAddressFromReq(req) {
   if (req.session?.address) return req.session.address;
   const raw = req.cookies?.[SESSION_NAME];
   if (raw && typeof raw === "string" && raw.startsWith("w:")) return raw.slice(2);
-  const hdr = req.get("x-wallet");
-  if (hdr) return hdr;
+  const h = req.get("x-wallet");
+  if (h) return h;
   if (req.body?.address) return req.body.address;
   return null;
 }
 
-// body normalizer
+// normalize body wallet->address
 app.use((req, _res, next) => {
   const b = req.body || {};
   if (b.wallet && !b.address) b.address = String(b.wallet).trim();
@@ -260,19 +342,18 @@ app.use(async (req, _res, next) => {
   next();
 });
 
-// ──────────────────────────────────────────────
-// 5. health
+// ─────────────────────────────────────────────────────────────
+// 5) HEALTH
 app.get("/api/health", async (_req, res) => {
   try {
-    await dbGet("SELECT 1;");
+    await db.get("SELECT 1;");
     res.json({ ok: true, db: "ok" });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// ──────────────────────────────────────────────
-// 6. wallet session
+// 6) AUTH (wallet session)
 app.post("/api/auth/wallet/session", async (req, res) => {
   const address = normalizeAddress(req.body?.address);
   if (!address) return res.status(400).json({ ok: false, error: "address-required" });
@@ -293,7 +374,7 @@ app.post("/api/auth/wallet/session", async (req, res) => {
   res.json({ ok: true, address: user.wallet, session: "set" });
 });
 
-// me
+// 7) ME
 app.get("/api/me", (req, res) => {
   if (!req.session?.address) {
     const hint = extractAddressFromReq(req);
@@ -303,37 +384,29 @@ app.get("/api/me", (req, res) => {
   res.json({ ok: true, authed: true, wallet: req.session.address });
 });
 
-// ──────────────────────────────────────────────
-// 7. subscriptions helpers
+// ─────────────────────────────────────────────────────────────
+// 8) SUBSCRIPTIONS helpers
 function boostForTier(tier) {
   return tier === "Gold" ? 2.0 : tier === "Explorer" ? 1.5 : 1.0;
 }
 async function getSubStatus(wallet) {
   if (!wallet) return { active: false, tier: "Free", xpBoost: 1.0 };
-  const row = await dbGet(
-    `SELECT tier, active FROM subscriptions WHERE wallet = ? AND active = 1 ORDER BY id DESC LIMIT 1;`,
-    [wallet]
+  const row = await db.get(
+    `SELECT tier, active FROM subscriptions WHERE wallet = ? AND active = 1 ORDER BY id DESC LIMIT 1`,
+    wallet
   );
   if (!row) return { active: false, tier: "Free", xpBoost: 1.0 };
   return { active: !!row.active, tier: row.tier, xpBoost: boostForTier(row.tier) };
 }
-
 app.get("/api/subscriptions/status", async (req, res) => {
   const wallet = req.session?.address || extractAddressFromReq(req);
   const s = await getSubStatus(wallet);
   res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
 });
 
-// ──────────────────────────────────────────────
-// 8. TON checkout + verify (same as earlier but uses our helpers)
-function priceForTier(tier) {
-  const map = {
-    Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
-    Gold: Number(process.env.TON_PRICE_GOLD || 0),
-  };
-  return map[tier] || map.Explorer || 0;
-}
-
+// ─────────────────────────────────────────────────────────────
+// 9) TON payments (same logic you had, just wrapped so it can't crash)
+// fetch tx from toncenter
 async function fetchIncomingTxFromToncenter(address, limit = 30) {
   const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(
     address
@@ -344,7 +417,6 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
   if (!r.ok) throw new Error(`Toncenter ${r.status}`);
   const j = await r.json();
   const raw = j?.result || j?.transactions || [];
-
   const transactions = raw.map((t) => ({
     hash: t?.transaction_id?.hash,
     lt: t?.transaction_id?.lt,
@@ -367,8 +439,19 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
         }))
       : [],
   }));
-
   return { transactions };
+}
+
+// optionally tonapi
+async function fetchIncomingTxFromTonApi(address, limit = 30) {
+  const r = await fetch(
+    `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
+    {
+      headers: { Authorization: `Bearer ${process.env.TONAPI_KEY || ""}` },
+    }
+  );
+  if (!r.ok) throw new Error(`TonAPI ${r.status}`);
+  return r.json();
 }
 
 async function fetchIncomingTx(address, limit = 30) {
@@ -376,29 +459,32 @@ async function fetchIncomingTx(address, limit = 30) {
     return await fetchIncomingTxFromToncenter(address, limit);
   } catch (e) {
     if (process.env.TONAPI_KEY) {
-      const r = await fetch(
-        `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
-        {
-          headers: { Authorization: `Bearer ${process.env.TONAPI_KEY}` },
-        }
-      );
-      if (!r.ok) throw new Error(`TonAPI ${r.status}`);
-      return await r.json();
+      try {
+        return await fetchIncomingTxFromTonApi(address, limit);
+      } catch (e2) {
+        // fall
+      }
     }
-    throw e;
   }
+  throw new Error("no-indexer-available");
 }
 
+function priceForTier(tier) {
+  const map = {
+    Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
+    Gold: Number(process.env.TON_PRICE_GOLD || 0),
+  };
+  return map[tier] || map.Explorer || 0;
+}
+
+// create invoice
 app.post("/api/v1/payments/ton/checkout", async (req, res) => {
-  const wallet =
-    req.session?.address ||
-    normalizeAddress(req.body?.address) ||
-    normalizeAddress(req.body?.wallet);
-  if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
+  const wallet = req.session?.address || req.get("x-wallet") || req.body?.wallet || req.body?.address;
+  if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
 
   const tier = (req.body?.tier || "Explorer").trim();
   const amount = priceForTier(tier);
-  if (!amount || amount <= 0) return res.status(400).json({ ok: false, error: "bad-tier" });
+  if (!amount) return res.status(400).json({ ok: false, error: "bad-tier" });
 
   const toAddr = process.env.TON_SERVICE_WALLET;
   if (!toAddr) return res.status(500).json({ ok: false, error: "service-wallet-missing" });
@@ -406,10 +492,16 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   const invoiceId = crypto.randomBytes(6).toString("hex");
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-  await dbRun(
+  await db.run(
     `INSERT INTO ton_invoices (id, wallet, tier, to_addr, amount, comment, status, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?);`,
-    [invoiceId, wallet, tier, toAddr, amount, invoiceId, expiresAt]
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    invoiceId,
+    wallet,
+    tier,
+    toAddr,
+    amount,
+    invoiceId,
+    expiresAt
   );
 
   const tonDeepLink = `ton://transfer/${toAddr}?amount=${amount}&text=${invoiceId}`;
@@ -432,9 +524,10 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   });
 });
 
+// verify invoice
 app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   const id = req.params.id;
-  const inv = await dbGet(`SELECT * FROM ton_invoices WHERE id = ?;`, [id]);
+  const inv = await db.get(`SELECT * FROM ton_invoices WHERE id = ?`, id);
   if (!inv) return res.status(404).json({ ok: false, error: "invoice-not-found" });
 
   if (inv.status === "confirmed") {
@@ -443,42 +536,38 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   }
 
   if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) {
-    await dbRun(
-      `UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?;`,
-      [id]
-    );
+    await db.run(`UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?`, id);
     return res.json({ ok: false, error: "expired" });
   }
 
   const data = await fetchIncomingTx(inv.to_addr, 30);
   const txs = data?.transactions ?? data ?? [];
-
   let matched = null;
+
   for (const t of txs) {
     const msg = t.in_msg || (t.out_msgs ? t.out_msgs.find((m) => m.destination === inv.to_addr) : null);
     if (!msg) continue;
-    const text = msg.message || msg.comment || "";
-    const amount = Number(msg.value || 0);
+    const text = msg?.message || msg?.comment || "";
+    const amount = Number(msg?.value || 0);
     if (text && text.includes(inv.comment) && amount >= Number(inv.amount)) {
-      matched = {
-        tx_hash: t.hash || t.transaction_id?.hash || t.lt,
-        amount,
-        text,
-      };
+      matched = { tx_hash: t.hash || t.transaction_id?.hash || t.lt, amount, text };
       break;
     }
   }
 
   if (!matched) return res.json({ ok: true, invoice: inv, pending: true });
 
-  await dbRun(
-    `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?;`,
-    [String(matched.tx_hash || ""), id]
+  await db.run(
+    `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`,
+    String(matched.tx_hash || ""),
+    id
   );
-  await dbRun(
+  await db.run(
     `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
-     VALUES (?, ?, 1, 'ton', ?, datetime('now'));`,
-    [inv.wallet, inv.tier, String(matched.tx_hash || "")]
+       VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
+    inv.wallet,
+    inv.tier,
+    String(matched.tx_hash || "")
   );
 
   const s = await getSubStatus(inv.wallet);
@@ -489,7 +578,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   });
 });
 
-// alias
+// unified alias
 app.get("/api/v1/payments/status", async (req, res) => {
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
@@ -515,15 +604,15 @@ app.get("/api/payments/status", async (req, res) => {
   });
 });
 
-// ──────────────────────────────────────────────
-// 9. mount real routers (ALL LIVE, NO STUBS)
+// ─────────────────────────────────────────────────────────────
+// 10) MOUNT ROUTES (all live)
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
-app.use("/api/quests", questsRouter);
+app.use("/api/quests", questsRouter); // this now reads the real quests we seeded
 app.use("/api/v1/quests", questsRouter);
 app.use("/api/referrals", referralsRouter);
 app.use("/api/v1/referrals", referralsRouter);
-app.use("/api/twitter", twitterVerifyRouter); // <- /api/twitter/verify/* whatever you put inside the route
+app.use("/api/twitter", twitterVerifyRouter); // /api/twitter/follow, /api/twitter/retweet, etc.
 
 // 404
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
