@@ -1,141 +1,182 @@
-import { Router } from "express";
-import db from "../lib/db.js";
+import db from "../db.js";
 
-const router = Router();
+const BASE_QUESTS = [
+  {
+    id: "daily-checkin",
+    title: "Daily Check-in",
+    description: "Open 7goldencowries today and sync.",
+    category: "daily",
+    xp: 25
+  },
+  {
+    id: "follow-twitter",
+    title: "Follow @7goldencowries",
+    description: "Follow our X account to unlock ocean XP.",
+    category: "social",
+    xp: 80,
+    link: "https://x.com/7goldencowries"
+  },
+  {
+    id: "retweet-pinned",
+    title: "Retweet the pinned quest tweet",
+    description: "Boost the pinned tweet to the tides.",
+    category: "social",
+    xp: 120,
+    link: "https://x.com/7goldencowries/status/1947595024117502145"
+  },
+  {
+    id: "quote-pinned",
+    title: "Quote the pinned tweet",
+    description: "Add your own tide message to the pinned tweet.",
+    category: "social",
+    xp: 150,
+    link: "https://x.com/7goldencowries/status/1947595024117502145"
+  },
+  {
+    id: "referral-first",
+    title: "Invite a friend",
+    description: "Invite 1 friend that binds wallet.",
+    category: "referral",
+    xp: 200
+  }
+];
 
-async function ensureQuestSchema() {
+async function ensureQuestTables() {
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS quests(
+    CREATE TABLE IF NOT EXISTS quests (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       description TEXT,
-      xp INTEGER NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'oneoff',
-      active INTEGER NOT NULL DEFAULT 1
-    );
-
-    CREATE TABLE IF NOT EXISTS quest_completions(
-      wallet TEXT NOT NULL,
-      quest_id TEXT NOT NULL,
-      proof TEXT,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-      PRIMARY KEY(wallet, quest_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS users(
-      wallet TEXT PRIMARY KEY,
-      xp INTEGER NOT NULL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS leaderboard_scores(
-      address TEXT PRIMARY KEY,
-      score   INTEGER NOT NULL DEFAULT 0
+      category TEXT,
+      xp INTEGER NOT NULL DEFAULT 0,
+      link TEXT
     );
   `);
-}
 
-async function seedQuestsOnce() {
-  const row = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
-  if ((row?.c ?? 0) > 0) return;
-  // Minimal seed (extend later in the DB, FE reads from API)
   await db.exec(`
-    INSERT INTO quests(id, title, description, xp, kind, active) VALUES
-      ('onboarding_connect_wallet','Connect your TON wallet','Link your wallet to begin your journey',50,'oneoff',1),
-      ('join_community','Join the community','Join our Telegram/Discord to get updates',50,'oneoff',1),
-      ('daily_checkin','Daily check-in','Return daily to earn XP',10,'daily',1),
-      ('share_referral','Share your referral link','Invite a friend using your link',25,'referral',1);
+    CREATE TABLE IF NOT EXISTS user_quests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      quest_id TEXT NOT NULL,
+      completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, quest_id)
+    );
   `);
+
+  /* in case the table existed without quest_id (your Render log error) */
+  const cols = await db.all(`PRAGMA table_info(user_quests);`);
+  const hasQuestId = cols.some(c => c.name === "quest_id");
+  if (!hasQuestId) {
+    await db.exec(`ALTER TABLE user_quests ADD COLUMN quest_id TEXT;`);
+  }
+
+  // seed base quests idempotently
+  for (const q of BASE_QUESTS) {
+    await db.run(
+      `INSERT OR IGNORE INTO quests (id, title, description, category, xp, link)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      q.id, q.title, q.description, q.category, q.xp, q.link || null
+    );
+  }
 }
+
+await ensureQuestTables();
 
 function normalizeAddress(a) {
-  const s = String(a || "").trim();
+  if (!a) return null;
+  const s = String(a).trim();
   return s.length ? s : null;
 }
 
-async function awardXp(wallet, delta) {
-  const addr = normalizeAddress(wallet);
-  const inc  = Number.isFinite(+delta) ? +delta : 0;
-  if (!addr || inc <= 0) return;
-
-  await db.exec("BEGIN;");
-  await db.run(`INSERT OR IGNORE INTO users(wallet, xp) VALUES(?, 0);`, addr);
-
-  const u = await db.get(`SELECT xp FROM users WHERE wallet=?;`, addr);
-  if (u) {
-    await db.run(`UPDATE users SET xp = xp + ? WHERE wallet = ?;`, inc, addr);
-  } else {
-    await db.run(`INSERT INTO users(wallet, xp) VALUES(?, ?);`, addr, inc);
-  }
-
-  const l = await db.get(`SELECT score FROM leaderboard_scores WHERE address=?;`, addr);
-  if (l) {
-    await db.run(`UPDATE leaderboard_scores SET score = score + ? WHERE address = ?;`, inc, addr);
-  } else {
-    await db.run(`INSERT INTO leaderboard_scores(address, score) VALUES(?, ?);`, addr, inc);
-  }
-  await db.exec("COMMIT;");
+async function getUserByWallet(wallet) {
+  const w = normalizeAddress(wallet);
+  if (!w) return null;
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wallet TEXT NOT NULL UNIQUE,
+      xp INTEGER NOT NULL DEFAULT 0,
+      levelName TEXT,
+      levelProgress REAL,
+      twitterHandle TEXT
+    );
+  `);
+  await db.run(`INSERT OR IGNORE INTO users (wallet) VALUES (?)`, w);
+  return await db.get(`SELECT * FROM users WHERE wallet = ?`, w);
 }
 
-router.get("/", async (_req, res) => {
-  try {
-    await ensureQuestSchema();
-    await seedQuestsOnce();
-    const rows = await db.all(
-      `SELECT id, title, description, xp, kind, active
-         FROM quests
-        WHERE active = 1
-        ORDER BY CASE kind
-                   WHEN 'daily' THEN 0
-                   WHEN 'oneoff' THEN 1
-                   WHEN 'referral' THEN 2
-                   ELSE 99
-                 END, rowid ASC;`
-    );
+export async function listQuestsHandler(req, res) {
+  const wallet =
+    req.session?.address ||
+    req.get("x-wallet") ||
+    req.query.wallet ||
+    req.body?.wallet ||
+    null;
 
-    // multi-shape compat for FE
-    res.json({ ok: true, results: rows, rows, items: rows, quests: rows });
-  } catch (e) {
-    console.error("quests list error:", e);
-    res.status(500).json({ ok: false, error: "internal_error" });
+  await ensureQuestTables();
+
+  const quests = await db.all(`SELECT id, title, description, category, xp, link FROM quests ORDER BY id ASC`);
+
+  let completed = [];
+  if (wallet) {
+    const user = await getUserByWallet(wallet);
+    if (user) {
+      const rows = await db.all(`SELECT quest_id FROM user_quests WHERE user_id = ?`, user.id);
+      completed = rows.map(r => r.quest_id);
+    }
   }
-});
 
-router.post("/claim", async (req, res) => {
+  const data = quests.map(q => ({
+    ...q,
+    completed: completed.includes(q.id)
+  }));
+
+  res.json({ ok: true, quests: data });
+}
+
+export async function claimQuestHandler(req, res) {
+  const { questId, id } = req.body || {};
+  const qid = questId || id;
+  if (!qid) return res.status(400).json({ ok: false, error: "quest-id-required" });
+
+  const wallet =
+    req.session?.address ||
+    req.get("x-wallet") ||
+    req.body?.wallet ||
+    req.body?.address ||
+    null;
+  if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
+
+  await ensureQuestTables();
+
+  const user = await getUserByWallet(wallet);
+  if (!user) return res.status(500).json({ ok: false, error: "user-not-created" });
+
+  const quest = await db.get(`SELECT * FROM quests WHERE id = ?`, qid);
+  if (!quest) return res.status(404).json({ ok: false, error: "quest-not-found" });
+
   try {
-    const wallet = normalizeAddress(req?.session?.wallet);
-    if (!wallet) return res.status(401).json({ ok: false, error: "not_authed" });
-
-    const { id, proof } = req.body || {};
-    const qid = String(id || "").trim();
-    if (!qid) return res.status(400).json({ ok: false, error: "bad_request" });
-
-    await ensureQuestSchema();
-
-    const quest = await db.get(`SELECT id, xp, kind, active FROM quests WHERE id=?;`, qid);
-    if (!quest || !quest.active) return res.status(404).json({ ok: false, error: "quest_not_found" });
-
-    // one claim per wallet per quest (MVP)
-    const existing = await db.get(
-      `SELECT 1 FROM quest_completions WHERE wallet=? AND quest_id=?;`,
-      wallet, qid
-    );
-    if (existing) return res.json({ ok: true, claimed: false, message: "already_claimed" });
-
-    await db.exec("BEGIN;");
     await db.run(
-      `INSERT INTO quest_completions(wallet, quest_id, proof) VALUES(?,?,?);`,
-      wallet, qid, proof ? String(proof).slice(0,1024) : null
+      `INSERT INTO user_quests (user_id, quest_id, completed_at) VALUES (?, ?, datetime('now'))`,
+      user.id,
+      quest.id
     );
-    await db.exec("COMMIT;");
-
-    await awardXp(wallet, quest.xp);
-
-    res.json({ ok: true, claimed: true, questId: qid, xpAwarded: quest.xp });
   } catch (e) {
-    try { await db.exec("ROLLBACK;"); } catch {}
-    console.error("quests claim error:", e);
-    res.status(500).json({ ok: false, error: "internal_error" });
+    // UNIQUE(user_id, quest_id)
   }
-});
 
-export default router;
+  // add XP
+  const xpDelta = Number(quest.xp || 0);
+  if (xpDelta > 0) {
+    await db.run(`UPDATE users SET xp = COALESCE(xp,0) + ? WHERE id = ?`, xpDelta, user.id);
+  }
+
+  res.json({ ok: true, quest: quest.id, xpDelta, totalXp: user.xp + xpDelta });
+}
+
+export default function questsRouter(app) {
+  app.get("/api/quests", listQuestsHandler);
+  app.get("/api/v1/quests", listQuestsHandler);
+  app.post("/api/quests/claim", claimQuestHandler);
+  app.post("/api/v1/quests/claim", claimQuestHandler);
+}
