@@ -1,19 +1,14 @@
-import { open } from 'sqlite';
-import sqlite3 from 'sqlite3';
+const sqlite3 = require('sqlite3');
+const { open } = require('sqlite');
 
-const DB_FILE = process.env.DATABASE_URL || './data.sqlite';
-
-export async function getDb() {
-  const db = await open({ filename: DB_FILE, driver: sqlite3.Database });
-  await db.exec(`
-    PRAGMA journal_mode=WAL;
-    PRAGMA foreign_keys=ON;
-
-    CREATE TABLE IF NOT EXISTS leaderboard_scores (
-      address    TEXT PRIMARY KEY,
-      score      INTEGER NOT NULL DEFAULT 0,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  return db;
+let dbPromise;
+async function getDB() {
+  if (!dbPromise) {
+    dbPromise = open({
+      filename: process.env.DATABASE_URL || './data.sqlite',
+      driver: sqlite3.Database
+    });
+  }
+  return dbPromise;
 }
+module.exports = { getDB };
