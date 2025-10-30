@@ -1,6 +1,5 @@
 // server.js — 7 Golden Cowries
-// ESM, Render-safe, live quests (from routes/quests.js), TON payments, referrals,
-// leaderboard, twitter verify, session wallet bind
+// ESM, Render-safe, boot migrations, live quests, referrals, TON payments, Twitter verify
 
 import "dotenv/config";
 import express from "express";
@@ -10,26 +9,36 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
 
-import dbPromise, { dbGet, dbRun, dbAll } from "./db.js";
+import dbp, {
+  get as dbGet,
+  run as dbRun,
+  all as dbAll,
+} from "./db.js";
 import migrateOnBoot from "./scripts/migrate-on-boot.mjs";
 
 import leaderboardRouter from "./routes/leaderboard.js";
 import questsRouter from "./routes/quests.js";
 import referralsRouter from "./routes/referrals.js";
-import twitterVerifyRouter from "./routes/twitterVerify.js";
 
-const app = express();
-
-// 1) run DB migrations first (idempotent, safe on Render)
-await migrateOnBoot(console);
-
-// 2) if we ever need the raw db:
-const db = await dbPromise;
+// 🔐 try to import Twitter verify no matter how it was exported
+import * as twitterVerifyAny from "./routes/twitterVerify.js";
 
 // ───────────────────────────────────────────────────────────────
-// Express base
+// 0. DB + migrations must run BEFORE we start the app
+await migrateOnBoot(console);
+
+// we still keep the real db instance in case we need raw SQL later
+const db = await dbp;
+
+// ───────────────────────────────────────────────────────────────
+// 1. Express app
+const app = express();
+
+// Behind Render / proxies
 app.set("trust proxy", 1);
 
+// ───────────────────────────────────────────────────────────────
+// 2. Security, parsers, rate-limit
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
@@ -41,12 +50,11 @@ app.use(
         "style-src": ["'self'", "https:", "'unsafe-inline'"],
         "script-src-attr": ["'none'"],
         "object-src": ["'none'"],
-        "upgrade-insecure-requests": []
-      }
-    }
+        "upgrade-insecure-requests": [],
+      },
+    },
   })
 );
-
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(
@@ -59,9 +67,8 @@ app.use(
 );
 
 // ───────────────────────────────────────────────────────────────
-// Sessions
+// 3. Sessions
 const SESSION_NAME = "7gc.sid";
-
 app.use(
   session({
     name: SESSION_NAME,
@@ -73,13 +80,14 @@ app.use(
       httpOnly: true,
       sameSite: "none",
       secure: true,
-      maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
+      maxAge: 1000 * 60 * 60 * 24 * 30,
     },
   })
 );
 
 // ───────────────────────────────────────────────────────────────
-// Helpers
+// 4. Helpers
+
 function normalizeAddress(a) {
   if (!a) return null;
   const s = String(a).trim();
@@ -90,6 +98,7 @@ async function materializeUserByAddress(address) {
   const addr = normalizeAddress(address);
   if (!addr) return null;
 
+  // users table is unified: wallet, xp, level, twitter
   await dbRun(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,11 +112,10 @@ async function materializeUserByAddress(address) {
     );
   `);
 
-  await dbRun(`INSERT OR IGNORE INTO users (wallet) VALUES (?);`, [addr]);
-
+  await dbRun(`INSERT OR IGNORE INTO users (wallet) VALUES (?);`, addr);
   return await dbGet(
-    `SELECT id, wallet, xp, level, level_name FROM users WHERE wallet = ?;`,
-    [addr]
+    `SELECT id, wallet, xp, level, twitter_handle FROM users WHERE wallet = ?;`,
+    addr
   );
 }
 
@@ -127,14 +135,17 @@ function extractAddressFromReq(req) {
   return null;
 }
 
-// copy body.wallet -> body.address if missing
+// body normalizer — copy wallet → address if missing
 app.use((req, _res, next) => {
   const b = req.body || {};
-  if (b.wallet && !b.address) b.address = String(b.wallet).trim();
+  if (b.wallet && !b.address) {
+    b.address = String(b.wallet).trim();
+    req.body = b;
+  }
   next();
 });
 
-// session binder (wallet -> user)
+// session binder — every request tries to attach user
 app.use(async (req, _res, next) => {
   try {
     if (req.session?.userId) return next();
@@ -147,14 +158,15 @@ app.use(async (req, _res, next) => {
       req.userId = user.id;
       req.userAddress = user.wallet;
     }
-  } catch (err) {
-    console.error("[binder] failed", err);
+  } catch (e) {
+    console.error("[binder]", e);
   }
   next();
 });
 
 // ───────────────────────────────────────────────────────────────
-// Billing tables (subscriptions + ton_invoices)
+// 5. Billing tables (subscriptions + ton_invoices)
+
 async function ensureBillingTables() {
   await dbRun(`
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -168,9 +180,7 @@ async function ensureBillingTables() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
-  await dbRun(
-    `CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`
-  );
+  await dbRun(`CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`);
 
   await dbRun(`
     CREATE TABLE IF NOT EXISTS ton_invoices (
@@ -190,18 +200,15 @@ async function ensureBillingTables() {
 }
 await ensureBillingTables();
 
-// price / boost helpers
 function priceForTier(tier) {
-  // you can set these in Render env
   const map = {
-    Free: 0,
     Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
     Gold: Number(process.env.TON_PRICE_GOLD || 0),
     Tier1: Number(process.env.TON_PRICE_TIER1 || 0),
     Tier2: Number(process.env.TON_PRICE_TIER2 || 0),
     Tier3: Number(process.env.TON_PRICE_TIER3 || 0),
   };
-  return map[tier] ?? 0;
+  return map[tier] || map.Explorer || 0;
 }
 
 function boostForTier(tier) {
@@ -214,22 +221,19 @@ function boostForTier(tier) {
 async function getSubStatus(wallet) {
   if (!wallet) return { active: false, tier: "Free", xpBoost: 1.0 };
   const row = await dbGet(
-    `SELECT tier, active FROM subscriptions
-      WHERE wallet = ?
-      ORDER BY id DESC
-      LIMIT 1`,
-    [wallet]
+    `SELECT tier, active
+     FROM subscriptions
+     WHERE wallet = ? AND active = 1
+     ORDER BY id DESC LIMIT 1`,
+    wallet
   );
   if (!row) return { active: false, tier: "Free", xpBoost: 1.0 };
-  return {
-    active: !!row.active,
-    tier: row.tier,
-    xpBoost: boostForTier(row.tier),
-  };
+  return { active: !!row.active, tier: row.tier, xpBoost: boostForTier(row.tier) };
 }
 
 // ───────────────────────────────────────────────────────────────
-// Health
+// 6. Health + auth
+
 app.get("/api/health", async (_req, res) => {
   try {
     await dbGet("SELECT 1;");
@@ -239,21 +243,18 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-// ───────────────────────────────────────────────────────────────
-// Wallet session bind
 app.post("/api/auth/wallet/session", async (req, res) => {
   const address = normalizeAddress(req.body?.address);
   if (!address)
     return res.status(400).json({ ok: false, error: "address-required" });
 
   const user = await materializeUserByAddress(address);
-  if (!user)
-    return res.status(500).json({ ok: false, error: "user-create-failed" });
+  if (!user) return res.status(500).json({ ok: false, error: "user-create-failed" });
 
   req.session.userId = user.id;
   req.session.address = user.wallet;
 
-  // readable cookie for curl
+  // readable cookie so curl works
   res.cookie(SESSION_NAME, `w:${user.wallet}`, {
     httpOnly: false,
     sameSite: "none",
@@ -264,8 +265,6 @@ app.post("/api/auth/wallet/session", async (req, res) => {
   res.json({ ok: true, address: user.wallet, session: "set" });
 });
 
-// ───────────────────────────────────────────────────────────────
-// Me
 app.get("/api/me", (req, res) => {
   if (!req.session?.address) {
     const hint = extractAddressFromReq(req);
@@ -276,15 +275,7 @@ app.get("/api/me", (req, res) => {
 });
 
 // ───────────────────────────────────────────────────────────────
-// Subscriptions status (live, reads DB)
-app.get("/api/subscriptions/status", async (req, res) => {
-  const wallet = req.session?.address || extractAddressFromReq(req);
-  const s = await getSubStatus(wallet);
-  res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
-});
-
-// ───────────────────────────────────────────────────────────────
-// TON helpers
+// 7. TON: helpers
 
 async function fetchIncomingTxFromToncenter(address, limit = 30) {
   const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(
@@ -296,7 +287,6 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
   if (!r.ok) throw new Error(`Toncenter ${r.status}`);
   const j = await r.json();
   const raw = j?.result || j?.transactions || [];
-
   const transactions = raw.map((t) => ({
     hash: t?.transaction_id?.hash,
     lt: t?.transaction_id?.lt,
@@ -319,7 +309,6 @@ async function fetchIncomingTxFromToncenter(address, limit = 30) {
         }))
       : [],
   }));
-
   return { transactions };
 }
 
@@ -327,53 +316,48 @@ async function fetchIncomingTxFromTonApi(address, limit = 30) {
   const r = await fetch(
     `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
     {
-      headers: { Authorization: `Bearer ${process.env.TONAPI_KEY || ""}` },
+      headers: {
+        Authorization: `Bearer ${process.env.TONAPI_KEY || ""}`,
+      },
     }
   );
   if (!r.ok) throw new Error(`TonAPI ${r.status}`);
   return r.json();
 }
 
-// unified fetch
 async function fetchIncomingTx(address, limit = 30) {
+  // try toncenter first
   try {
     return await fetchIncomingTxFromToncenter(address, limit);
-  } catch (e) {
-    // fall through
-  }
+  } catch (e) {}
+  // fallback to tonapi
   if (process.env.TONAPI_KEY) {
     try {
       return await fetchIncomingTxFromTonApi(address, limit);
-    } catch (e) {
-      // fall through
-    }
+    } catch (e) {}
   }
   throw new Error("no-indexer-available");
 }
 
 // ───────────────────────────────────────────────────────────────
-// Create TON invoice
+// 8. TON: checkout + verify
+
 app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   try {
     const wallet =
       req.session?.address ||
-      req.get("x-wallet") ||
       normalizeAddress(req.body?.address) ||
       normalizeAddress(req.body?.wallet);
-
-    if (!wallet)
-      return res.status(401).json({ ok: false, error: "wallet-required" });
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
 
     const tier = (req.body?.tier || "Explorer").trim();
     const amount = priceForTier(tier);
-    if (!amount || amount <= 0)
+    if (!amount || amount <= 0) {
       return res.status(400).json({ ok: false, error: "bad-tier" });
+    }
 
     const toAddr = process.env.TON_SERVICE_WALLET;
-    if (!toAddr)
-      return res
-        .status(500)
-        .json({ ok: false, error: "service-wallet-missing" });
+    if (!toAddr) return res.status(500).json({ ok: false, error: "service-wallet-missing" });
 
     const invoiceId = crypto.randomBytes(6).toString("hex");
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
@@ -381,13 +365,19 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
     await dbRun(
       `INSERT INTO ton_invoices (id, wallet, tier, to_addr, amount, comment, status, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-      [invoiceId, wallet, tier, toAddr, amount, invoiceId, expiresAt]
+      invoiceId,
+      wallet,
+      tier,
+      toAddr,
+      amount,
+      invoiceId,
+      expiresAt
     );
 
     const tonDeepLink = `ton://transfer/${toAddr}?amount=${amount}&text=${invoiceId}`;
     const tonConnectPayload = {
       validUntil: Math.floor(Date.now() / 1000) + 60 * 30,
-      messages: [{ address: toAddr, amount: String(amount) }],
+      messages: [{ address: toAddr, amount: String(amount), payload: undefined }],
     };
 
     res.json({
@@ -408,29 +398,25 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   }
 });
 
-// poll TON invoice
 app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    const inv = await dbGet(`SELECT * FROM ton_invoices WHERE id = ?`, [id]);
+    const inv = await dbGet(`SELECT * FROM ton_invoices WHERE id = ?`, id);
     if (!inv) return res.status(404).json({ ok: false, error: "invoice-not-found" });
 
-    // already confirmed
     if (inv.status === "confirmed") {
       const s = await getSubStatus(inv.wallet);
       return res.json({ ok: true, invoice: inv, subscription: s });
     }
 
-    // expired?
     if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) {
       await dbRun(
         `UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?`,
-        [id]
+        id
       );
       return res.json({ ok: false, error: "expired" });
     }
 
-    // check chain
     const data = await fetchIncomingTx(inv.to_addr, 30);
     const txs = data?.transactions ?? data ?? [];
 
@@ -443,6 +429,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
 
       const text = msg?.message || msg?.comment || "";
       const amount = Number(msg?.value || 0);
+
       if (text && text.includes(inv.comment) && amount >= Number(inv.amount)) {
         matched = {
           tx_hash: t.hash || t.transaction_id?.hash || t.lt,
@@ -457,34 +444,35 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
       return res.json({ ok: true, invoice: inv, pending: true });
     }
 
-    // confirm
     await dbRun(
       `UPDATE ton_invoices
-          SET status='confirmed', tx_hash=?, updated_at=datetime('now')
-        WHERE id=?`,
-      [String(matched.tx_hash || ""), id]
+       SET status='confirmed', tx_hash=?, updated_at=datetime('now')
+       WHERE id=?`,
+      String(matched.tx_hash || ""),
+      id
     );
 
     await dbRun(
       `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
-         VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
-      [inv.wallet, inv.tier, String(matched.tx_hash || "")]
+       VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
+      inv.wallet,
+      inv.tier,
+      String(matched.tx_hash || "")
     );
 
     const s = await getSubStatus(inv.wallet);
-
     res.json({
       ok: true,
       invoice: { ...inv, status: "confirmed", tx_hash: matched.tx_hash },
       subscription: s,
     });
   } catch (e) {
-    console.error("ton invoice poll error", e);
+    console.error("ton invoice verify error", e);
     res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
-// unified status
+// unified payments status
 app.get("/api/v1/payments/status", async (req, res) => {
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
@@ -511,9 +499,18 @@ app.get("/api/payments/status", async (req, res) => {
 });
 
 // ───────────────────────────────────────────────────────────────
-// Leaderboard compatibility shim
+// 9. Subscriptions status (old path)
+app.get("/api/subscriptions/status", async (req, res) => {
+  const wallet = req.session?.address || extractAddressFromReq(req);
+  const s = await getSubStatus(wallet);
+  res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
+});
+
+// ───────────────────────────────────────────────────────────────
+// 10. Leaderboard payload shim — keep CRA UI happy
+
 app.use((req, res, next) => {
-  const send = res.json.bind(res);
+  const originalJson = res.json.bind(res);
   res.json = (body) => {
     try {
       if (req.path.startsWith("/api/leaderboard") && body && body.ok) {
@@ -528,37 +525,43 @@ app.use((req, res, next) => {
         body.payload = rows;
         if (!body.data) body.data = rows;
       }
-    } catch (e) {
-      // ignore
-    }
-    return send(body);
+    } catch {}
+    return originalJson(body);
   };
   next();
 });
 
 // ───────────────────────────────────────────────────────────────
-// Mount live routers
+// 11. Mount routers (all LIVE)
+
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
-
 app.use("/api/quests", questsRouter);
 app.use("/api/v1/quests", questsRouter);
-
 app.use("/api/referrals", referralsRouter);
 app.use("/api/v1/referrals", referralsRouter);
 
+// Twitter verify — accept any export shape
+const twitterVerifyRouter =
+  twitterVerifyAny.default ||
+  twitterVerifyAny.router ||
+  twitterVerifyAny.routes ||
+  twitterVerifyAny;
 app.use("/api/twitter", twitterVerifyRouter);
 
 // ───────────────────────────────────────────────────────────────
-// 404 + error
+// 12. 404 + error
+
 app.use((req, res) => res.status(404).json({ ok: false, error: "not_found" }));
+
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ ok: false, error: "internal_error" });
 });
 
 // ───────────────────────────────────────────────────────────────
-// start
+// 13. Start server
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`7GC backend listening on :${PORT}`);
