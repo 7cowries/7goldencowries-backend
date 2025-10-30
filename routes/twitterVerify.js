@@ -1,274 +1,173 @@
-// routes/twitterVerify.js
-// LIVE Twitter verify for 7goldencowries
-// - follow @7goldencowries
-// - retweet pinned tweet
-// - quote pinned tweet
-//
-// This version matches your current db.js on Render
-// (db.js exports ONLY a default, no {get, run, all})
-
+// routes/twitterVerify.js — ESM, works with default db export, live Twitter checks
 import express from "express";
 import dbp from "../db.js";
 
 const router = express.Router();
+const TW_BEARER =
+  process.env.TWITTER_BEARER_TOKEN ||
+  "AAAAAAAAAAAAAAAAAAAAAIxG3AEAAAAAlaSl7FDcA1PBH8GscvvCavtPD%2BU%3DlzjUx07zch0zYHZtgbBhTAFl6AuLY1AlbmoIGdy6jjunWswiJS";
 
-// hardcoded from your project
-const REQUIRED_HANDLE = "7goldencowries";
-const PINNED_TWEET_ID = "1947595024117502145";
+const TARGET_HANDLE = "7goldencowries";
 
-function normalizeAddress(a) {
-  if (!a) return null;
-  const s = String(a).trim();
-  return s.length ? s : null;
+async function getDb() {
+  return await dbp;
 }
 
-// get a real db instance once
-const db = await dbp;
-
-// make sure user_quests exists (idempotent)
-await db.run(`
-  CREATE TABLE IF NOT EXISTS user_quests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    quest_id TEXT NOT NULL,
-    xp_awarded INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(user_id, quest_id)
-  );
-`);
-
-// materialize user from wallet/address
-async function materializeUserByWallet(wallet) {
-  const addr = normalizeAddress(wallet);
-  if (!addr) return null;
-
-  await db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT NOT NULL UNIQUE,
-      twitter_handle TEXT,
-      xp INTEGER NOT NULL DEFAULT 0,
-      level INTEGER NOT NULL DEFAULT 1,
-      level_name TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-
-  await db.run(
-    `INSERT OR IGNORE INTO users (wallet, level, level_name) VALUES (?, 1, 'Shellborn');`,
-    addr
-  );
-
-  return await db.get(
-    `SELECT id, wallet, xp, level FROM users WHERE wallet = ?;`,
-    addr
-  );
-}
-
-// resolve current user from session/cookie/body
-async function resolveUser(req) {
-  // session first
-  if (req.session?.userId && req.session?.address) {
-    return {
-      id: req.session.userId,
-      wallet: req.session.address,
-    };
-  }
-
-  // read cookie 7gc.sid → w:<wallet>
-  const raw = req.cookies?.["7gc.sid"];
-  if (raw && typeof raw === "string" && raw.startsWith("w:")) {
-    const wallet = raw.slice(2);
-    const row = await db.get(`SELECT id, wallet, xp FROM users WHERE wallet = ?;`, wallet);
-    if (row) return row;
-    return await materializeUserByWallet(wallet);
-  }
-
-  // body
-  const bodyWallet =
-    normalizeAddress(req.body?.wallet) ||
-    normalizeAddress(req.body?.address);
-  if (bodyWallet) {
-    return await materializeUserByWallet(bodyWallet);
-  }
-
-  return null;
-}
-
-// award XP once per quest
-async function awardQuestOnce(userId, questId, xp) {
-  try {
-    await db.run(
-      `INSERT INTO user_quests (user_id, quest_id, xp_awarded) VALUES (?, ?, ?);`,
-      userId,
-      questId,
-      xp
-    );
-  } catch (e) {
-    // already claimed → UNIQUE constraint
-    if (!String(e.message || "").includes("UNIQUE")) {
-      console.error("[twitterVerify awardQuestOnce]", e);
-    }
-  }
-
-  // bump users.xp
-  await db.run(
-    `UPDATE users SET xp = COALESCE(xp,0) + ?, updated_at = datetime('now') WHERE id = ?;`,
-    xp,
-    userId
-  );
-}
-
-function getBearer() {
-  const token = process.env.TWITTER_BEARER_TOKEN;
-  if (!token) {
-    console.warn("TWITTER_BEARER_TOKEN missing");
-  }
-  return token;
-}
-
-// basic Twitter GET
-async function twitterGet(url) {
-  const bearer = getBearer();
-  if (!bearer) throw new Error("no-bearer");
+async function twitterGetUserByHandle(handle) {
+  const url = `https://api.twitter.com/2/users/by/username/${handle}?user.fields=id,username,name`;
   const r = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${bearer}`,
-      "User-Agent": "7goldencowries-verifier",
-    },
+    headers: { Authorization: `Bearer ${TW_BEARER}` }
   });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`twitter ${r.status}: ${txt}`);
-  }
-  return r.json();
+  if (!r.ok) return null;
+  const j = await r.json();
+  return j?.data || null;
 }
 
-// ---------------------------------------------------------------------------
+async function twitterGetUserFollows(sourceId, targetId) {
+  const url = `https://api.twitter.com/2/users/${sourceId}/following?max_results=1000`;
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${TW_BEARER}` }
+  });
+  if (!r.ok) return false;
+  const j = await r.json();
+  const data = j?.data || [];
+  return data.some((x) => x.id === targetId);
+}
+
+async function twitterHasRetweeted(userId, tweetId) {
+  const url = `https://api.twitter.com/2/tweets/${tweetId}/retweeted_by`;
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${TW_BEARER}` }
+  });
+  if (!r.ok) return false;
+  const j = await r.json();
+  const data = j?.data || [];
+  return data.some((x) => x.id === userId);
+}
+
+async function twitterHasQuoted(userId, tweetId) {
+  const url = `https://api.twitter.com/2/tweets/search/recent?query=url:${tweetId} is:quote author_id:${userId}`;
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${TW_BEARER}` }
+  });
+  if (!r.ok) return false;
+  const j = await r.json();
+  const data = j?.data || [];
+  return data.length > 0;
+}
+
+// helper: mark quest completed
+async function markQuestCompleted(wallet, questId, xp) {
+  const db = await getDb();
+  // get/create user
+  await db.run(
+    `INSERT OR IGNORE INTO users (wallet) VALUES (?);`,
+    wallet
+  );
+  const user = await db.get(`SELECT id, xp FROM users WHERE wallet = ?;`, wallet);
+
+  // insert into user_quests
+  await db.run(
+    `INSERT INTO user_quests (user_id, wallet, quest_id, status, xp_awarded)
+     VALUES (?, ?, ?, 'completed', ?);`,
+    user.id,
+    wallet,
+    questId,
+    xp
+  );
+
+  // bump xp
+  await db.run(
+    `UPDATE users SET xp = xp + ?, updated_at = datetime('now') WHERE id = ?;`,
+    xp,
+    user.id
+  );
+
+  return { userXp: user.xp + xp };
+}
+
+// GET /api/twitter/verify/health
+router.get("/health", (_req, res) => {
+  res.json({ ok: true, twitter: !!TW_BEARER });
+});
+
 // POST /api/twitter/verify/follow
-// body: { twitter_id }
-// ---------------------------------------------------------------------------
-router.post("/verify/follow", async (req, res) => {
+router.post("/follow", async (req, res) => {
   try {
-    const user = await resolveUser(req);
-    if (!user) return res.status(401).json({ ok: false, error: "no-user" });
+    const wallet = req.body?.wallet || req.body?.address || null;
+    const handle = req.body?.handle || req.body?.twitter || null;
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
+    if (!handle) return res.status(400).json({ ok: false, error: "handle-required" });
 
-    const twitterId = req.body?.twitter_id || req.body?.twitterId;
-    if (!twitterId) {
-      return res.status(400).json({ ok: false, error: "twitter-id-required" });
+    const targetUser = await twitterGetUserByHandle(TARGET_HANDLE);
+    const sourceUser = await twitterGetUserByHandle(handle);
+    if (!targetUser || !sourceUser) {
+      return res.status(400).json({ ok: false, error: "twitter-user-not-found" });
     }
 
-    // get target (@7goldencowries) id
-    const target = await twitterGet(
-      `https://api.twitter.com/2/users/by/username/${REQUIRED_HANDLE}`
-    );
-    const targetId = target?.data?.id;
-    if (!targetId) {
-      return res.status(500).json({ ok: false, error: "target-not-found" });
-    }
-
-    const following = await twitterGet(
-      `https://api.twitter.com/2/users/${twitterId}/following?max_results=1000`
-    );
-
-    const isFollowing =
-      Array.isArray(following?.data) &&
-      following.data.some((u) => String(u.id) === String(targetId));
-
+    const isFollowing = await twitterGetUserFollows(sourceUser.id, targetUser.id);
     if (!isFollowing) {
-      return res.json({ ok: true, verified: false });
+      return res.json({ ok: false, verified: false });
     }
 
-    await awardQuestOnce(user.id, "follow-twitter", 50);
-    return res.json({
-      ok: true,
-      verified: true,
-      quest: "follow-twitter",
-      xp: 50,
-    });
+    const { userXp } = await markQuestCompleted(wallet, "follow-x-7goldencowries", 50);
+    res.json({ ok: true, verified: true, xp: 50, totalXp: userXp });
   } catch (e) {
-    console.error("/api/twitter/verify/follow", e);
-    return res.status(500).json({ ok: false, error: "internal" });
+    console.error("[twitter/follow]", e);
+    res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
-// ---------------------------------------------------------------------------
 // POST /api/twitter/verify/retweet
-// body: { twitter_id }
-// ---------------------------------------------------------------------------
-router.post("/verify/retweet", async (req, res) => {
+router.post("/retweet", async (req, res) => {
   try {
-    const user = await resolveUser(req);
-    if (!user) return res.status(401).json({ ok: false, error: "no-user" });
+    const wallet = req.body?.wallet || req.body?.address || null;
+    const handle = req.body?.handle || req.body?.twitter || null;
+    const tweetId =
+      req.body?.tweetId || "1947595024117502145"; // your pinned tweet
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
+    if (!handle) return res.status(400).json({ ok: false, error: "handle-required" });
 
-    const twitterId = req.body?.twitter_id || req.body?.twitterId;
-    if (!twitterId) {
-      return res.status(400).json({ ok: false, error: "twitter-id-required" });
+    const user = await twitterGetUserByHandle(handle);
+    if (!user) return res.status(400).json({ ok: false, error: "twitter-user-not-found" });
+
+    const hasRt = await twitterHasRetweeted(user.id, tweetId);
+    if (!hasRt) {
+      return res.json({ ok: false, verified: false });
     }
 
-    const retweetedBy = await twitterGet(
-      `https://api.twitter.com/2/tweets/${PINNED_TWEET_ID}/retweeted_by?max_results=1000`
-    );
-
-    const didRetweet =
-      Array.isArray(retweetedBy?.data) &&
-      retweetedBy.data.some((u) => String(u.id) === String(twitterId));
-
-    if (!didRetweet) {
-      return res.json({ ok: true, verified: false });
-    }
-
-    await awardQuestOnce(user.id, "retweet-pinned", 75);
-    return res.json({
-      ok: true,
-      verified: true,
-      quest: "retweet-pinned",
-      xp: 75,
-    });
+    const { userXp } = await markQuestCompleted(wallet, "retweet-pinned", 70);
+    res.json({ ok: true, verified: true, xp: 70, totalXp: userXp });
   } catch (e) {
-    console.error("/api/twitter/verify/retweet", e);
-    return res.status(500).json({ ok: false, error: "internal" });
+    console.error("[twitter/retweet]", e);
+    res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
-// ---------------------------------------------------------------------------
 // POST /api/twitter/verify/quote
-// body: { twitter_id }
-// ---------------------------------------------------------------------------
-router.post("/verify/quote", async (req, res) => {
+router.post("/quote", async (req, res) => {
   try {
-    const user = await resolveUser(req);
-    if (!user) return res.status(401).json({ ok: false, error: "no-user" });
+    const wallet = req.body?.wallet || req.body?.address || null;
+    const handle = req.body?.handle || req.body?.twitter || null;
+    const tweetId =
+      req.body?.tweetId || "1947595024117502145";
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
+    if (!handle) return res.status(400).json({ ok: false, error: "handle-required" });
 
-    const twitterId = req.body?.twitter_id || req.body?.twitterId;
-    if (!twitterId) {
-      return res.status(400).json({ ok: false, error: "twitter-id-required" });
+    const user = await twitterGetUserByHandle(handle);
+    if (!user) return res.status(400).json({ ok: false, error: "twitter-user-not-found" });
+
+    const hasQuote = await twitterHasQuoted(user.id, tweetId);
+    if (!hasQuote) {
+      return res.json({ ok: false, verified: false });
     }
 
-    const query = encodeURIComponent(`from:${twitterId} url:"${PINNED_TWEET_ID}"`);
-    const search = await twitterGet(
-      `https://api.twitter.com/2/tweets/search/recent?query=${query}&max_results=10`
-    );
-
-    const quoted = Array.isArray(search?.data) && search.data.length > 0;
-
-    if (!quoted) {
-      return res.json({ ok: true, verified: false });
-    }
-
-    await awardQuestOnce(user.id, "quote-pinned", 90);
-    return res.json({
-      ok: true,
-      verified: true,
-      quest: "quote-pinned",
-      xp: 90,
-    });
+    const { userXp } = await markQuestCompleted(wallet, "quote-pinned", 90);
+    res.json({ ok: true, verified: true, xp: 90, totalXp: userXp });
   } catch (e) {
-    console.error("/api/twitter/verify/quote", e);
-    return res.status(500).json({ ok: false, error: "internal" });
+    console.error("[twitter/quote]", e);
+    res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
-// IMPORTANT: default export so `import twitterVerifyRouter from "./routes/twitterVerify.js";` works
 export default router;
