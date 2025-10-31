@@ -1,13 +1,11 @@
 // server.js — 7 Golden Cowries
-// render-safe with PRE-FLIGHT DB fix for subscriptions.active
-// order:
-// 1) open sqlite directly
-// 2) create/fix subscriptions table (active, provider, tx_id, timestamps)
-// 3) close preflight
-// 4) import real ./db.js (which used to crash)
-// 5) run normal migrations (users, quests, referrals, invoices)
-// 6) dynamically import routers
-// 7) mount routes
+// Render-safe with PRE-FLIGHT DB fix for subscriptions.active, plus idempotent migrations.
+// Order:
+// 1) PRE-FLIGHT: open sqlite directly & ensure subscriptions table is correct
+// 2) Import ./db.js (app DB)
+// 3) Run normal migrations (users, quests, invoices, referrals, etc.)
+// 4) Import routers
+// 5) Mount routes & start server
 
 import "dotenv/config";
 import express from "express";
@@ -28,15 +26,11 @@ const SQLITE_FILE =
 const sqlite3 = (await import("sqlite3")).default;
 const { open } = await import("sqlite");
 
-// open preflight connection
-const predb = await open({
-  filename: SQLITE_FILE,
-  driver: sqlite3.Database,
-});
-
+// Open preflight connection
+const predb = await open({ filename: SQLITE_FILE, driver: sqlite3.Database });
 console.log("[preflight] opened", SQLITE_FILE);
 
-// make sure subscriptions is exactly what we want
+// Ensure base shape exists (NOTE: CREATE TABLE IF NOT EXISTS never alters existing tables)
 await predb.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,44 +43,17 @@ await predb.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
-
 console.log("[preflight] ensured subscriptions base table");
 
-// some very old DBs might miss columns — add them unconditionally/defensively
-try {
-  await predb.exec(
-    `ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`
-  );
-  console.log("[preflight] added column subscriptions.active");
-} catch (_) {
-  // already exists
-}
-try {
-  await predb.exec(`ALTER TABLE subscriptions ADD COLUMN provider TEXT;`);
-  console.log("[preflight] added column subscriptions.provider");
-} catch (_) {}
-try {
-  await predb.exec(`ALTER TABLE subscriptions ADD COLUMN tx_id TEXT;`);
-  console.log("[preflight] added column subscriptions.tx_id");
-} catch (_) {}
-try {
-  await predb.exec(
-    `ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`
-  );
-  console.log("[preflight] added column subscriptions.created_at");
-} catch (_) {}
-try {
-  await predb.exec(
-    `ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`
-  );
-  console.log("[preflight] added column subscriptions.updated_at");
-} catch (_) {}
+// Backfill columns defensively (ALTERs will no-op if column already exists)
+try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`); console.log("[preflight] added column subscriptions.active"); } catch {}
+try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN provider TEXT;`); console.log("[preflight] added column subscriptions.provider"); } catch {}
+try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN tx_id TEXT;`); console.log("[preflight] added column subscriptions.tx_id"); } catch {}
+try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`); console.log("[preflight] added column subscriptions.created_at"); } catch {}
+try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`); console.log("[preflight] added column subscriptions.updated_at"); } catch {}
 
-// index for wallet
-await predb.exec(
-  `CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`
-);
-
+// Index
+await predb.exec(`CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`);
 await predb.close();
 console.log("[preflight] done, closing preflight DB");
 
@@ -94,7 +61,7 @@ console.log("[preflight] done, closing preflight DB");
 // 1) NOW import the real db.js (this was crashing before)
 const { default: dbp } = await import("./db.js");
 
-// get main DB (the one used by the whole app)
+// Get main DB (used by the whole app)
 let db;
 try {
   db = await dbp;
@@ -105,7 +72,7 @@ try {
   console.warn("[db/open] using in-memory sqlite — non persistent");
 }
 
-// helper: check if a column exists
+// helper: does a table contain a column?
 async function tableHasColumn(table, column) {
   try {
     const rows = await db.all(`PRAGMA table_info(${table});`);
@@ -116,9 +83,7 @@ async function tableHasColumn(table, column) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 2) normal migrations (users, quests, user_quests, referrals, invoices)
-// we still keep this here for safety
-
+// 2) Idempotent migrations (users, quests, invoices, referrals, etc.)
 async function ensureSchemaSafe() {
   // USERS
   try {
@@ -134,16 +99,12 @@ async function ensureSchemaSafe() {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
-  } catch (e) {
-    console.warn("[migrate] users failed:", e.message);
-  }
+  } catch (e) { console.warn("[migrate] users failed:", e.message); }
 
-  // SUBSCRIPTIONS (second pass, just in case)
+  // SUBSCRIPTIONS (second pass — extra safety if preflight couldn't run)
   try {
     if (!(await tableHasColumn("subscriptions", "active"))) {
-      await db.exec(
-        `ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`
-      );
+      await db.exec(`ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`);
       console.log("[migrate] subscriptions: added active (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "provider"))) {
@@ -155,20 +116,15 @@ async function ensureSchemaSafe() {
       console.log("[migrate] subscriptions: added tx_id (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "created_at"))) {
-      await db.exec(
-        `ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`
-      );
+      await db.exec(`ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`);
       console.log("[migrate] subscriptions: added created_at (second pass)");
     }
     if (!(await tableHasColumn("subscriptions", "updated_at"))) {
-      await db.exec(
-        `ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`
-      );
+      await db.exec(`ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`);
       console.log("[migrate] subscriptions: added updated_at (second pass)");
     }
-  } catch (e) {
-    console.warn("[migrate] subscriptions second pass failed:", e.message);
-  }
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);`);
+  } catch (e) { console.warn("[migrate] subscriptions second pass failed:", e.message); }
 
   // TON INVOICES
   try {
@@ -187,11 +143,9 @@ async function ensureSchemaSafe() {
         expires_at TEXT
       );
     `);
-  } catch (e) {
-    console.warn("[migrate] ton_invoices failed:", e.message);
-  }
+  } catch (e) { console.warn("[migrate] ton_invoices failed:", e.message); }
 
-  // QUESTS
+  // QUESTS (master)
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS quests (
@@ -206,11 +160,9 @@ async function ensureSchemaSafe() {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
-  } catch (e) {
-    console.warn("[migrate] quests failed:", e.message);
-  }
+  } catch (e) { console.warn("[migrate] quests failed:", e.message); }
 
-  // USER QUESTS
+  // USER QUESTS (progress)
   try {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS user_quests (
@@ -223,9 +175,7 @@ async function ensureSchemaSafe() {
         completed_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
-  } catch (e) {
-    console.warn("[migrate] user_quests failed:", e.message);
-  }
+  } catch (e) { console.warn("[migrate] user_quests failed:", e.message); }
 
   // REFERRALS
   try {
@@ -238,111 +188,45 @@ async function ensureSchemaSafe() {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
-  } catch (e) {
-    console.warn("[migrate] referrals failed:", e.message);
-  }
+  } catch (e) { console.warn("[migrate] referrals failed:", e.message); }
 
-  // SEED 6 LIVE QUESTS
+  // SEED 6 LIVE QUESTS (only when empty)
   try {
     const row = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
     if (!row || !row.c) {
       const questsToInsert = [
-        {
-          id: "daily-checkin",
-          title: "Daily Check-in",
-          description: "Open the 7 Golden Cowries app today.",
-          category: "daily",
-          type: "daily",
-          xp: 10,
-          link: null,
-        },
-        {
-          id: "follow-twitter",
-          title: "Follow @7goldencowries",
-          description: "Follow our X account to earn XP.",
-          category: "social",
-          type: "oneoff",
-          xp: 50,
-          link: "https://x.com/7goldencowries",
-        },
-        {
-          id: "retweet-pinned",
-          title: "Retweet pinned quest tweet",
-          description: "Retweet the pinned quest tweet.",
-          category: "social",
-          type: "oneoff",
-          xp: 75,
-          link: "https://x.com/7goldencowries/status/1947595024117502145",
-        },
-        {
-          id: "quote-tweet",
-          title: "Quote our announcement",
-          description: "Quote our pinned tweet with your ton wallet.",
-          category: "social",
-          type: "oneoff",
-          xp: 100,
-          link: "https://x.com/7goldencowries/status/1947595024117502145",
-        },
-        {
-          id: "join-telegram",
-          title: "Join Telegram tide",
-          description: "Join the GOLDENCOWRIEBOT channel.",
-          category: "social",
-          type: "oneoff",
-          xp: 60,
-          link: "https://t.me/GOLDENCOWRIEBOT",
-        },
-        {
-          id: "invite-a-friend",
-          title: "Invite a Friend",
-          description: "Share your referral link; get XP when friend joins.",
-          category: "referral",
-          type: "referral",
-          xp: 120,
-          link: "https://7goldencowries.com/ref",
-        },
+        { id: "daily-checkin",   title: "Daily Check-in",            description: "Open the 7 Golden Cowries app today.", category: "daily",   type: "daily",  xp: 10,  link: null },
+        { id: "follow-twitter",  title: "Follow @7goldencowries",    description: "Follow our X account to earn XP.",     category: "social",  type: "oneoff", xp: 50,  link: "https://x.com/7goldencowries" },
+        { id: "retweet-pinned",  title: "Retweet pinned quest tweet",description: "Retweet the pinned quest tweet.",       category: "social",  type: "oneoff", xp: 75,  link: "https://x.com/7goldencowries/status/1947595024117502145" },
+        { id: "quote-tweet",     title: "Quote our announcement",    description: "Quote our pinned tweet with your ton wallet.", category: "social", type: "oneoff", xp: 100, link: "https://x.com/7goldencowries/status/1947595024117502145" },
+        { id: "join-telegram",   title: "Join Telegram tide",        description: "Join the GOLDENCOWRIEBOT channel.",    category: "social",  type: "oneoff", xp: 60,  link: "https://t.me/GOLDENCOWRIEBOT" },
+        { id: "invite-a-friend", title: "Invite a Friend",           description: "Share your referral link; get XP when friend joins.", category: "referral", type: "referral", xp: 120, link: "https://7goldencowries.com/ref" }
       ];
-
       const stmt = await db.prepare(`
         INSERT INTO quests (id, title, description, category, type, xp, link, meta)
         VALUES (?, ?, ?, ?, ?, ?, ?, NULL);
       `);
-
       for (const q of questsToInsert) {
-        await stmt.run(
-          q.id,
-          q.title,
-          q.description,
-          q.category,
-          q.type,
-          q.xp,
-          q.link
-        );
+        await stmt.run(q.id, q.title, q.description, q.category, q.type, q.xp, q.link);
       }
       await stmt.finalize();
       console.log("[seed] quests: inserted 6 live quests");
     }
-  } catch (e) {
-    console.warn("[seed] quests failed:", e.message);
-  }
+  } catch (e) { console.warn("[seed] quests failed:", e.message); }
 }
 
 await ensureSchemaSafe();
 
 // ─────────────────────────────────────────────────────────────
-// 3) ONLY NOW import the routers (after DB is good)
-const { default: leaderboardRouter } = await import(
-  "./routes/leaderboard.js"
-);
-const { default: questsRouter } = await import("./routes/quests.js");
-const { default: referralsRouter } = await import("./routes/referrals.js");
-const { default: twitterVerifyRouter } = await import(
-  "./routes/twitterVerify.js"
-);
+// 3) Import routers AFTER DB is good
+const { default: leaderboardRouter } = await import("./routes/leaderboard.js");
+const { default: questsRouter }      = await import("./routes/quests.js");
+const { default: referralsRouter }   = await import("./routes/referrals.js");
+const { default: twitterVerifyRouter } = await import("./routes/twitterVerify.js");
 
 // ─────────────────────────────────────────────────────────────
-// 4) express base
-const app = express(); // we can re-use the earlier 'app' but keeping it consistent
+// 4) Express base
+const app = express();
 app.set("trust proxy", 1);
 app.use(
   helmet({
@@ -362,16 +246,9 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
-app.use(
-  rateLimit({
-    windowMs: 60_000,
-    max: 200,
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
+app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
-// sessions
+// Sessions
 const SESSION_NAME = "7gc.sid";
 app.use(
   session({
@@ -389,49 +266,35 @@ app.use(
   })
 );
 
-// helpers
+// Helpers
 function normalizeAddress(a) {
   if (!a) return null;
   const s = String(a).trim();
   return s.length ? s : null;
 }
-
 async function materializeUserByAddress(address) {
   const addr = normalizeAddress(address);
   if (!addr) return null;
   try {
-    await db.run(
-      `INSERT OR IGNORE INTO users (wallet, xp, level, level_name) VALUES (?, 0, 1, 'Shellborn');`,
-      addr
-    );
-    return await db.get(
-      `SELECT id, wallet, xp, level, level_name FROM users WHERE wallet = ?;`,
-      addr
-    );
-  } catch (e) {
-    console.warn("[materializeUserByAddress] failed:", e.message);
-    return null;
-  }
+    await db.run(`INSERT OR IGNORE INTO users (wallet, xp, level, level_name) VALUES (?, 0, 1, 'Shellborn');`, addr);
+    return await db.get(`SELECT id, wallet, xp, level, level_name FROM users WHERE wallet = ?;`, addr);
+  } catch (e) { console.warn("[materializeUserByAddress] failed:", e.message); return null; }
 }
-
 function extractAddressFromReq(req) {
   if (req.session?.address) return req.session.address;
   const raw = req.cookies?.[SESSION_NAME];
   if (raw && typeof raw === "string" && raw.startsWith("w:")) return raw.slice(2);
-  const h = req.get("x-wallet");
-  if (h) return h;
+  const h = req.get("x-wallet"); if (h) return h;
   if (req.body?.address) return req.body.address;
   return null;
 }
-
-// normalize body
+// Normalize body
 app.use((req, _res, next) => {
   const b = req.body || {};
   if (b.wallet && !b.address) b.address = String(b.wallet).trim();
   next();
 });
-
-// session binder
+// Session binder
 app.use(async (req, _res, next) => {
   try {
     if (req.session?.userId) return next();
@@ -444,23 +307,17 @@ app.use(async (req, _res, next) => {
       req.userId = user.id;
       req.userAddress = user.wallet;
     }
-  } catch (e) {
-    console.error("[binder]", e);
-  }
+  } catch (e) { console.error("[binder]", e); }
   next();
 });
 
 // HEALTH
 app.get("/api/health", async (_req, res) => {
-  try {
-    await db.get("SELECT 1;");
-    res.json({ ok: true, db: "ok" });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  try { await db.get("SELECT 1;"); res.json({ ok: true, db: "ok" }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// AUTH
+// AUTH (wallet session)
 app.post("/api/auth/wallet/session", async (req, res) => {
   const address = normalizeAddress(req.body?.address);
   if (!address) return res.status(400).json({ ok: false, error: "address-required" });
@@ -471,12 +328,8 @@ app.post("/api/auth/wallet/session", async (req, res) => {
   req.session.address = user.wallet;
 
   res.cookie(SESSION_NAME, `w:${user.wallet}`, {
-    httpOnly: false,
-    sameSite: "none",
-    secure: true,
-    maxAge: 1000 * 60 * 60 * 24 * 30,
+    httpOnly: false, sameSite: "none", secure: true, maxAge: 1000 * 60 * 60 * 24 * 30,
   });
-
   res.json({ ok: true, address: user.wallet, session: "set" });
 });
 
@@ -491,15 +344,10 @@ app.get("/api/me", (req, res) => {
 });
 
 // SUBSCRIPTIONS helpers
-function boostForTier(tier) {
-  return tier === "Gold" ? 2.0 : tier === "Explorer" ? 1.5 : 1.0;
-}
+function boostForTier(tier) { return tier === "Gold" ? 2.0 : tier === "Explorer" ? 1.5 : 1.0; }
 async function getSubStatus(wallet) {
   if (!wallet) return { active: false, tier: "Free", xpBoost: 1.0 };
-  const row = await db.get(
-    `SELECT tier, active FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
-    wallet
-  );
+  const row = await db.get(`SELECT tier, active FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`, wallet);
   if (!row) return { active: false, tier: "Free", xpBoost: 1.0 };
   return { active: !!row.active, tier: row.tier, xpBoost: boostForTier(row.tier) };
 }
@@ -509,61 +357,45 @@ app.get("/api/subscriptions/status", async (req, res) => {
   res.json({ ok: true, wallet, tier: s.tier, xpBoost: s.xpBoost });
 });
 
-// TON payments (same as earlier)
+// TON payments
 async function fetchIncomingTxFromToncenter(address, limit = 30) {
-  const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(
-    address
-  )}&limit=${limit}`;
-  const r = await fetch(url, {
-    headers: { "X-Api-Key": process.env.TONCENTER_KEY || "" },
-  });
+  const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(address)}&limit=${limit}`;
+  const r = await fetch(url, { headers: { "X-Api-Key": process.env.TONCENTER_KEY || "" } });
   if (!r.ok) throw new Error(`Toncenter ${r.status}`);
   const j = await r.json();
   const raw = j?.result || j?.transactions || [];
   const transactions = raw.map((t) => ({
     hash: t?.transaction_id?.hash,
     lt: t?.transaction_id?.lt,
-    in_msg: t?.in_msg
-      ? {
-          value: t.in_msg.value,
-          message: t.in_msg.message,
-          comment: t.in_msg.message,
-          destination: t.in_msg.destination,
-          source: t.in_msg.source,
-        }
-      : null,
-    out_msgs: Array.isArray(t?.out_msgs)
-      ? t.out_msgs.map((m) => ({
-          value: m.value,
-          message: m.message,
-          comment: m.message,
-          destination: m.destination,
-          source: m.source,
-        }))
-      : [],
+    in_msg: t?.in_msg ? {
+      value: t.in_msg.value,
+      message: t.in_msg.message,
+      comment: t.in_msg.message,
+      destination: t.in_msg.destination,
+      source: t.in_msg.source,
+    } : null,
+    out_msgs: Array.isArray(t?.out_msgs) ? t.out_msgs.map((m) => ({
+      value: m.value,
+      message: m.message,
+      comment: m.message,
+      destination: m.destination,
+      source: m.source,
+    })) : [],
   }));
   return { transactions };
 }
 async function fetchIncomingTxFromTonApi(address, limit = 30) {
-  const r = await fetch(
-    `https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`,
-    {
-      headers: { Authorization: `Bearer ${process.env.TONAPI_KEY || ""}` },
-    }
-  );
+  const r = await fetch(`https://tonapi.io/v2/blockchain/accounts/${address}/transactions?limit=${limit}`, {
+    headers: { Authorization: `Bearer ${process.env.TONAPI_KEY || ""}` },
+  });
   if (!r.ok) throw new Error(`TonAPI ${r.status}`);
   return r.json();
 }
 async function fetchIncomingTx(address, limit = 30) {
-  try {
-    return await fetchIncomingTxFromToncenter(address, limit);
-  } catch (e) {
+  try { return await fetchIncomingTxFromToncenter(address, limit); }
+  catch {
     if (process.env.TONAPI_KEY) {
-      try {
-        return await fetchIncomingTxFromTonApi(address, limit);
-      } catch {
-        // ignore
-      }
+      try { return await fetchIncomingTxFromTonApi(address, limit); } catch {}
     }
   }
   throw new Error("no-indexer-available");
@@ -571,18 +403,14 @@ async function fetchIncomingTx(address, limit = 30) {
 function priceForTier(tier) {
   const map = {
     Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
-    Gold: Number(process.env.TON_PRICE_GOLD || 0),
+    Gold:      Number(process.env.TON_PRICE_GOLD || 0),
   };
   return map[tier] || map.Explorer || 0;
 }
 
 // create invoice
 app.post("/api/v1/payments/ton/checkout", async (req, res) => {
-  const wallet =
-    req.session?.address ||
-    req.get("x-wallet") ||
-    req.body?.wallet ||
-    req.body?.address;
+  const wallet = req.session?.address || req.get("x-wallet") || req.body?.wallet || req.body?.address;
   if (!wallet) return res.status(401).json({ ok: false, error: "wallet-required" });
 
   const tier = (req.body?.tier || "Explorer").trim();
@@ -598,13 +426,7 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
   await db.run(
     `INSERT INTO ton_invoices (id, wallet, tier, to_addr, amount, comment, status, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    invoiceId,
-    wallet,
-    tier,
-    toAddr,
-    amount,
-    invoiceId,
-    expiresAt
+    invoiceId, wallet, tier, toAddr, amount, invoiceId, expiresAt
   );
 
   const tonDeepLink = `ton://transfer/${toAddr}?amount=${amount}&text=${invoiceId}`;
@@ -613,18 +435,7 @@ app.post("/api/v1/payments/ton/checkout", async (req, res) => {
     messages: [{ address: toAddr, amount: String(amount) }],
   };
 
-  res.json({
-    ok: true,
-    provider: "ton",
-    invoiceId,
-    tier,
-    amount,
-    to: toAddr,
-    comment: invoiceId,
-    expiresAt,
-    tonDeepLink,
-    tonConnectPayload,
-  });
+  res.json({ ok: true, provider: "ton", invoiceId, tier, amount, to: toAddr, comment: invoiceId, expiresAt, tonDeepLink, tonConnectPayload });
 });
 
 // verify invoice
@@ -639,10 +450,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   }
 
   if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) {
-    await db.run(
-      `UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?`,
-      id
-    );
+    await db.run(`UPDATE ton_invoices SET status='expired', updated_at=datetime('now') WHERE id=?`, id);
     return res.json({ ok: false, error: "expired" });
   }
 
@@ -651,73 +459,39 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req, res) => {
   let matched = null;
 
   for (const t of txs) {
-    const msg =
-      t.in_msg ||
-      (t.out_msgs ? t.out_msgs.find((m) => m.destination === inv.to_addr) : null);
+    const msg = t.in_msg || (t.out_msgs ? t.out_msgs.find((m) => m.destination === inv.to_addr) : null);
     if (!msg) continue;
     const text = msg?.message || msg?.comment || "";
     const amount = Number(msg?.value || 0);
     if (text && text.includes(inv.comment) && amount >= Number(inv.amount)) {
-      matched = {
-        tx_hash: t.hash || t.transaction_id?.hash || t.lt,
-        amount,
-        text,
-      };
+      matched = { tx_hash: t.hash || t.transaction_id?.hash || t.lt, amount, text };
       break;
     }
   }
 
   if (!matched) return res.json({ ok: true, invoice: inv, pending: true });
 
-  await db.run(
-    `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`,
-    String(matched.tx_hash || ""),
-    id
-  );
-  await db.run(
-    `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
-     VALUES (?, ?, 1, 'ton', ?, datetime('now'))`,
-    inv.wallet,
-    inv.tier,
-    String(matched.tx_hash || "")
-  );
+  await db.run(`UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`, String(matched.tx_hash || ""), id);
+  await db.run(`INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at) VALUES (?, ?, 1, 'ton', ?, datetime('now'))`, inv.wallet, inv.tier, String(matched.tx_hash || ""));
 
   const s = await getSubStatus(inv.wallet);
-  res.json({
-    ok: true,
-    invoice: { ...inv, status: "confirmed", tx_hash: matched.tx_hash },
-    subscription: s,
-  });
+  res.json({ ok: true, invoice: { ...inv, status: "confirmed", tx_hash: matched.tx_hash }, subscription: s });
 });
 
-// unified alias
+// Unified alias
 app.get("/api/v1/payments/status", async (req, res) => {
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
-  res.json({
-    ok: true,
-    wallet,
-    active: s.active,
-    provider: s.active ? "ton" : null,
-    tier: s.tier,
-    xpBoost: s.xpBoost,
-  });
+  res.json({ ok: true, wallet, active: s.active, provider: s.active ? "ton" : null, tier: s.tier, xpBoost: s.xpBoost });
 });
 app.get("/api/payments/status", async (req, res) => {
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
-  res.json({
-    ok: true,
-    wallet,
-    active: s.active,
-    provider: s.active ? "ton" : null,
-    tier: s.tier,
-    xpBoost: s.xpBoost,
-  });
+  res.json({ ok: true, wallet, active: s.active, provider: s.active ? "ton" : null, tier: s.tier, xpBoost: s.xpBoost });
 });
 
 // ─────────────────────────────────────────────────────────────
-// 5) mount routers
+// 5) Mount routers
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/v1/leaderboard", leaderboardRouter);
 app.use("/api/quests", questsRouter);
@@ -739,8 +513,5 @@ app.use((err, _req, res, _next) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`7GC backend listening on :${PORT}`);
-  if (!process.env.TWITTER_BEARER_TOKEN) {
-    console.log("TWITTER_BEARER_TOKEN missing");
-  }
+  if (!process.env.TWITTER_BEARER_TOKEN) console.log("TWITTER_BEARER_TOKEN missing");
 });
-
