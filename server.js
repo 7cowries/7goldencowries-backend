@@ -1,10 +1,7 @@
-// server.js — 7 Golden Cowries (FINAL, LIVE)
-// - Render-safe SQLite
-// - Idempotent schema
-// - COMPAT guaranteed: subscriptions.active column exists BEFORE any read
-// - Triggers keep active in sync with tier
-// - Safe fallback if a legacy DB lacks 'active' for any reason
-// - TON checkout + verify endpoints live
+// server.js — 7 Golden Cowries (FINAL, LIVE, no 'active' reads)
+// - Never SELECT or INSERT the 'active' column.
+// - Compute active from tier everywhere.
+// - Preflight creates tables + triggers if possible, but app does not depend on them.
 
 import "dotenv/config";
 import express from "express";
@@ -24,7 +21,7 @@ const sqlite3 = (await import("sqlite3")).default;
 const { open } = await import("sqlite");
 
 // ─────────────────────────────────────────────
-// 0) Preflight DB: create schema + ensure `active` BEFORE anything reads it
+// 0) Preflight DB (safe, but not required for app to run)
 const predb = await open({ filename: SQLITE_FILE, driver: sqlite3.Database });
 console.log("[preflight] opened", SQLITE_FILE);
 
@@ -46,7 +43,7 @@ await predb.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wallet TEXT NOT NULL,
     tier TEXT NOT NULL DEFAULT 'Free',
-    active INTEGER NOT NULL DEFAULT 0,           -- COMPAT: always present
+    active INTEGER NOT NULL DEFAULT 0,
     provider TEXT,
     tx_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -99,14 +96,8 @@ await predb.exec(`
   );
 `);
 
-// Ensure column exists even on legacy DBs (and keep it synced)
-{
-  const cols = await predb.all(`PRAGMA table_info(subscriptions);`);
-  const hasActive = cols.some(c => c.name === "active");
-  if (!hasActive) {
-    console.log("[compat] adding subscriptions.active column");
-    await predb.exec(`ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`);
-  }
+// Best-effort triggers (optional)
+try {
   await predb.exec(`
     CREATE TRIGGER IF NOT EXISTS subscriptions_ai
     AFTER INSERT ON subscriptions
@@ -126,6 +117,8 @@ await predb.exec(`
       WHERE id = NEW.id;
     END;
   `);
+} catch (e) {
+  console.warn("[preflight] trigger setup warning:", e.message);
 }
 
 // Seed quests once
@@ -154,7 +147,7 @@ await predb.close();
 console.log("[preflight] done");
 
 // ─────────────────────────────────────────────
-// 1) Main DB connection (pooled)
+// 1) Main DB
 const { default: dbp } = await import("./db.js");
 let db;
 try {
@@ -165,6 +158,7 @@ try {
   db = await open({ filename: ":memory:", driver: sqlite3.Database });
 }
 
+// helpers
 function normalizeAddress(a){ if(!a) return null; const s=String(a).trim(); return s.length?s:null; }
 async function materializeUserByAddress(address){
   const addr = normalizeAddress(address); if(!addr) return null;
@@ -183,30 +177,17 @@ function extractAddressFromReq(req){
 }
 function boostForTier(tier){ return tier==="Gold"?2.0 : tier==="Explorer"?1.5 : 1.0; }
 
-// SAFE: fall back if 'active' is missing
+// IMPORTANT: never read 'active' column; compute from tier
 async function getSubStatus(wallet){
   const def = { active:false, tier:"Free", xpBoost:1.0 };
   if (!wallet) return def;
-  try {
-    const row = await db.get(
-      `SELECT tier, active FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
-      wallet
-    );
-    if (!row) return def;
-    const active = row.active != null ? !!row.active : (row.tier && row.tier !== "Free");
-    return { active, tier: row.tier, xpBoost: boostForTier(row.tier) };
-  } catch (e) {
-    if ((e?.message || "").includes("no such column: active")) {
-      const r2 = await db.get(
-        `SELECT tier FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
-        wallet
-      );
-      if (!r2) return def;
-      const act2 = r2.tier && r2.tier !== "Free";
-      return { active: act2, tier: r2.tier, xpBoost: boostForTier(r2.tier) };
-    }
-    throw e;
-  }
+  const row = await db.get(
+    `SELECT tier FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
+    wallet
+  );
+  if (!row) return def;
+  const active = row.tier && row.tier !== "Free";
+  return { active, tier: row.tier, xpBoost: boostForTier(row.tier) };
 }
 
 // ─────────────────────────────────────────────
@@ -235,7 +216,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
-// sessions (SQLite store preferred)
+// sessions (SQLiteStore preferred)
 let store = undefined;
 try {
   const SQLiteStore = (await import("connect-sqlite3")).default(session);
@@ -268,7 +249,7 @@ app.use(async (req,_res,next)=>{
 });
 
 // ─────────────────────────────────────────────
-// 3) Core endpoints
+// 3) Endpoints
 app.get("/api/health", async (_req, res) => {
   try { await db.get("SELECT 1;"); res.json({ ok: true, db: "ok" }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -285,6 +266,7 @@ app.post("/api/auth/wallet/session", async (req,res)=>{
   res.json({ ok:true, address:user.wallet, session:"set" });
 });
 
+// Subscriptions status (computed)
 app.get("/api/subscriptions/status", async (req,res)=>{
   const wallet = req.session?.address || extractAddressFromReq(req);
   const s = await getSubStatus(wallet);
@@ -394,10 +376,12 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req,res)=>{
     `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`,
     String(matched.tx_hash||""), id
   );
+
+  // Insert WITHOUT 'active' column — triggers/defaults handle it if present
   await db.run(
-    `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
-     VALUES (?, ?, CASE WHEN ? <> 'Free' THEN 1 ELSE 0 END, 'ton', ?, datetime('now'))`,
-    inv.wallet, inv.tier, inv.tier, String(matched.tx_hash||"")
+    `INSERT INTO subscriptions (wallet, tier, provider, tx_id, updated_at)
+     VALUES (?, ?, 'ton', ?, datetime('now'))`,
+    inv.wallet, inv.tier, String(matched.tx_hash||"")
   );
 
   const s = await getSubStatus(inv.wallet);
