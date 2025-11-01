@@ -1,4 +1,4 @@
-// server.js — 7 Golden Cowries (Render-safe & LIVE)
+// server.js — 7 Golden Cowries (Render-safe & LIVE, no 'active' column dependency)
 import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
@@ -7,11 +7,11 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
 
-// global crash guards (so logs show the real offender)
+// safer logs
 process.on("uncaughtException", (e)=>console.error("[uncaughtException]", e?.stack||e));
 process.on("unhandledRejection", (e)=>console.error("[unhandledRejection]", e?.stack||e));
 
-// ── PRE-FLIGHT: open sqlite BEFORE importing ./db.js and ensure base schema
+// ── DB preflight (no-read, create-only; does NOT require 'active' later)
 const DB_FILE =
   process.env.DATABASE_URL ||
   process.env.DATABASE_PATH ||
@@ -24,76 +24,22 @@ const predb = await open({ filename: DB_FILE, driver: sqlite3.Database });
 await predb.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
 console.log("[preflight] opened", DB_FILE);
 
-// ensure subscriptions base table exists
+// base tables (idempotent)
 await predb.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wallet TEXT NOT NULL,
-    tier TEXT NOT NULL DEFAULT 'Free',
+    tier   TEXT NOT NULL DEFAULT 'Free',
+    /* NOTE: keep 'active' here for new DBs, but we NEVER read it anywhere */
     active INTEGER NOT NULL DEFAULT 0,
     provider TEXT,
-    tx_id TEXT,
+    tx_id    TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     timestamp TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);
-`);
-try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`);} catch {}
-try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN provider TEXT;`);} catch {}
-try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN tx_id TEXT;`);} catch {}
-try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'));`);} catch {}
-try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));`);} catch {}
-try { await predb.exec(`ALTER TABLE subscriptions ADD COLUMN timestamp TEXT;`);} catch {}
-console.log("[preflight] subscriptions ensured");
-await predb.close();
 
-// real DB connection
-const { default: dbp } = await import("./db.js");
-const db = await dbp;
-console.log("[phase] DB opened");
-
-// sanity probe + repair (idempotent)
-async function ensureSubscriptionsActiveColumn() {
-  const cols = await db.all(`PRAGMA table_info(subscriptions);`);
-  const has = cols.some(c => c.name === "active");
-  if (!has) {
-    await db.exec(`ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`);
-    console.log("[migrate] subscriptions: added active");
-  } else {
-    console.log("[probe] subscriptions.active present");
-  }
-}
-await ensureSubscriptionsActiveColumn();
-console.log("[phase] ensureSubscriptionsColumnProbeAndRepair done");
-
-// compat view + query shim (prevents import-time crashes anywhere)
-await db.exec(`
-  CREATE TEMP VIEW IF NOT EXISTS subscriptions_compat AS
-  SELECT
-    id, wallet, tier,
-    COALESCE(active, CASE WHEN COALESCE(tier,'Free')<>'Free' THEN 1 ELSE 0 END) AS active,
-    provider, tx_id, created_at, updated_at, timestamp
-  FROM subscriptions;
-`);
-const _get = db.get.bind(db);
-db.get = async (sql, ...args) => {
-  if (typeof sql === "string" && /FROM\s+subscriptions\b/i.test(sql)) {
-    sql = sql.replace(/FROM\s+subscriptions\b/ig, "FROM subscriptions_compat");
-  }
-  return _get(sql, ...args);
-};
-const _all = db.all.bind(db);
-db.all = async (sql, ...args) => {
-  if (typeof sql === "string" && /FROM\s+subscriptions\b/i.test(sql)) {
-    sql = sql.replace(/FROM\s+subscriptions\b/ig, "FROM subscriptions_compat");
-  }
-  return _all(sql, ...args);
-};
-console.log("[phase] subscriptions_compat view + shim active");
-
-// rest tables (idempotent + live)
-await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wallet TEXT NOT NULL UNIQUE,
@@ -104,6 +50,7 @@ await db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
   CREATE TABLE IF NOT EXISTS ton_invoices (
     id TEXT PRIMARY KEY,
     wallet TEXT NOT NULL,
@@ -117,6 +64,7 @@ await db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT
   );
+
   CREATE TABLE IF NOT EXISTS quests (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -128,6 +76,7 @@ await db.exec(`
     meta TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
   CREATE TABLE IF NOT EXISTS user_quests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -138,6 +87,7 @@ await db.exec(`
     completed_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(wallet, quest_id)
   );
+
   CREATE TABLE IF NOT EXISTS referrals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT NOT NULL,
@@ -148,8 +98,11 @@ await db.exec(`
     UNIQUE(invited_wallet)
   );
 `);
-const rowQ = await db.get(`SELECT COUNT(*) AS c FROM quests;`);
-if (!rowQ?.c) {
+console.log("[preflight] schema ensured");
+
+// seed quests if empty
+const countQuests = await predb.get(`SELECT COUNT(*) AS c FROM quests;`);
+if (!countQuests?.c) {
   const Q = [
     { id:"daily-checkin",  title:"Daily Check-in", description:"Open the app today", category:"daily",  type:"daily",  xp:10,  link:null },
     { id:"follow-twitter", title:"Follow @7goldencowries", description:"Follow our X account", category:"social", type:"oneoff", xp:50,  link:"https://x.com/7goldencowries" },
@@ -158,37 +111,41 @@ if (!rowQ?.c) {
     { id:"join-telegram",  title:"Join Telegram tide", description:"Join GOLDENCOWRIEBOT", category:"social", type:"oneoff", xp:60,  link:"https://t.me/GOLDENCOWRIEBOT" },
     { id:"invite-a-friend",title:"Invite a Friend", description:"Share your referral link", category:"referral",type:"referral", xp:120, link:"https://7goldencowries.com/ref" }
   ];
-  const s = await db.prepare(`INSERT INTO quests(id,title,description,category,type,xp,link,meta) VALUES(?,?,?,?,?,?,?,NULL);`);
+  const s = await predb.prepare(`INSERT INTO quests(id,title,description,category,type,xp,link,meta) VALUES(?,?,?,?,?,?,?,NULL);`);
   for (const q of Q) await s.run(q.id,q.title,q.description,q.category,q.type,q.xp,q.link);
   await s.finalize();
   console.log("[seed] quests inserted");
 }
-console.log("[phase] core tables + seeds done");
+await predb.close();
+console.log("[preflight] done");
 
-// ── EXPRESS
+// main DB handle
+const { default: dbp } = await import("./db.js");
+const db = await dbp;
+
+// ── App
 const app = express();
 app.set("trust proxy", 1);
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: { useDefaults:true, directives:{
     "img-src": ["'self'","data:"], "font-src":["'self'","https:","data:"],
-    "style-src":["'self'","https:","'unsafe-inline'"], "object-src":["'none'"],
-    "upgrade-insecure-requests":[]
+    "style-src":["'self'","https:","'unsafe-inline'"], "object-src":["'none'"], "upgrade-insecure-requests":[]
   } }
 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
-// session store: use connect-sqlite3 if available, else fallback (still live)
+// session store (sqlite if available)
 let store;
 try {
   const mod = await import("connect-sqlite3");
   const SQLiteStore = mod.default(session);
   store = new SQLiteStore({ db: "sessions.sqlite", dir: "/var/data" });
-  console.log("[session] SQLiteStore active at /var/data/sessions.sqlite");
+  console.log("[session] SQLiteStore active");
 } catch {
-  console.warn("[session] connect-sqlite3 not installed, using MemoryStore");
+  console.warn("[session] connect-sqlite3 not installed, MemoryStore in use");
 }
 const SESSION_NAME = "7gc.sid";
 app.use(session({
@@ -198,16 +155,15 @@ app.use(session({
   resave: false, saveUninitialized: false, rolling: true,
   cookie: { httpOnly:true, sameSite:"none", secure:true, maxAge: 1000*60*60*24*30 }
 }));
-console.log("[phase] session middleware mounted");
 
 // helpers
-const normalizeAddress = (a)=> (a?String(a).trim():null) || null;
+const norm = (a)=> (a?String(a).trim():null) || null;
 async function materializeUserByAddress(address){
-  const addr = normalizeAddress(address); if(!addr) return null;
+  const addr = norm(address); if(!addr) return null;
   await db.run(`INSERT OR IGNORE INTO users (wallet, xp, level, level_name) VALUES (?,0,1,'Shellborn');`, addr);
   return db.get(`SELECT id, wallet, xp, level, level_name FROM users WHERE wallet=?`, addr);
 }
-function extractAddressFromReq(req){
+function getAddr(req){
   if (req.session?.address) return req.session.address;
   const raw = req.cookies?.[SESSION_NAME]; if (raw && raw.startsWith("w:")) return raw.slice(2);
   return req.get("x-wallet") || req.body?.address || req.body?.wallet || null;
@@ -216,7 +172,7 @@ app.use((req,_res,next)=>{ const b=req.body||{}; if(b.wallet && !b.address) b.ad
 app.use(async (req,_res,next)=>{
   try{
     if (req.session?.userId) return next();
-    const hint = extractAddressFromReq(req);
+    const hint = getAddr(req);
     if (!hint) return next();
     const u = await materializeUserByAddress(hint);
     if (u){ req.session.userId=u.id; req.session.address=u.wallet; req.userId=u.id; req.userAddress=u.wallet; }
@@ -232,7 +188,7 @@ app.get("/api/health", async (_req,res)=>{
 
 // wallet session
 app.post("/api/auth/wallet/session", async (req,res)=>{
-  const address = normalizeAddress(req.body?.address);
+  const address = norm(req.body?.address);
   if (!address) return res.status(400).json({ ok:false, error:"address-required" });
   const user = await materializeUserByAddress(address);
   if (!user)  return res.status(500).json({ ok:false, error:"user-create-failed" });
@@ -242,18 +198,22 @@ app.post("/api/auth/wallet/session", async (req,res)=>{
   res.json({ ok:true, address:user.wallet, session:"set" });
 });
 
-// subscription helpers
+// subscription status — NO reference to column 'active' anywhere
 const boostForTier = (t)=> t==="Gold"?2.0 : t==="Explorer"?1.5 : 1.0;
 async function getSubStatus(wallet){
   const def = { active:false, tier:"Free", xpBoost:1.0 };
   if (!wallet) return def;
-  const row = await db.get(`SELECT tier, active FROM subscriptions WHERE wallet=? ORDER BY id DESC LIMIT 1`, wallet);
+  const row = await db.get(
+    `SELECT tier FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
+    wallet
+  );
   if (!row) return def;
-  const active = row.active != null ? !!row.active : (row.tier && row.tier!=="Free");
-  return { active, tier: row.tier, xpBoost: boostForTier(row.tier) };
+  const tier = row.tier || "Free";
+  const active = tier !== "Free";
+  return { active, tier, xpBoost: boostForTier(tier) };
 }
 app.get("/api/subscriptions/status", async (req,res)=>{
-  const wallet = req.session?.address || extractAddressFromReq(req);
+  const wallet = req.session?.address || getAddr(req);
   const s = await getSubStatus(wallet);
   res.json({ ok:true, wallet, tier:s.tier, xpBoost:s.xpBoost });
 });
@@ -298,7 +258,7 @@ function priceForTier(tier){
   return map[tier] || map.Explorer || 0;
 }
 app.post("/api/v1/payments/ton/checkout", async (req,res)=>{
-  const wallet = req.session?.address || extractAddressFromReq(req);
+  const wallet = req.session?.address || getAddr(req);
   if (!wallet) return res.status(401).json({ ok:false, error:"wallet-required" });
   const tier = String(req.body?.tier||"Explorer");
   const amount = priceForTier(tier);
@@ -342,23 +302,29 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req,res)=>{
     }
   }
   if (!matched) return res.json({ ok:true, invoice:inv, pending:true });
+
   await db.run(`UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`, String(matched.tx_hash||""), id);
-  await db.run(`INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at) VALUES (?, ?, 1, 'ton', ?, datetime('now'))`, inv.wallet, inv.tier, String(matched.tx_hash||""));
+  // IMPORTANT: insert WITHOUT 'active' column to be compatible with old DBs
+  await db.run(
+    `INSERT INTO subscriptions (wallet, tier, provider, tx_id, updated_at)
+     VALUES (?, ?, 'ton', ?, datetime('now'))`,
+    inv.wallet, inv.tier, String(matched.tx_hash||"")
+  );
   const s = await getSubStatus(inv.wallet);
   res.json({ ok:true, invoice:{ ...inv, status:"confirmed", tx_hash: matched.tx_hash }, subscription:s });
 });
 app.get("/api/v1/payments/status", async (req,res)=>{
-  const wallet = req.session?.address || extractAddressFromReq(req) || null;
+  const wallet = req.session?.address || getAddr(req) || null;
   const s = await getSubStatus(wallet);
   res.json({ ok:true, wallet, active:s.active, provider: s.active ? "ton" : null, tier:s.tier, xpBoost:s.xpBoost });
 });
 app.get("/api/payments/status", async (req,res)=>{
-  const wallet = req.session?.address || extractAddressFromReq(req) || null;
+  const wallet = req.session?.address || getAddr(req) || null;
   const s = await getSubStatus(wallet);
   res.json({ ok:true, wallet, active:s.active, provider: s.active ? "ton" : null, tier:s.tier, xpBoost:s.xpBoost });
 });
 
-// routers (LIVE)
+// routers
 app.use("/api/leaderboard", (await import("./routes/leaderboard.js")).default);
 app.use("/api/v1/leaderboard", (await import("./routes/leaderboard.js")).default);
 app.use("/api/quests", (await import("./routes/quests.js")).default);
@@ -366,7 +332,6 @@ app.use("/api/v1/quests", (await import("./routes/quests.js")).default);
 app.use("/api/referrals", (await import("./routes/referrals.js")).default);
 app.use("/api/v1/referrals", (await import("./routes/referrals.js")).default);
 app.use("/api/twitter", (await import("./routes/twitterVerify.js")).default);
-console.log("[phase] routers mounted");
 
 // 404 + error
 app.use((req,res)=>res.status(404).json({ ok:false, error:"not_found" }));
@@ -376,6 +341,4 @@ app.use((err,_req,res,_next)=>{ console.error(err); res.status(500).json({ ok:fa
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`7GC backend listening on :${PORT}`);
-  console.log("[phase] listening");
-  if (!process.env.TWITTER_BEARER_TOKEN) console.log("TWITTER_BEARER_TOKEN missing");
 });
