@@ -1,7 +1,8 @@
-// server.js — 7 Golden Cowries (FINAL, LIVE)
-// - Hard guarantee: subscriptions.active column exists (add + backfill if missing)
-// - App itself never depends on active for logic; computes from tier
-// - But if any other module selects subscriptions.active, we’re safe.
+// server.js — 7 Golden Cowries (FINAL, LIVE, hard-safe for `active`)
+// - Preflight creates tables, adds `subscriptions.active` if missing, backfills.
+// - Drops any legacy views that mention `subscriptions` AND `active` to avoid startup SQL errors.
+// - Probes again after main db open, before importing routers (belt & suspenders).
+// - App logic computes active from tier and does not rely on the column itself.
 
 import "dotenv/config";
 import express from "express";
@@ -21,7 +22,7 @@ const sqlite3 = (await import("sqlite3")).default;
 const { open } = await import("sqlite");
 
 // ─────────────────────────────────────────────
-// 0) Preflight DB (idempotent, Render-safe)
+// 0) Preflight DB (Render-safe, idempotent)
 const predb = await open({ filename: SQLITE_FILE, driver: sqlite3.Database });
 console.log("[preflight] opened", SQLITE_FILE);
 
@@ -96,7 +97,7 @@ await predb.exec(`
   );
 `);
 
-// **HARD GUARANTEE**: add subscriptions.active if missing + backfill
+// Ensure `subscriptions.active` exists + backfill, even if an old file slips in
 try {
   const cols = await predb.all(`PRAGMA table_info(subscriptions);`);
   const hasActive = Array.isArray(cols) && cols.some(c => c.name === "active");
@@ -108,12 +109,35 @@ try {
       SET active = CASE WHEN tier <> 'Free' THEN 1 ELSE 0 END;
     `);
     console.log("[preflight] subscriptions.active added + backfilled");
+  } else {
+    // also self-heal existing rows
+    await predb.exec(`
+      UPDATE subscriptions
+      SET active = CASE WHEN tier <> 'Free' THEN 1 ELSE 0 END
+      WHERE active NOT IN (0,1) OR active IS NULL;
+    `);
   }
 } catch (e) {
-  console.warn("[preflight] active-column check/add warn:", e.message);
+  console.warn("[preflight] active-column add/backfill warn:", e.message);
 }
 
-// Best-effort triggers (optional; app does NOT rely on them)
+// Nuke any legacy views that mention `subscriptions` and `active`
+try {
+  const legacyViews = await predb.all(
+    `SELECT name FROM sqlite_master
+     WHERE type='view'
+       AND lower(sql) LIKE '%subscriptions%'
+       AND lower(sql) LIKE '%active%';`
+  );
+  for (const v of legacyViews || []) {
+    console.log("[preflight] dropping legacy view:", v.name);
+    await predb.exec(`DROP VIEW IF EXISTS "${v.name}";`);
+  }
+} catch (e) {
+  console.warn("[preflight] drop legacy views warn:", e.message);
+}
+
+// Helpful triggers (optional)
 try {
   await predb.exec(`
     CREATE TRIGGER IF NOT EXISTS subscriptions_ai
@@ -169,11 +193,31 @@ const { default: dbp } = await import("./db.js");
 let db;
 try {
   db = await dbp;
-  console.log("[db] opened sqlite at", SQLITE_FILE);
 } catch (err) {
   console.error("[db/open] failed, falling back to in-memory:", err);
   db = await open({ filename: ":memory:", driver: sqlite3.Database });
 }
+
+// SECOND PROBE (same connection used by routes)
+async function ensureActiveColumnNow() {
+  try {
+    await db.get(`SELECT active FROM subscriptions LIMIT 1;`);
+    console.log("[probe] subscriptions.active present");
+  } catch (e) {
+    if ((e?.message || "").includes("no such column: active")) {
+      console.log("[probe] adding subscriptions.active (late) …");
+      await db.exec(`
+        ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;
+        UPDATE subscriptions
+        SET active = CASE WHEN tier <> 'Free' THEN 1 ELSE 0 END;
+      `);
+      console.log("[probe] subscriptions.active added + backfilled (late)");
+    } else {
+      console.warn("[probe] unexpected error:", e.message);
+    }
+  }
+}
+await ensureActiveColumnNow();
 
 // helpers
 function normalizeAddress(a){ if(!a) return null; const s=String(a).trim(); return s.length?s:null; }
@@ -193,8 +237,6 @@ function extractAddressFromReq(req){
   return null;
 }
 function boostForTier(tier){ return tier==="Gold"?2.0 : tier==="Explorer"?1.5 : 1.0; }
-
-// Status helper (logic never relies on DB.active)
 async function getSubStatus(wallet){
   const def = { active:false, tier:"Free", xpBoost:1.0 };
   if (!wallet) return def;
@@ -283,7 +325,6 @@ app.post("/api/auth/wallet/session", async (req,res)=>{
   res.json({ ok:true, address:user.wallet, session:"set" });
 });
 
-// Subscriptions status (computed)
 app.get("/api/subscriptions/status", async (req,res)=>{
   const wallet = req.session?.address || extractAddressFromReq(req);
   const s = await getSubStatus(wallet);
@@ -291,7 +332,7 @@ app.get("/api/subscriptions/status", async (req,res)=>{
 });
 
 // ─────────────────────────────────────────────
-// 4) TON payments (live)
+// 4) TON payments (LIVE)
 function priceForTier(tier){
   const map = {
     Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
@@ -394,7 +435,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req,res)=>{
     String(matched.tx_hash||""), id
   );
 
-  // Insert WITHOUT listing active column (triggers/default handle it if present)
+  // Insert without listing `active`; triggers/default keep it consistent.
   await db.run(
     `INSERT INTO subscriptions (wallet, tier, provider, tx_id, updated_at)
      VALUES (?, ?, 'ton', ?, datetime('now'))`,
@@ -405,7 +446,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req,res)=>{
   res.json({ ok:true, invoice:{ ...inv, status:"confirmed", tx_hash: matched.tx_hash }, subscription:s });
 });
 
-// unified status
+// status aliases
 app.get("/api/v1/payments/status", async (req,res)=>{
   const wallet = req.session?.address || req.get("x-wallet") || null;
   const s = await getSubStatus(wallet);
@@ -417,7 +458,7 @@ app.get("/api/payments/status", async (req,res)=>{
   res.json({ ok:true, wallet, active:s.active, provider: s.active ? "ton" : null, tier:s.tier, xpBoost:s.xpBoost });
 });
 
-// routers
+// routers (import AFTER all guarantees)
 app.use("/api/leaderboard", (await import("./routes/leaderboard.js")).default);
 app.use("/api/v1/leaderboard", (await import("./routes/leaderboard.js")).default);
 app.use("/api/quests", (await import("./routes/quests.js")).default);
