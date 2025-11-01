@@ -185,3 +185,26 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log("Allowed CORS origins:", ALLOWED.join(", "));
 });
+
+// --- compat-aliases-added ---
+try {
+  const express = require('express');
+  // Ensure we have an app reference
+  if (typeof app === 'undefined') {
+    // If this file exports { app }, try to import it; otherwise assume top-level app exists already
+    try { ({ app } = module.exports || {}); } catch (e) {}
+  }
+  if (typeof app?.get === 'function') {
+    // 1) Frontend used to call /api/v1/payments/status — alias it to subscriptions status
+    app.get('/api/v1/payments/status', (req, res) => res.redirect(307, '/api/subscriptions/status'));
+    // 2) Some pages probe /api/me — return wallet from session if present
+    app.get('/api/me', (req, res) => {
+      const wallet = (req.session && (req.session.wallet || req.session.address)) || null;
+      res.json({ ok: true, wallet });
+    });
+    console.log('[compat] /api/v1/payments/status and /api/me enabled');
+  }
+} catch (e) {
+  console.warn('[compat] skipped:', e && e.message);
+}
+// --- compat-aliases-added ---
