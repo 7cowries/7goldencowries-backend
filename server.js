@@ -1,8 +1,10 @@
 // server.js — 7 Golden Cowries (FINAL, LIVE)
 // - Render-safe SQLite
 // - Idempotent schema
-// - "active" compat: column always present + triggers keep it in sync with tier
-// - No stubs; TON checkout + invoice verify live
+// - COMPAT guaranteed: subscriptions.active column exists BEFORE any read
+// - Triggers keep active in sync with tier
+// - Safe fallback if a legacy DB lacks 'active' for any reason
+// - TON checkout + verify endpoints live
 
 import "dotenv/config";
 import express from "express";
@@ -12,8 +14,6 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import crypto from "node:crypto";
 
-// -------------------------------
-// 0) DB preflight (open BEFORE anything else)
 const SQLITE_FILE =
   process.env.SQLITE_FILE ||
   process.env.DATABASE_PATH ||
@@ -23,11 +23,11 @@ const SQLITE_FILE =
 const sqlite3 = (await import("sqlite3")).default;
 const { open } = await import("sqlite");
 
-// open preflight
+// ─────────────────────────────────────────────
+// 0) Preflight DB: create schema + ensure `active` BEFORE anything reads it
 const predb = await open({ filename: SQLITE_FILE, driver: sqlite3.Database });
 console.log("[preflight] opened", SQLITE_FILE);
 
-// base tables (create if missing)
 await predb.exec(`
   PRAGMA foreign_keys = ON;
 
@@ -46,14 +46,12 @@ await predb.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     wallet TEXT NOT NULL,
     tier TEXT NOT NULL DEFAULT 'Free',
-    -- COMPAT: keep the 'active' column so any legacy reads still work
-    active INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 0,           -- COMPAT: always present
     provider TEXT,
     tx_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
-
   CREATE INDEX IF NOT EXISTS idx_sub_wallet ON subscriptions(wallet);
 
   CREATE TABLE IF NOT EXISTS ton_invoices (
@@ -101,15 +99,14 @@ await predb.exec(`
   );
 `);
 
-// ---- COMPAT: ensure 'active' column exists and is kept in sync with 'tier'
-(async () => {
+// Ensure column exists even on legacy DBs (and keep it synced)
+{
   const cols = await predb.all(`PRAGMA table_info(subscriptions);`);
   const hasActive = cols.some(c => c.name === "active");
   if (!hasActive) {
     console.log("[compat] adding subscriptions.active column");
     await predb.exec(`ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;`);
   }
-  // triggers make sure active reflects tier (1 if tier != 'Free')
   await predb.exec(`
     CREATE TRIGGER IF NOT EXISTS subscriptions_ai
     AFTER INSERT ON subscriptions
@@ -129,12 +126,12 @@ await predb.exec(`
       WHERE id = NEW.id;
     END;
   `);
-})().catch(e => console.warn("[compat]", e.message));
+}
 
-// seed quests if empty
+// Seed quests once
 try {
-  const count = await predb.get(`SELECT COUNT(*) AS c FROM quests;`);
-  if (!count || !count.c) {
+  const row = await predb.get(`SELECT COUNT(*) AS c FROM quests;`);
+  if (!row || !row.c) {
     const Q = [
       { id:"daily-checkin",  title:"Daily Check-in", description:"Open the 7 Golden Cowries app today.", category:"daily",  type:"daily",  xp:10,  link:null },
       { id:"follow-twitter", title:"Follow @7goldencowries", description:"Follow our X account to earn XP.", category:"social", type:"oneoff", xp:50,  link:"https://x.com/7goldencowries" },
@@ -151,15 +148,13 @@ try {
     await stmt.finalize();
     console.log("[seed] quests: inserted 6 live quests");
   }
-} catch (e) {
-  console.warn("[seed] quests:", e.message);
-}
+} catch (e) { console.warn("[seed] quests:", e.message); }
 
 await predb.close();
 console.log("[preflight] done");
 
-// -------------------------------
-// 1) Open the real pooled connection
+// ─────────────────────────────────────────────
+// 1) Main DB connection (pooled)
 const { default: dbp } = await import("./db.js");
 let db;
 try {
@@ -170,7 +165,6 @@ try {
   db = await open({ filename: ":memory:", driver: sqlite3.Database });
 }
 
-// helpers
 function normalizeAddress(a){ if(!a) return null; const s=String(a).trim(); return s.length?s:null; }
 async function materializeUserByAddress(address){
   const addr = normalizeAddress(address); if(!addr) return null;
@@ -188,19 +182,34 @@ function extractAddressFromReq(req){
   return null;
 }
 function boostForTier(tier){ return tier==="Gold"?2.0 : tier==="Explorer"?1.5 : 1.0; }
+
+// SAFE: fall back if 'active' is missing
 async function getSubStatus(wallet){
   const def = { active:false, tier:"Free", xpBoost:1.0 };
   if (!wallet) return def;
-  const row = await db.get(
-    `SELECT tier, active FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
-    wallet
-  );
-  if (!row) return def;
-  const active = row.active != null ? !!row.active : (row.tier && row.tier !== "Free");
-  return { active, tier: row.tier, xpBoost: boostForTier(row.tier) };
+  try {
+    const row = await db.get(
+      `SELECT tier, active FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
+      wallet
+    );
+    if (!row) return def;
+    const active = row.active != null ? !!row.active : (row.tier && row.tier !== "Free");
+    return { active, tier: row.tier, xpBoost: boostForTier(row.tier) };
+  } catch (e) {
+    if ((e?.message || "").includes("no such column: active")) {
+      const r2 = await db.get(
+        `SELECT tier FROM subscriptions WHERE wallet = ? ORDER BY id DESC LIMIT 1`,
+        wallet
+      );
+      if (!r2) return def;
+      const act2 = r2.tier && r2.tier !== "Free";
+      return { active: act2, tier: r2.tier, xpBoost: boostForTier(r2.tier) };
+    }
+    throw e;
+  }
 }
 
-// -------------------------------
+// ─────────────────────────────────────────────
 // 2) Express app
 const app = express();
 app.set("trust proxy", 1);
@@ -226,14 +235,11 @@ app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use(rateLimit({ windowMs: 60_000, max: 200, standardHeaders: true, legacyHeaders: false }));
 
-// sessions (use SQLiteStore if available)
+// sessions (SQLite store preferred)
 let store = undefined;
 try {
   const SQLiteStore = (await import("connect-sqlite3")).default(session);
-  store = new SQLiteStore({
-    db: "sessions.sqlite",
-    dir: "/var/data",
-  });
+  store = new SQLiteStore({ db: "sessions.sqlite", dir: "/var/data" });
   console.log("[session] SQLiteStore active at /var/data/sessions.sqlite");
 } catch {
   console.warn("[session] Using MemoryStore (dev only).");
@@ -261,8 +267,8 @@ app.use(async (req,_res,next)=>{
   next();
 });
 
-// -------------------------------
-// 3) Basic endpoints
+// ─────────────────────────────────────────────
+// 3) Core endpoints
 app.get("/api/health", async (_req, res) => {
   try { await db.get("SELECT 1;"); res.json({ ok: true, db: "ok" }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -285,8 +291,8 @@ app.get("/api/subscriptions/status", async (req,res)=>{
   res.json({ ok:true, wallet, tier:s.tier, xpBoost:s.xpBoost });
 });
 
-// -------------------------------
-// 4) TON payments (LIVE)
+// ─────────────────────────────────────────────
+// 4) TON payments (live)
 function priceForTier(tier){
   const map = {
     Explorer: Number(process.env.TON_PRICE_EXPLORER || 0),
@@ -294,7 +300,6 @@ function priceForTier(tier){
   };
   return map[tier] || 0;
 }
-
 async function fetchIncomingTxFromToncenter(address, limit=30){
   const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(address)}&limit=${limit}`;
   const r = await fetch(url, { headers:{ "X-Api-Key": process.env.TONCENTER_KEY || "" }});
@@ -385,9 +390,15 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req,res)=>{
 
   if (!matched) return res.json({ ok:true, invoice:inv, pending:true });
 
-  await db.run(`UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`, String(matched.tx_hash||""), id);
-  await db.run(`INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at) VALUES (?, ?, CASE WHEN ? <> 'Free' THEN 1 ELSE 0 END, 'ton', ?, datetime('now'))`,
-               inv.wallet, inv.tier, inv.tier, String(matched.tx_hash||""));
+  await db.run(
+    `UPDATE ton_invoices SET status='confirmed', tx_hash=?, updated_at=datetime('now') WHERE id=?`,
+    String(matched.tx_hash||""), id
+  );
+  await db.run(
+    `INSERT INTO subscriptions (wallet, tier, active, provider, tx_id, updated_at)
+     VALUES (?, ?, CASE WHEN ? <> 'Free' THEN 1 ELSE 0 END, 'ton', ?, datetime('now'))`,
+    inv.wallet, inv.tier, inv.tier, String(matched.tx_hash||"")
+  );
 
   const s = await getSubStatus(inv.wallet);
   res.json({ ok:true, invoice:{ ...inv, status:"confirmed", tx_hash: matched.tx_hash }, subscription:s });
@@ -405,8 +416,7 @@ app.get("/api/payments/status", async (req,res)=>{
   res.json({ ok:true, wallet, active:s.active, provider: s.active ? "ton" : null, tier:s.tier, xpBoost:s.xpBoost });
 });
 
-// -------------------------------
-// 5) Feature routers
+// routers
 app.use("/api/leaderboard", (await import("./routes/leaderboard.js")).default);
 app.use("/api/v1/leaderboard", (await import("./routes/leaderboard.js")).default);
 app.use("/api/quests", (await import("./routes/quests.js")).default);
@@ -419,8 +429,7 @@ app.use("/api/twitter", (await import("./routes/twitterVerify.js")).default);
 app.use((req,res)=>res.status(404).json({ ok:false, error:"not_found" }));
 app.use((err,_req,res,_next)=>{ console.error(err); res.status(500).json({ ok:false, error:"internal_error" }); });
 
-// -------------------------------
-// 6) Start
+// start
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`7GC backend listening on :${PORT}`);
