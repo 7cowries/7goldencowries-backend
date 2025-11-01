@@ -1,7 +1,7 @@
-// server.js — 7 Golden Cowries (FINAL, LIVE, no 'active' reads)
-// - Never SELECT or INSERT the 'active' column.
-// - Compute active from tier everywhere.
-// - Preflight creates tables + triggers if possible, but app does not depend on them.
+// server.js — 7 Golden Cowries (FINAL, LIVE)
+// - Hard guarantee: subscriptions.active column exists (add + backfill if missing)
+// - App itself never depends on active for logic; computes from tier
+// - But if any other module selects subscriptions.active, we’re safe.
 
 import "dotenv/config";
 import express from "express";
@@ -21,7 +21,7 @@ const sqlite3 = (await import("sqlite3")).default;
 const { open } = await import("sqlite");
 
 // ─────────────────────────────────────────────
-// 0) Preflight DB (safe, but not required for app to run)
+// 0) Preflight DB (idempotent, Render-safe)
 const predb = await open({ filename: SQLITE_FILE, driver: sqlite3.Database });
 console.log("[preflight] opened", SQLITE_FILE);
 
@@ -96,7 +96,24 @@ await predb.exec(`
   );
 `);
 
-// Best-effort triggers (optional)
+// **HARD GUARANTEE**: add subscriptions.active if missing + backfill
+try {
+  const cols = await predb.all(`PRAGMA table_info(subscriptions);`);
+  const hasActive = Array.isArray(cols) && cols.some(c => c.name === "active");
+  if (!hasActive) {
+    console.log("[preflight] adding subscriptions.active …");
+    await predb.exec(`
+      ALTER TABLE subscriptions ADD COLUMN active INTEGER NOT NULL DEFAULT 0;
+      UPDATE subscriptions
+      SET active = CASE WHEN tier <> 'Free' THEN 1 ELSE 0 END;
+    `);
+    console.log("[preflight] subscriptions.active added + backfilled");
+  }
+} catch (e) {
+  console.warn("[preflight] active-column check/add warn:", e.message);
+}
+
+// Best-effort triggers (optional; app does NOT rely on them)
 try {
   await predb.exec(`
     CREATE TRIGGER IF NOT EXISTS subscriptions_ai
@@ -177,7 +194,7 @@ function extractAddressFromReq(req){
 }
 function boostForTier(tier){ return tier==="Gold"?2.0 : tier==="Explorer"?1.5 : 1.0; }
 
-// IMPORTANT: never read 'active' column; compute from tier
+// Status helper (logic never relies on DB.active)
 async function getSubStatus(wallet){
   const def = { active:false, tier:"Free", xpBoost:1.0 };
   if (!wallet) return def;
@@ -377,7 +394,7 @@ app.get("/api/v1/payments/ton/invoice/:id", async (req,res)=>{
     String(matched.tx_hash||""), id
   );
 
-  // Insert WITHOUT 'active' column — triggers/defaults handle it if present
+  // Insert WITHOUT listing active column (triggers/default handle it if present)
   await db.run(
     `INSERT INTO subscriptions (wallet, tier, provider, tx_id, updated_at)
      VALUES (?, ?, 'ton', ?, datetime('now'))`,
