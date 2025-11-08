@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node scripts/migrate-bootstrap.cjs && node scripts/migrate-add-active.cjs && node index.js",
+    "start": "node scripts/migrate-bootstrap.cjs && node scripts/migrate-add-active.cjs && node scripts/migrate-add-referrer.cjs && node index.js",
     "start:prod": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development node server.js",
     "render-start": "node server.js",
