@@ -132,8 +132,6 @@ app.use(historyRoutes); // /api/xp/history, /api/quests/history
 app.use("/api/leaderboard", leaderboardRoutes);
 
 // --- Health checks ---
-const questsAlias = require('./routes/alias-quests.cjs');
-app.use('/quests', questsAlias);
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
 app.get("/healthz", async (_req, res) => {
   try {
