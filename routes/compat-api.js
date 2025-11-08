@@ -5,7 +5,6 @@ const r = express.Router();
 
 /**
  * GET /api/me
- * Minimal "not logged in" shape that won’t 404 the frontend.
  */
 r.get('/me', (_req, res) => {
   res.json({ ok: true, user: null });
@@ -20,27 +19,30 @@ r.get('/user/me', (_req, res) => {
 
 /**
  * GET /api/leaderboard
- * Tries better-sqlite3 first (prepare().all()), otherwise falls back to db.all or db.query.
+ * Supports:
+ *  - better-sqlite3: db.prepare(...).all()
+ *  - sqlite/promises-like: db.all(...)
+ *  - pool-like: db.query(...)
+ *  - callable wrapper: db(sql[, params]) -> rows
  */
 r.get('/leaderboard', async (_req, res) => {
   const SQL = 'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100';
   try {
     let rows;
 
-    // better-sqlite3
     if (db && typeof db.prepare === 'function') {
       rows = db.prepare(SQL).all();
-    }
-    // sqlite/promises-ish
-    else if (db && typeof db.all === 'function') {
+    } else if (db && typeof db.all === 'function') {
       rows = await db.all(SQL);
-    }
-    // generic pool.query style
-    else if (db && typeof db.query === 'function') {
+    } else if (db && typeof db.query === 'function') {
       const qres = await db.query(SQL, []);
-      rows = Array.isArray(qres) ? qres : qres?.rows ?? [];
+      rows = Array.isArray(qres) ? qres : (qres?.rows ?? []);
+    } else if (typeof db === 'function') {
+      // handle callable wrappers (sync or async)
+      const out = db.length >= 2 ? await db(SQL, []) : await db(SQL);
+      rows = Array.isArray(out) ? out : (out?.rows ?? []);
     } else {
-      throw new Error('Unsupported DB interface: no prepare/all/query on db');
+      throw new Error('Unsupported DB interface: no prepare/all/query/function on db');
     }
 
     res.json({ ok: true, leaderboard: rows ?? [] });
@@ -52,7 +54,6 @@ r.get('/leaderboard', async (_req, res) => {
 
 /**
  * GET /api/v1/payments/status
- * Simple health/placeholder endpoint for the client.
  */
 r.get('/v1/payments/status', (_req, res) => {
   res.json({ ok: true, status: 'ready' });
