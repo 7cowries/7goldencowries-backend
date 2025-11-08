@@ -1,5 +1,4 @@
 import express from 'express';
-import { getDB } from '../db.js';
 
 const r = express.Router();
 const COOKIE = 'gc_wallet';
@@ -8,6 +7,26 @@ function readWalletFromCookie(req) {
   const raw = req.headers.cookie || '';
   const m = raw.match(new RegExp('(?:^|; )' + COOKIE + '=([^;]+)'));
   return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** Resolve a DB handle regardless of how ../db.js exports it */
+async function getDbAny() {
+  try {
+    const mod = await import('../db.js');
+    // Common possibilities:
+    // 1) export const db = ...;
+    // 2) export default db;
+    // 3) export function getDB() { ... }
+    // 4) export async function openDb() { ... }
+    const cand =
+      mod.db ??
+      (typeof mod.getDB === 'function' ? await mod.getDB() : null) ??
+      mod.default ??
+      (typeof mod.openDb === 'function' ? await mod.openDb() : null);
+    return cand || null;
+  } catch {
+    return null;
+  }
 }
 
 /** GET /api/me -> reflects wallet from cookie, or null */
@@ -19,19 +38,32 @@ r.get('/me', (req, res) => {
 /** Legacy alias */
 r.get('/user/me', (_req, res) => res.redirect(307, '/api/me'));
 
-/** GET /api/leaderboard (kept working) */
+/** GET /api/leaderboard */
 r.get('/leaderboard', async (_req, res) => {
   try {
-    const db = await getDB();
-    if (!db || !(db.prepare || db.all || db.query)) {
+    const db = await getDbAny();
+    if (!db) throw new Error('No DB module available');
+
+    let rows;
+    if (typeof db.all === 'function') {
+      rows = await db.all(
+        'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100'
+      );
+    } else if (typeof db.prepare === 'function') {
+      rows = db
+        .prepare(
+          'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100'
+        )
+        .all();
+    } else if (typeof db.query === 'function') {
+      const q = await db.query(
+        'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100'
+      );
+      rows = typeof q.all === 'function' ? q.all() : q;
+    } else {
       throw new Error('Unsupported DB interface: no prepare/all/query/function on db');
     }
-    const rows =
-      db.all
-        ? await db.all('SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100')
-        : db.prepare
-        ? db.prepare('SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100').all()
-        : (await db.query('SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100')).all();
+
     res.json({ ok: true, leaderboard: rows });
   } catch (e) {
     console.error('[compat-api] /api/leaderboard failed:', e);
