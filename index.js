@@ -1,3 +1,4 @@
+import compatApi from './routes/compat-api.js';
 console.log('[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md');
 // index.js
 import express from "express";
@@ -221,3 +222,5 @@ app.get('/api/user/leaderboard', (req, res) => res.redirect(307, '/api/leaderboa
 app.get('/api/v1/payments/status', (req, res) => res.redirect(307, '/api/payments/status'));
 
 // === [END PRD] Legacy Compatibility Routes ===
+
+app.use('/api', compatApi);
