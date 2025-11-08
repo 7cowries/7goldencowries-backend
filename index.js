@@ -210,3 +210,14 @@ try {
   console.warn('[compat] skipped:', e && e.message);
 }
 // --- compat-aliases-added ---
+
+// === [PRD] Legacy Compatibility Routes (keep near end of file) ===
+// Old endpoints used by cached or older frontends.
+// Use 307 to preserve HTTP method and body on redirects.
+
+app.get('/api/user/me',          (req, res) => res.redirect(307, '/api/me'));
+app.get('/api/user/quests',      (req, res) => res.redirect(307, '/api/quests'));
+app.get('/api/user/leaderboard', (req, res) => res.redirect(307, '/api/leaderboard'));
+app.get('/api/v1/payments/status', (req, res) => res.redirect(307, '/api/payments/status'));
+
+// === [END PRD] Legacy Compatibility Routes ===
