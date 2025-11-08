@@ -86,6 +86,38 @@ async function fetchReferralCount(wallet) {
  * Reads wallet from session; falls back to ?wallet=.
  * Returns basic profile info for current session wallet.
  */
+async function referralsTableHasColumn(db, name) {
+  try {
+    const cols = await db.all('PRAGMA table_info(referrals)');
+    return Array.isArray(cols) && cols.some(c => c.name === name);
+  } catch (e) { return false; }
+}
+
+async function countReferralsForWallet(db, wallet) {
+  // Prefer new schema (referrer_user_id -> users.id)
+  const hasReferrerUserId = await referralsTableHasColumn(db, 'referrer_user_id');
+  if (hasReferrerUserId) {
+    const row = await db.get(
+      "SELECT COUNT(*) AS c FROM referrals WHERE referrer_user_id = (SELECT id FROM users WHERE wallet = ?)",
+      wallet
+    );
+    return row?.c || 0;
+  }
+
+  // Legacy fallback: referrals.referrer stores referrer WALLET directly
+  const hasLegacyReferrer = await referralsTableHasColumn(db, 'referrer');
+  if (hasLegacyReferrer) {
+    const row = await db.get(
+      "SELECT COUNT(*) AS c FROM referrals WHERE referrer = ?",
+      wallet
+    );
+    return row?.c || 0;
+  }
+
+  // No recognizable schema -> 0
+  return 0;
+}
+
 router.get("/me", async (req, res) => {
   try {
     const sessionWallet = getSessionWallet(req);
