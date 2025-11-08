@@ -35,3 +35,6 @@ cookie*.txt
 *.bak
 a.txt
 b.txt
+
+# ignore local sqlite runtime files
+data/*.sqlite3*
