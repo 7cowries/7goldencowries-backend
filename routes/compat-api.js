@@ -1,94 +1,45 @@
 import express from 'express';
 
 const r = express.Router();
-const COOKIE = 'gc_wallet';
 
-function readWalletFromCookie(req) {
-  const raw = req.headers.cookie || '';
-  const m = raw.match(new RegExp('(?:^|; )' + COOKIE + '=([^;]+)'));
-  return m ? decodeURIComponent(m[1]) : null;
-}
+// /api/session: set/clear the gc_wallet cookie used by /api/me
+r.post('/session', (req, res) => {
+  const { wallet } = req.body || {};
+  if (!wallet) return res.status(400).json({ ok: false, error: 'wallet required' });
+  res.cookie('gc_wallet', wallet, {
+    httpOnly: true,
+    sameSite: 'none',
+    secure: true,
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30d
+    path: '/',
+  });
+  res.json({ ok: true });
+});
 
-/** Resolve a DB handle regardless of how ../db.js exports it */
-async function getDbAny() {
-  try {
-    const mod = await import('../db.js');
-    // Common possibilities:
-    // 1) export const db = ...;
-    // 2) export default db;
-    // 3) export function getDB() { ... }
-    // 4) export async function openDb() { ... }
-    const cand =
-      mod.db ??
-      (typeof mod.getDB === 'function' ? await mod.getDB() : null) ??
-      mod.default ??
-      (typeof mod.openDb === 'function' ? await mod.openDb() : null);
-    return cand || null;
-  } catch {
-    return null;
-  }
-}
+r.delete('/session', (_req, res) => {
+  res.clearCookie('gc_wallet', { path: '/', sameSite: 'none', secure: true });
+  res.json({ ok: true });
+});
 
-/** GET /api/me -> reflects wallet from cookie, or null */
+// /api/me: read wallet from cookie
 r.get('/me', (req, res) => {
-  const wallet = readWalletFromCookie(req);
+  const wallet = req.cookies?.gc_wallet || null;
   res.json({ ok: true, user: wallet ? { wallet } : null });
 });
 
-/** Legacy alias */
+// Legacy alias
 r.get('/user/me', (_req, res) => res.redirect(307, '/api/me'));
 
-/** GET /api/leaderboard */
+// Leaderboard placeholder (empty list until real data)
 r.get('/leaderboard', async (_req, res) => {
   try {
-    const db = await getDbAny();
-    if (!db) throw new Error('No DB module available');
-
-    let rows;
-    if (typeof db.all === 'function') {
-      rows = await db.all(
-        'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100'
-      );
-    } else if (typeof db.prepare === 'function') {
-      rows = db
-        .prepare(
-          'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100'
-        )
-        .all();
-    } else if (typeof db.query === 'function') {
-      const q = await db.query(
-        'SELECT address AS wallet, score FROM leaderboard_scores ORDER BY score DESC LIMIT 100'
-      );
-      rows = typeof q.all === 'function' ? q.all() : q;
-    } else {
-      throw new Error('Unsupported DB interface: no prepare/all/query/function on db');
-    }
-
-    res.json({ ok: true, leaderboard: rows });
+    res.json({ ok: true, leaderboard: [] });
   } catch (e) {
-    console.error('[compat-api] /api/leaderboard failed:', e);
     res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
-/** POST /api/session  {wallet} -> set session cookie */
-r.post('/session', express.json(), (req, res) => {
-  const wallet = (req.body && String(req.body.wallet || '').trim()) || '';
-  if (!wallet) return res.status(400).json({ ok: false, error: 'wallet required' });
-  res.setHeader(
-    'Set-Cookie',
-    `${COOKIE}=${encodeURIComponent(wallet)}; Path=/; Max-Age=${30 * 24 * 3600}; HttpOnly; Secure; SameSite=None`
-  );
-  res.json({ ok: true });
-});
-
-/** POST /api/logout -> clear session cookie */
-r.post('/logout', (_req, res) => {
-  res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`);
-  res.json({ ok: true });
-});
-
-/** v1 payments health */
+// Payments status placeholder
 r.get('/v1/payments/status', (_req, res) => res.json({ ok: true, status: 'ready' }));
 
 export default r;
