@@ -18,3 +18,19 @@ APIs, database schema, rate limits, payments (TON-only), and integrations must m
 - Security headers, WAF, and rate limits per PRD §Non-functional  
 - See PRD §Environments & Secrets for full environment variable list
 
+This PDF is the **only** authoritative specification for 7GoldenCowries.
+APIs, DB schema, rate limits, payments (TON-only), and integrations must match the PRD.
+
+### Backend Scope (per PRD)
+- REST API per PRD (users, quests, referrals, staking, token sale, subscription).
+- Wallet/session binding; rate limiting; idempotency on sensitive endpoints.
+- TON-only payment verification and subscription logic.
+- Quest verification for **Twitter/X, Telegram, Discord** as defined in PRD.
+- Staking service: accrue rewards, claim windows, audit logs.
+
+### Environment & Infra
+- Render (or equivalent) with HTTPS, CORS per PRD.
+- Security headers and WAF.
+- Rate limits per PRD §Non-functional.
+- See PRD §Environments & Secrets for complete list.
+
