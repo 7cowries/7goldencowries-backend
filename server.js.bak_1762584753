@@ -114,7 +114,6 @@ async function start() {
   }
 
   const app = express();
-app.use((req,res,next)=>{res.setHeader("X-PRD-Version","v1.2"); next();});
   app.use(express.json());
 
   // CORS
