@@ -72,6 +72,10 @@ r.get('/leaderboard', async (_req, res) => {
 
 /** GET /api/v1/payments/status */
 r.get('/v1/payments/status', (_req, res) => {
+});
+
+// non-v1 alias for old clients
+r.get('/payments/status', (_req, res) => {
   res.json({ ok: true, status: 'ready' });
 });
 
