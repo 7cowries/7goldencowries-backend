@@ -99,6 +99,20 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 });
 
 // optional: set a user_version for future migrations
-db.exec(`PRAGMA user_version = 1;`);
+db.exec(`PRAGMA user_version = 1;\`);
+
+// users table (wallet + referrer)
+exec(`\
+CREATE TABLE IF NOT EXISTS users (\
+  id INTEGER PRIMARY KEY AUTOINCREMENT,\
+  wallet TEXT UNIQUE,\
+  referrer TEXT,\
+  created_at INTEGER DEFAULT (strftime('%s','now')),\
+  updated_at INTEGER DEFAULT (strftime('%s','now'))\
+);\
+`);
+
+// ensure referrer column exists (for older DBs)
+if (!columnExists('users','referrer')) { db.exec('ALTER TABLE users ADD COLUMN referrer TEXT;'); console.log('+ added referrer column on users'); }
 
 console.log(`✓ bootstrap migration complete at ${DB_PATH}`);
