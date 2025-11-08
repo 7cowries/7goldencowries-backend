@@ -122,6 +122,8 @@ app.use(questRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
+const questsAlias = require('./routes/alias-quests.cjs');
+app.use('/quests', questsAlias);
 app.use(referralRoutes);
 app.use("/api/subscribe", subscriptionRoutes);
 app.use("/api", twitterRoutes);
