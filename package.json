@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node scripts/migrate-bootstrap.cjs && node scripts/migrate-add-active.cjs && node scripts/migrate-add-referrer.cjs && node scripts/migrate-referrals-compat.cjs && node scripts/migrate-add-referral-code.cjs && node scripts/migrate-add-twitterHandle.cjs && node scripts/migrate-add-levelName.cjs && node scripts/migrate-add-users-tier.cjs && node scripts/migrate-add-subscriptions-status.cjs && node scripts/migrate-add-quests-kind.cjs && node scripts/debug-schema.cjs && node scripts/migrate-ensure-referrer.cjs && node index.js",
+    "start": "node scripts/migrate-bootstrap.cjs && node scripts/migrate-add-active.cjs && node scripts/migrate-add-referrer.cjs && node scripts/migrate-referrals-compat.cjs && node scripts/migrate-add-referral-code.cjs && node scripts/migrate-add-twitterHandle.cjs && node scripts/migrate-add-levelName.cjs && node scripts/migrate-add-users-tier.cjs && node scripts/migrate-add-subscriptions-status.cjs && node scripts/migrate-add-quests-kind.cjs && node scripts/migrate-add-quests-url.cjs && node scripts/debug-schema.cjs && node scripts/migrate-ensure-referrer.cjs && node index.js",
     "start:prod": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development node server.js",
     "render-start": "node server.js",
