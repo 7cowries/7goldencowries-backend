@@ -168,3 +168,5 @@ Use `/api/quests/proof-status?wallet=...&questId=...` to poll for status updates
 
 
 > **Product Requirements (Single Source of Truth):** see `docs/7goldencowries_Final_Full_PRD_v1.2.pdf` (tag: `prd-v1.2`).
+
+> **Product Requirements (Single Source of Truth):** see `docs/7goldencowries_Final_Full_PRD_v1.2.pdf` (tag: `prd-v1.2`).
