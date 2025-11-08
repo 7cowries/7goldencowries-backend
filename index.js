@@ -1,3 +1,4 @@
+console.log('[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md');
 // index.js
 import express from "express";
 import cors from "cors";

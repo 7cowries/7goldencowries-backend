@@ -1,3 +1,8 @@
+> **PRD v1.2 – Single Source of Truth**  
+> Canonical PDF: [./docs/7goldencowries_Final_Full_PRD_v1.2.pdf](./docs/7goldencowries_Final_Full_PRD_v1.2.pdf)  
+> Read first. All APIs, schema, payments, and integrations MUST match the PRD.
+
+
 # 7 Golden Cowries Backend
 
 Node/Express backend using SQLite for persistence.
