@@ -122,6 +122,7 @@ app.use(questRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
+app.get('/quests', (_req, res) => res.redirect(307, '/api/quests'));
 app.use(referralRoutes);
 app.use("/api/subscribe", subscriptionRoutes);
 app.use("/api", twitterRoutes);
