@@ -122,16 +122,6 @@ app.use(questRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
-const questsAlias = require('./routes/alias-quests.cjs');
-app.use('/quests', questsAlias);
-const questsAlias = require('./routes/alias-quests.cjs');
-app.use('/quests', questsAlias);
-const questsAlias = require('./routes/alias-quests.cjs');
-app.use('/quests', questsAlias);
-const questsAlias = require('./routes/alias-quests.cjs');
-app.use('/quests', questsAlias);
-const questsAlias = require('./routes/alias-quests.cjs');
-app.use('/quests', questsAlias);
 app.use(referralRoutes);
 app.use("/api/subscribe", subscriptionRoutes);
 app.use("/api", twitterRoutes);
@@ -142,6 +132,8 @@ app.use(historyRoutes); // /api/xp/history, /api/quests/history
 app.use("/api/leaderboard", leaderboardRoutes);
 
 // --- Health checks ---
+const questsAlias = require('./routes/alias-quests.cjs');
+app.use('/quests', questsAlias);
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
 app.get("/healthz", async (_req, res) => {
   try {
