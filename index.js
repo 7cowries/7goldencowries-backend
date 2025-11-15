@@ -4,7 +4,6 @@ console.log(
   "[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md"
 );
 
-// index.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -20,7 +19,7 @@ import rateLimit from "express-rate-limit";
 import "./passport.js";
 import db from "./lib/db.js";
 
-// ✅ Core routes already in your repo
+// Core routes
 import questRoutes from "./routes/questRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -30,15 +29,15 @@ import referralRoutes from "./routes/referralRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import twitterRoutes from "./routes/twitterRoutes.js";
 import telegramRoutes from "./routes/telegramRoutes.js";
-import tokenSaleRoutes from "./routes/tokenSaleRoutes.js"; // keep if used
+import tokenSaleRoutes from "./routes/tokenSaleRoutes.js";
 
-// ✅ New routes for secure quests & socials
+// New quest/social helpers
 import questLinkRoutes from "./routes/questLinkRoutes.js";
 import questTelegramRoutes from "./routes/questTelegramRoutes.js";
 import questDiscordRoutes from "./routes/questDiscordRoutes.js";
 import socialLinkRoutes from "./routes/socialLinkRoutes.js";
 
-// ✅ New XP/Quest history endpoints
+// History + leaderboard
 import historyRoutes from "./routes/historyRoutes.js";
 import leaderboardRoutes from "./routes/leaderboardRoutes.js";
 
@@ -48,19 +47,19 @@ const app = express();
 const PROD = process.env.NODE_ENV === "production";
 const DEFAULT_FRONTEND = "http://localhost:3000";
 
-// FRONTEND_URL can be comma-separated list to allow Vercel + preview domains
+// FRONTEND_URL can be comma-separated (Vercel prod + previews)
 const ALLOWED = (process.env.FRONTEND_URL || DEFAULT_FRONTEND)
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-// Trust Render/Proxies so req.protocol & secure cookies work
+// Trust Render / proxies so secure cookies & req.protocol work
 app.set("trust proxy", 1);
 
 // --- Security headers ---
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // you serve assets next to API
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
 
@@ -94,8 +93,8 @@ app.use(
     store: new Store({ checkPeriod: 86400000 }), // 24h
     cookie: {
       httpOnly: true,
-      secure: PROD, // secure cookies on https in prod
-      sameSite: PROD ? "none" : "lax", // allow cross-site OAuth popups in prod
+      secure: PROD,
+      sameSite: PROD ? "none" : "lax",
       maxAge: 1000 * 60 * 60, // 1h
     },
   })
@@ -112,11 +111,11 @@ const questLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
 app.use("/api/quests", questLimiter);
 app.use("/api/verify", questLimiter);
 
-// --- Mount order matters for auth popups/callbacks ---
+// --- Auth routes (order matters for popups / callbacks) ---
 app.use(telegramRoutes); // /auth/telegram/*
 app.use(authRoutes); // /auth/twitter, /auth/discord, etc.
 
-// --- Secure quest + social routes (new) ---
+// --- Secure quest + social routes ---
 app.use(questLinkRoutes); // /api/quests/:id/link/start, /r/:nonce, /finish
 app.use(questTelegramRoutes); // /api/quests/telegram/join/verify
 app.use(questDiscordRoutes); // /api/quests/discord/join/verify
@@ -130,17 +129,17 @@ app.use(tonWebhook);
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
 app.use(referralRoutes);
 
-// NOTE: legacy mount; /api/subscribe/* used by some old flows
+// Legacy mount; /api/subscribe/* used by some old flows
 app.use("/api/subscribe", subscriptionRoutes);
 
 // Twitter API wrapper under /api/*
 app.use("/api", twitterRoutes);
 
 // Token sale routes (if present)
-app.use(tokenSaleRoutes); // mounts /token-sale/contribute (if present)
+app.use(tokenSaleRoutes);
 
-// --- History APIs (XP + quest history) ---
-app.use(historyRoutes); // /api/xp/history, /api/quests/history
+// History APIs (XP + quest history)
+app.use(historyRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 
 // --- Health checks ---
@@ -160,26 +159,25 @@ app.get("/session-debug", (req, res) =>
   res.json({ session: req.session || null })
 );
 
-// --- Subscription / payments status (canonical endpoint) ---
-// This is what /api/v1/payments/status ultimately redirects to.
-// Frontend calls GET https://sevengoldencowries-backend.onrender.com/subscriptions/status
+// --- Canonical subscription status (never 500) ---
+// Frontend calls: GET https://sevengoldencowries-backend.onrender.com/subscriptions/status
 app.get("/subscriptions/status", async (req, res) => {
   try {
     const uid = req.session?.userId;
     if (!uid) {
-      // Not logged in: treat as Free but NEVER 500
+      // Not logged in: treat as Free but NEVER error
       return res.json({ ok: true, active: false, tier: "Free" });
     }
 
-    const user = await db.get(
-      "SELECT subscriptionTier FROM users WHERE id = ?",
+    const row = await db.get(
+      "SELECT COALESCE(subscriptionTier, tier, 'Free') AS tier FROM users WHERE id = ?",
       uid
     );
-    const tier = user?.subscriptionTier || "Free";
+    const tier = row?.tier || "Free";
     return res.json({ ok: true, active: tier !== "Free", tier });
   } catch (e) {
     console.error("/subscriptions/status error", e);
-    // Fail SAFE: report Free instead of breaking the whole frontend
+    // Fail SAFE: Free instead of 500
     return res.json({ ok: true, active: false, tier: "Free" });
   }
 });
@@ -216,27 +214,22 @@ cron.schedule("0 0 * * *", async () => {
   }
 });
 
-// === [PRD] Legacy Compatibility Routes (keep near end of file) ===
-// Old endpoints used by cached or older frontends.
-// Use 307 to preserve HTTP method and body on redirects.
-
+// === Legacy compatibility routes ===
 app.get("/api/user/me", (req, res) => res.redirect(307, "/api/me"));
 app.get("/api/user/quests", (req, res) => res.redirect(307, "/api/quests"));
 app.get("/api/user/leaderboard", (req, res) =>
   res.redirect(307, "/api/leaderboard")
 );
 
-// Payments status used by older frontends -> canonical /subscriptions/status
+// Old frontend payments status -> canonical /subscriptions/status
 app.get("/api/v1/payments/status", (req, res) =>
   res.redirect(307, "/subscriptions/status")
 );
 
-// === [END PRD] Legacy Compatibility Routes ===
-
-// Mount full compat API under /api (includes /api/me, /api/session, etc.)
+// Mount compat API under /api (includes /api/me, /api/session, etc.)
 app.use("/api", compatApi);
 
-// --- CORS / general error handler (keep LAST before listen) ---
+// --- Error handler (keep LAST before listen) ---
 app.use((err, _req, res, _next) => {
   if (err && String(err.message || "").startsWith("CORS blocked for origin:")) {
     return res.status(401).json({ error: err.message, allowed: ALLOWED });
