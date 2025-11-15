@@ -5,69 +5,64 @@ import db from "../lib/db.js";
 const router = express.Router();
 
 /**
- * Ensure subscriptions table exists (safe if already migrated).
- * NOTE: If the real table with more columns already exists (as in your migrations),
- * this CREATE TABLE IF NOT EXISTS is a no-op in SQLite.
+ * Helper: load the current user by session.userId
  */
-async function ensureSubscriptionSchema() {
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS subscriptions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet TEXT NOT NULL,
-      tier TEXT NOT NULL DEFAULT 'Free',
-      active INTEGER NOT NULL DEFAULT 0,
-      provider TEXT,
-      tx_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      timestamp TEXT,
-      tonAmount REAL,
-      usdAmount REAL,
-      sessionId TEXT,
-      renewalDate TEXT,
-      nonce TEXT,
-      sessionCreatedAt TEXT,
-      status TEXT DEFAULT 'pending'
-    );
-  `);
+async function getAuthedUser(req) {
+  const uid = req.session?.userId;
+  if (!uid) {
+    throw new Error("not_logged_in");
+  }
+  const user = await db.get(
+    "SELECT id, wallet, subscriptionTier, tier FROM users WHERE id = ?",
+    uid
+  );
+  if (!user || !user.wallet) {
+    throw new Error("user_not_found");
+  }
+  return user;
 }
 
-function normalizeTier(row) {
-  const tier =
-    row?.subscriptionTier ||
-    row?.tier ||
-    "Free";
-  return tier || "Free";
+/**
+ * Normalize tier string to canonical labels
+ */
+function normalizeTier(raw) {
+  const t = String(raw || "").trim().toLowerCase();
+  if (t === "tier 3" || t === "3" || t === "t3") return "Tier 3";
+  if (t === "tier 2" || t === "2" || t === "t2") return "Tier 2";
+  if (t === "tier 1" || t === "1" || t === "t1") return "Tier 1";
+  if (t === "free" || t === "0") return "Free";
+  return "Tier 1";
 }
 
 /**
  * GET /subscriptions/status
- * Returns the user's current subscription tier and whether it's active.
  *
- * Response:
- *   { ok: true, active: boolean, tier: "Free" | "Tier 1" | "Tier 2" | "Tier 3" }
+ * - If no logged-in user: treat as Free.
+ * - If logged in: read subscriptionTier / tier from users table.
+ * - Never 500 for basic status; on error, degrade to Free.
  */
 router.get("/subscriptions/status", async (req, res) => {
   try {
-    await ensureSubscriptionSchema();
-
     const uid = req.session?.userId;
     if (!uid) {
-      // Not logged in: treat as Free, not active
+      // Anonymous or no wallet-bound session
       return res.json({ ok: true, active: false, tier: "Free" });
     }
 
-    const user = await db.get(
-      "SELECT subscriptionTier, tier FROM users WHERE id = ?",
+    const row = await db.get(
+      "SELECT COALESCE(subscriptionTier, tier, 'Free') AS tier FROM users WHERE id = ?",
       uid
     );
-    const tier = normalizeTier(user);
-    const active = tier !== "Free";
-
-    return res.json({ ok: true, active, tier });
+    const tier = row?.tier || "Free";
+    return res.json({
+      ok: true,
+      active: tier !== "Free",
+      tier,
+    });
   } catch (e) {
     console.error("GET /subscriptions/status error", e);
-    return res.status(500).json({ ok: false, error: "internal_error" });
+    // Degrade gracefully instead of 500, so frontend always has a safe answer
+    return res.json({ ok: true, active: false, tier: "Free" });
   }
 });
 
@@ -75,140 +70,61 @@ router.get("/subscriptions/status", async (req, res) => {
  * POST /subscriptions/subscribe
  * Body: { tier, txHash, tonPaid, usdPaid }
  *
- * Writes into subscriptions table and updates users.subscriptionTier.
+ * - Requires logged-in user (session.userId).
+ * - Writes to subscriptions table if available, but does NOT crash if that fails.
+ * - Always updates users.subscriptionTier so XP multipliers can read a single source of truth.
  */
 router.post("/subscriptions/subscribe", async (req, res) => {
   try {
-    await ensureSubscriptionSchema();
+    const user = await getAuthedUser(req);
+    const { tier, txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
+    const finalTier = normalizeTier(tier);
 
-    const uid = req.session?.userId;
-    if (!uid) {
-      return res.status(401).json({ ok: false, error: "not_logged_in" });
-    }
-
-    const user = await db.get(
-      "SELECT id, wallet, subscriptionTier, tier FROM users WHERE id = ?",
-      uid
-    );
-    if (!user?.wallet) {
-      return res.status(404).json({ ok: false, error: "user_not_found" });
-    }
-
-    const {
-      tier: rawTier = "Tier 1",
-      txHash = null,
-      tonPaid = null,
-      usdPaid = null,
-    } = req.body || {};
-
-    const tier = String(rawTier || "Tier 1");
-
-    // Upsert into subscriptions table keyed by wallet
-    const existing = await db.get(
-      "SELECT id FROM subscriptions WHERE wallet = ?",
-      user.wallet
-    );
-
-    if (existing?.id) {
+    // Best-effort write into subscriptions table (new schema).
+    // We intentionally use simple INSERT without ON CONFLICT(wallet),
+    // because the new subscriptions table has id as the primary key.
+    try {
       await db.run(
         `
-        UPDATE subscriptions
-           SET tier        = ?,
-               active      = 1,
-               provider    = COALESCE(provider, 'ton'),
-               tx_id       = ?,
-               tonAmount   = ?,
-               usdAmount   = ?,
-               status      = 'active',
-               updated_at  = datetime('now')
-         WHERE id = ?`,
-        tier,
-        txHash,
+        INSERT INTO subscriptions (wallet, tier, tonAmount, usdAmount, status, tx_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', ?, datetime('now'), datetime('now'))
+      `,
+        user.wallet,
+        finalTier,
         tonPaid,
         usdPaid,
-        existing.id
+        txHash
       );
-    } else {
-      await db.run(
-        `
-        INSERT INTO subscriptions
-          (wallet, tier, active, provider, tx_id, tonAmount, usdAmount, status, created_at, updated_at)
-        VALUES
-          (?,      ?,    1,      'ton',   ?,     ?,        ?,        'active', datetime('now'), datetime('now'))`,
-        user.wallet,
-        tier,
-        txHash,
-        tonPaid,
-        usdPaid
-      );
+    } catch (subErr) {
+      // If subscriptions table missing or schema mismatch, log and continue.
+      console.warn("subscriptions table write failed (non-fatal):", subErr?.message || subErr);
     }
 
-    // Also reflect tier on users table (subscriptionTier is canonical)
-    await db.run(
-      "UPDATE users SET subscriptionTier = ?, tier = ? WHERE id = ?",
-      tier,
-      tier,
-      uid
-    );
+    // Update users table as the canonical source of subscription tier
+    try {
+      await db.run(
+        "UPDATE users SET subscriptionTier = ?, updatedAt = datetime('now') WHERE id = ?",
+        finalTier,
+        user.id
+      );
+    } catch (userErr) {
+      console.error("Failed to update users.subscriptionTier:", userErr);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
 
-    return res.json({ ok: true, tier });
+    return res.json({
+      ok: true,
+      tier: finalTier,
+      wallet: user.wallet,
+    });
   } catch (e) {
-    console.error("POST /subscriptions/subscribe error", e);
-    return res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
-/**
- * POST /subscriptions/claim-bonus
- * Simple idempotent bonus marker for subscribers.
- * For now we:
- *   - Require logged in + non-Free tier
- *   - Mark subscriptionClaimedAt on users
- *   - Return shape the frontend can handle
- *
- * Response (examples):
- *   { ok: true, awarded: 0, already: true }
- *   { ok: true, awarded: 0 }
- *   { ok: false, error: "no_active_subscription" }
- */
-router.post("/subscriptions/claim-bonus", async (req, res) => {
-  try {
-    const uid = req.session?.userId;
-    if (!uid) {
+    if (String(e.message).includes("not_logged_in")) {
       return res.status(401).json({ ok: false, error: "not_logged_in" });
     }
-
-    const user = await db.get(
-      `
-      SELECT id, wallet, subscriptionTier, tier, subscriptionClaimedAt
-        FROM users
-       WHERE id = ?`,
-      uid
-    );
-    const tier = normalizeTier(user);
-
-    if (!user?.wallet || tier === "Free") {
-      return res
-        .status(400)
-        .json({ ok: false, error: "no_active_subscription" });
+    if (String(e.message).includes("user_not_found")) {
+      return res.status(404).json({ ok: false, error: "user_not_found" });
     }
-
-    if (user.subscriptionClaimedAt) {
-      // Already claimed; keep idempotent
-      return res.json({ ok: true, awarded: 0, already: true });
-    }
-
-    // Mark claimed; XP bonus can be added here later if desired
-    await db.run(
-      `UPDATE users
-          SET subscriptionClaimedAt = datetime('now')
-        WHERE id = ?`,
-      uid
-    );
-
-    return res.json({ ok: true, awarded: 0 });
-  } catch (e) {
-    console.error("POST /subscriptions/claim-bonus error", e);
+    console.error("POST /subscriptions/subscribe error", e);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
