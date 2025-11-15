@@ -1,9 +1,9 @@
-// index.js
 import compatApi from "./routes/compat-api.js";
 console.log(
   "[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md"
 );
 
+// index.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -127,18 +127,18 @@ app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
 
-// Legacy /quests -> /api/quests alias
+// Keep legacy /quests -> /api/quests alias
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
 
-// Referrals + subscriptions + twitter + token sale
 app.use(referralRoutes);
 
-// IMPORTANT: mount subscriptions at root so paths are:
+// ⬇⬇⬇ IMPORTANT CHANGE: mount subscription routes at ROOT, no /api/subscribe prefix
+// This makes the real endpoints exactly what the frontend and compat aliases call:
 //   GET  /subscriptions/status
 //   POST /subscriptions/subscribe
-//   POST /subscriptions/claim-bonus  (if implemented)
 app.use(subscriptionRoutes);
 
+// Twitter & token sale
 app.use("/api", twitterRoutes);
 app.use(tokenSaleRoutes); // mounts /token-sale/contribute (if present)
 
@@ -192,7 +192,10 @@ cron.schedule("0 0 * * *", async () => {
 
 // --- CORS error handler (nice dev feedback) ---
 app.use((err, _req, res, _next) => {
-  if (err && String(err.message || "").startsWith("CORS blocked for origin:")) {
+  if (
+    err &&
+    String(err.message || "").startsWith("CORS blocked for origin:")
+  ) {
     return res.status(401).json({ error: err.message, allowed: ALLOWED });
   }
   return res.status(500).json({ error: "Server error" });
@@ -205,6 +208,32 @@ app.listen(PORT, () => {
   console.log("Allowed CORS origins:", ALLOWED.join(", "));
 });
 
+// --- compat-aliases-added ---
+try {
+  // In ESM this will throw, but it's wrapped in try/catch so it's safe.
+  // We keep it for legacy environments.
+  // eslint-disable-next-line no-undef
+  const expressCjs = require("express");
+  if (expressCjs && typeof app?.get === "function") {
+    // 1) Frontend used to call /api/v1/payments/status — alias to new subscriptions status
+    app.get("/api/v1/payments/status", (req, res) =>
+      res.redirect(307, "/subscriptions/status")
+    );
+
+    // 2) Some pages probe /api/me — return wallet from session if present
+    app.get("/api/me", (req, res) => {
+      const wallet =
+        (req.session && (req.session.wallet || req.session.address)) || null;
+      res.json({ ok: true, wallet });
+    });
+
+    console.log("[compat] /api/v1/payments/status and /api/me enabled");
+  }
+} catch (e) {
+  console.warn("[compat] skipped:", e && e.message);
+}
+// --- compat-aliases-added ---
+
 // === [PRD] Legacy Compatibility Routes (keep near end of file) ===
 // Old endpoints used by cached or older frontends.
 // Use 307 to preserve HTTP method and body on redirects.
@@ -215,12 +244,14 @@ app.get("/api/user/leaderboard", (req, res) =>
   res.redirect(307, "/api/leaderboard")
 );
 
-// Older payment polling endpoint used by some builds
+// We align this legacy alias with the new canonical subscriptions status route.
 app.get("/api/v1/payments/status", (req, res) =>
   res.redirect(307, "/subscriptions/status")
 );
 
 // === [END PRD] Legacy Compatibility Routes ===
 
-// Mount compat API under /api for additional aliases (/api/me, /api/session, etc.)
+// Mount compat API (cookie-backed /api/me, /api/session, /api/leaderboard, etc.)
 app.use("/api", compatApi);
+
+export default app;
