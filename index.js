@@ -1,6 +1,9 @@
-import compatApi from './routes/compat-api.js';
-console.log('[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md');
 // index.js
+import compatApi from "./routes/compat-api.js";
+console.log(
+  "[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md"
+);
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -110,22 +113,32 @@ app.use("/api/verify", questLimiter);
 
 // --- Mount order matters for auth popups/callbacks ---
 app.use(telegramRoutes); // /auth/telegram/*
-app.use(authRoutes);     // /auth/twitter, /auth/discord, etc.
+app.use(authRoutes); // /auth/twitter, /auth/discord, etc.
 
 // --- Secure quest + social routes (new) ---
-app.use(questLinkRoutes);     // /api/quests/:id/link/start, /r/:nonce, /finish
+app.use(questLinkRoutes); // /api/quests/:id/link/start, /r/:nonce, /finish
 app.use(questTelegramRoutes); // /api/quests/telegram/join/verify
-app.use(questDiscordRoutes);  // /api/quests/discord/join/verify
-app.use(socialLinkRoutes);    // /api/social/:provider/unlink|resync
+app.use(questDiscordRoutes); // /api/quests/discord/join/verify
+app.use(socialLinkRoutes); // /api/social/:provider/unlink|resync
 
 // --- Existing app APIs ---
 app.use(questRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
-app.get('/quests', (_req, res) => res.redirect(307, '/api/quests'));
+
+// Legacy /quests -> /api/quests alias
+app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
+
+// Referrals + subscriptions + twitter + token sale
 app.use(referralRoutes);
-app.use("/api/subscribe", subscriptionRoutes);
+
+// IMPORTANT: mount subscriptions at root so paths are:
+//   GET  /subscriptions/status
+//   POST /subscriptions/subscribe
+//   POST /subscriptions/claim-bonus  (if implemented)
+app.use(subscriptionRoutes);
+
 app.use("/api", twitterRoutes);
 app.use(tokenSaleRoutes); // mounts /token-sale/contribute (if present)
 
@@ -166,7 +179,10 @@ cron.schedule("0 0 * * *", async () => {
         `UPDATE users SET tier = 'Free', updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
         wallet
       );
-      await db.run(`UPDATE subscriptions SET status = 'expired' WHERE id = ?`, id);
+      await db.run(
+        `UPDATE subscriptions SET status = 'expired' WHERE id = ?`,
+        id
+      );
       console.log(` → Downgraded ${wallet}, sub#${id}`);
     }
   } catch (err) {
@@ -189,38 +205,22 @@ app.listen(PORT, () => {
   console.log("Allowed CORS origins:", ALLOWED.join(", "));
 });
 
-// --- compat-aliases-added ---
-try {
-  const express = require('express');
-  // Ensure we have an app reference
-  if (typeof app === 'undefined') {
-    // If this file exports { app }, try to import it; otherwise assume top-level app exists already
-    try { ({ app } = module.exports || {}); } catch (e) {}
-  }
-  if (typeof app?.get === 'function') {
-    // 1) Frontend used to call /api/v1/payments/status — alias it to subscriptions status
-    app.get('/api/v1/payments/status', (req, res) => res.redirect(307, '/api/subscriptions/status'));
-    // 2) Some pages probe /api/me — return wallet from session if present
-    app.get('/api/me', (req, res) => {
-      const wallet = (req.session && (req.session.wallet || req.session.address)) || null;
-      res.json({ ok: true, wallet });
-    });
-    console.log('[compat] /api/v1/payments/status and /api/me enabled');
-  }
-} catch (e) {
-  console.warn('[compat] skipped:', e && e.message);
-}
-// --- compat-aliases-added ---
-
 // === [PRD] Legacy Compatibility Routes (keep near end of file) ===
 // Old endpoints used by cached or older frontends.
 // Use 307 to preserve HTTP method and body on redirects.
 
-app.get('/api/user/me',          (req, res) => res.redirect(307, '/api/me'));
-app.get('/api/user/quests',      (req, res) => res.redirect(307, '/api/quests'));
-app.get('/api/user/leaderboard', (req, res) => res.redirect(307, '/api/leaderboard'));
-app.get('/api/v1/payments/status', (req, res) => res.redirect(307, '/api/payments/status'));
+app.get("/api/user/me", (req, res) => res.redirect(307, "/api/me"));
+app.get("/api/user/quests", (req, res) => res.redirect(307, "/api/quests"));
+app.get("/api/user/leaderboard", (req, res) =>
+  res.redirect(307, "/api/leaderboard")
+);
+
+// Older payment polling endpoint used by some builds
+app.get("/api/v1/payments/status", (req, res) =>
+  res.redirect(307, "/subscriptions/status")
+);
 
 // === [END PRD] Legacy Compatibility Routes ===
 
-app.use('/api', compatApi);
+// Mount compat API under /api for additional aliases (/api/me, /api/session, etc.)
+app.use("/api", compatApi);
