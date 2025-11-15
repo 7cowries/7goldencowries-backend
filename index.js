@@ -1,4 +1,5 @@
 import compatApi from "./routes/compat-api.js";
+
 console.log(
   "[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md"
 );
@@ -86,7 +87,7 @@ app.use(cookieParser());
 const Store = MemoryStore(session);
 app.use(
   session({
-    name: "7gc.sid",
+    name: process.env.SESSION_NAME || "7gc.sid",
     secret: process.env.SESSION_SECRET || "cowrie-secret",
     resave: false,
     saveUninitialized: true,
@@ -126,20 +127,16 @@ app.use(questRoutes);
 app.use(userRoutes);
 app.use(verifyRoutes);
 app.use(tonWebhook);
-
-// Keep legacy /quests -> /api/quests alias
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
-
 app.use(referralRoutes);
 
-// ⬇⬇⬇ IMPORTANT CHANGE: mount subscription routes at ROOT, no /api/subscribe prefix
-// This makes the real endpoints exactly what the frontend and compat aliases call:
-//   GET  /subscriptions/status
-//   POST /subscriptions/subscribe
-app.use(subscriptionRoutes);
+// NOTE: legacy mount; /api/subscribe/* used by some old flows
+app.use("/api/subscribe", subscriptionRoutes);
 
-// Twitter & token sale
+// Twitter API wrapper under /api/*
 app.use("/api", twitterRoutes);
+
+// Token sale routes (if present)
 app.use(tokenSaleRoutes); // mounts /token-sale/contribute (if present)
 
 // --- History APIs (XP + quest history) ---
@@ -148,15 +145,44 @@ app.use("/api/leaderboard", leaderboardRoutes);
 
 // --- Health checks ---
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
+
 app.get("/healthz", async (_req, res) => {
   try {
     await db.get("SELECT 1 AS ok");
     res.json({ ok: true });
   } catch (e) {
+    console.error("/healthz db error", e);
     res.status(500).json({ ok: false, error: "db" });
   }
 });
-app.get("/session-debug", (req, res) => res.json({ session: req.session }));
+
+app.get("/session-debug", (req, res) =>
+  res.json({ session: req.session || null })
+);
+
+// --- Subscription / payments status (canonical endpoint) ---
+// This is what /api/v1/payments/status ultimately redirects to.
+// Frontend calls GET https://sevengoldencowries-backend.onrender.com/subscriptions/status
+app.get("/subscriptions/status", async (req, res) => {
+  try {
+    const uid = req.session?.userId;
+    if (!uid) {
+      // Not logged in: treat as Free but NEVER 500
+      return res.json({ ok: true, active: false, tier: "Free" });
+    }
+
+    const user = await db.get(
+      "SELECT subscriptionTier FROM users WHERE id = ?",
+      uid
+    );
+    const tier = user?.subscriptionTier || "Free";
+    return res.json({ ok: true, active: tier !== "Free", tier });
+  } catch (e) {
+    console.error("/subscriptions/status error", e);
+    // Fail SAFE: report Free instead of breaking the whole frontend
+    return res.json({ ok: true, active: false, tier: "Free" });
+  }
+});
 
 // --- Daily subscription expiry cron ---
 cron.schedule("0 0 * * *", async () => {
@@ -190,50 +216,6 @@ cron.schedule("0 0 * * *", async () => {
   }
 });
 
-// --- CORS error handler (nice dev feedback) ---
-app.use((err, _req, res, _next) => {
-  if (
-    err &&
-    String(err.message || "").startsWith("CORS blocked for origin:")
-  ) {
-    return res.status(401).json({ error: err.message, allowed: ALLOWED });
-  }
-  return res.status(500).json({ error: "Server error" });
-});
-
-// --- Start server ---
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log("Allowed CORS origins:", ALLOWED.join(", "));
-});
-
-// --- compat-aliases-added ---
-try {
-  // In ESM this will throw, but it's wrapped in try/catch so it's safe.
-  // We keep it for legacy environments.
-  // eslint-disable-next-line no-undef
-  const expressCjs = require("express");
-  if (expressCjs && typeof app?.get === "function") {
-    // 1) Frontend used to call /api/v1/payments/status — alias to new subscriptions status
-    app.get("/api/v1/payments/status", (req, res) =>
-      res.redirect(307, "/subscriptions/status")
-    );
-
-    // 2) Some pages probe /api/me — return wallet from session if present
-    app.get("/api/me", (req, res) => {
-      const wallet =
-        (req.session && (req.session.wallet || req.session.address)) || null;
-      res.json({ ok: true, wallet });
-    });
-
-    console.log("[compat] /api/v1/payments/status and /api/me enabled");
-  }
-} catch (e) {
-  console.warn("[compat] skipped:", e && e.message);
-}
-// --- compat-aliases-added ---
-
 // === [PRD] Legacy Compatibility Routes (keep near end of file) ===
 // Old endpoints used by cached or older frontends.
 // Use 307 to preserve HTTP method and body on redirects.
@@ -244,14 +226,30 @@ app.get("/api/user/leaderboard", (req, res) =>
   res.redirect(307, "/api/leaderboard")
 );
 
-// We align this legacy alias with the new canonical subscriptions status route.
+// Payments status used by older frontends -> canonical /subscriptions/status
 app.get("/api/v1/payments/status", (req, res) =>
   res.redirect(307, "/subscriptions/status")
 );
 
 // === [END PRD] Legacy Compatibility Routes ===
 
-// Mount compat API (cookie-backed /api/me, /api/session, /api/leaderboard, etc.)
+// Mount full compat API under /api (includes /api/me, /api/session, etc.)
 app.use("/api", compatApi);
+
+// --- CORS / general error handler (keep LAST before listen) ---
+app.use((err, _req, res, _next) => {
+  if (err && String(err.message || "").startsWith("CORS blocked for origin:")) {
+    return res.status(401).json({ error: err.message, allowed: ALLOWED });
+  }
+  console.error("Unhandled error:", err);
+  return res.status(500).json({ error: "Server error" });
+});
+
+// --- Start server ---
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log("Allowed CORS origins:", ALLOWED.join(", "));
+});
 
 export default app;
