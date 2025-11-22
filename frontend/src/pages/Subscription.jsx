@@ -27,10 +27,13 @@ export default function Subscription() {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
 
-  const hydratedStatus = useMemo(() => ({
-    ...DEFAULT_STATUS,
-    ...(status ?? {}),
-  }), [status]);
+  const hydratedStatus = useMemo(
+    () => ({
+      ...DEFAULT_STATUS,
+      ...(status ?? {}),
+    }),
+    [status]
+  );
 
   const loadStatus = useCallback(async () => {
     setError(null);
@@ -88,12 +91,15 @@ export default function Subscription() {
   }, [claiming, hydratedStatus.canClaim, loadStatus]);
 
   if (loading && !status) {
-    return <div className="skeleton">Loading subscription…</div>;
+    return <p>Loading subscription…</p>;
   }
 
   return (
     <div className="subscription-page">
       <h1>Subscription</h1>
+      <p className="page-subtitle">
+        Stay informed without dimmed overlays. See your tier, payments, and bonus claim status clearly.
+      </p>
       {message && <p className="success">{message}</p>}
       {error && <p className="error">{error}</p>}
       <dl>
@@ -118,6 +124,9 @@ export default function Subscription() {
           <dd>{formatDate(hydratedStatus.claimedAt)}</dd>
         </div>
       </dl>
+      {!hydratedStatus.paid && (
+        <p className="empty-state">Upgrade to activate bonus XP and unlock gated quests.</p>
+      )}
       <button
         type="button"
         onClick={handleClaim}
