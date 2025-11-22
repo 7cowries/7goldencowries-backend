@@ -8,7 +8,14 @@ import db from "../../lib/db.js";
 
 const router = express.Router();
 
-const TOKEN_SALE_WEBHOOK_SECRET = getRequiredEnv("TOKEN_SALE_WEBHOOK_SECRET");
+function getTokenSaleWebhookSecret() {
+  try {
+    return getRequiredEnv("TOKEN_SALE_WEBHOOK_SECRET");
+  } catch (err) {
+    console.warn("TOKEN_SALE_WEBHOOK_SECRET not set (webhook disabled)", err?.message || err);
+    return null;
+  }
+}
 
 const webhookLimiter = rateLimit({
   ...getWebhookRateLimitOptions(),
@@ -136,7 +143,12 @@ router.post("/webhook", webhookLimiter, async (req, res) => {
       ? req.rawBody
       : Buffer.from(req.rawBody || "", "utf8");
 
-    if (!verifySignature(rawBodyBuffer, signature, TOKEN_SALE_WEBHOOK_SECRET)) {
+    const webhookSecret = getTokenSaleWebhookSecret();
+    if (!webhookSecret) {
+      return res.status(503).json({ error: "webhook_secret_missing", correlationId });
+    }
+
+    if (!verifySignature(rawBodyBuffer, signature, webhookSecret)) {
       console.warn(`[token-sale-webhook:${correlationId}] invalid signature`);
       return res.status(401).json({ error: "invalid_signature", correlationId });
     }
