@@ -23,7 +23,7 @@ cp .env.example .env
 | --- | --- | --- |
 | `NODE_ENV` | `production` | Enables production logging/helmet defaults. |
 | `PORT` | `4000` | Render service port. |
-| `SQLITE_FILE` | `/var/data/7gc.sqlite` | SQLite database file (auto-migrated on boot when the file exists). |
+| `SQLITE_FILE` | `/var/data/7gc.sqlite3` | SQLite database file stored on the Render persistent disk; `npm start` runs migrations against this file on boot. |
 | `SESSION_SECRET` | _(secret)_ | Session signing secret. |
 | `SESSIONS_DIR` | `/var/data` | Persistent directory for Memorystore. |
 | `COOKIE_SECURE` | `true` | Forces `Secure`/`SameSite=None` cookies in production. |
@@ -40,7 +40,7 @@ cp .env.example .env
 
 | Variable | Value | Notes |
 | --- | --- | --- |
-| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend.onrender.com` | Optional override for API base. |
+| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend.onrender.com` | Production API base for Vercel deployments (points at the Render backend). |
 | `REACT_APP_TON_RECEIVE_ADDRESS` | Mirrors backend `TON_RECEIVE_ADDRESS` | Displayed in UI and used for TonConnect transfer. |
 | `REACT_APP_TON_MIN_PAYMENT_TON` | Mirrors backend minimum | Used to set TonConnect transfer amount. |
 | `REACT_APP_SUBSCRIPTION_CALLBACK` | `https://7goldencowries.com/subscription/callback` | Redirect URL after hosted checkout. |
@@ -54,6 +54,9 @@ cp .env.example .env
 
 ## Migrations
 
+`npm start` and `npm run render-start` execute `scripts/migrate-on-boot.mjs` automatically, bootstrapping `/var/data/7gc.sqlite3`
+on the Render persistent disk. When running migrations manually, point `DATABASE_URL` or `SQLITE_FILE` at that same path.
+
 ```bash
 npm run migrate:quests
 ```
@@ -61,7 +64,7 @@ npm run migrate:quests
 ## Start
 
 ```bash
-PORT=4000 node index.js
+PORT=4000 npm start
 ```
 
 ## API
@@ -119,7 +122,8 @@ Incoming bodies are rejected with `401` when the signature is missing or invalid
 
 ## Disk
 
-Provision a 1GB disk mounted at `/var/data`.
+Provision a 1GB disk mounted at `/var/data`. The SQLite database file lives at `/var/data/7gc.sqlite3`; Render services should
+mount the disk at that path so migrations can run in place on boot.
 
 ## Database roadmap
 
