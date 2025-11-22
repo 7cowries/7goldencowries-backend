@@ -30,6 +30,7 @@ await migrateOnBoot(DB_PATH);
 
 const app = express();
 const PROD = process.env.NODE_ENV === "production";
+const IS_TEST = process.env.NODE_ENV === "test";
 const DEFAULT_FRONTEND = "http://localhost:3000";
 
 // FRONTEND_URL can be comma-separated (Vercel prod + previews)
@@ -149,36 +150,38 @@ app.get("/session-debug", (req, res) =>
 );
 
 // --- Daily subscription expiry cron ---
-cron.schedule("0 0 * * *", async () => {
-  console.log("🔄 Running daily subscription expiry check…");
-  const now = dayjs().toISOString();
+if (!IS_TEST) {
+  cron.schedule("0 0 * * *", async () => {
+    console.log("🔄 Running daily subscription expiry check…");
+    const now = dayjs().toISOString();
 
-  try {
-    const expired = await db.all(
-      `
-      SELECT id, wallet
-      FROM subscriptions
-      WHERE status = 'active'
-        AND datetime(timestamp, '+30 days') <= ?
-    `,
-      now
-    );
+    try {
+      const expired = await db.all(
+        `
+        SELECT id, wallet
+        FROM subscriptions
+        WHERE status = 'active'
+          AND datetime(timestamp, '+30 days') <= ?
+      `,
+        now
+      );
 
-    for (const { id, wallet } of expired) {
-      await db.run(
-        `UPDATE users SET tier = 'Free', updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
-        wallet
-      );
-      await db.run(
-        `UPDATE subscriptions SET status = 'expired' WHERE id = ?`,
-        id
-      );
-      console.log(` → Downgraded ${wallet}, sub#${id}`);
+      for (const { id, wallet } of expired) {
+        await db.run(
+          `UPDATE users SET tier = 'Free', updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+          wallet
+        );
+        await db.run(
+          `UPDATE subscriptions SET status = 'expired' WHERE id = ?`,
+          id
+        );
+        console.log(` → Downgraded ${wallet}, sub#${id}`);
+      }
+    } catch (err) {
+      console.error("❌ Cron error:", err);
     }
-  } catch (err) {
-    console.error("❌ Cron error:", err);
-  }
-});
+  });
+}
 
 // --- Error handler (keep LAST before listen) ---
 app.use((err, _req, res, _next) => {
