@@ -43,7 +43,7 @@ npm run migrate:quests
 ## Start
 
 ```bash
-PORT=4000 node server.js
+PORT=4000 node index.js
 ```
 
 ## Render
@@ -53,7 +53,7 @@ Node web service with 1GB persistent disk at `/var/data`.
 ## Deployment notes
 
 - Add production domains in Vercel and keep the repo `vercel.json` rewrites intact.
-- Render service mounts a persistent disk at `/var/data`, exports the environment matrix above, and runs `node server.js`.
+- Render service mounts a persistent disk at `/var/data`, exports the environment matrix above, and runs `node index.js`.
 
 ## Smoke QA
 

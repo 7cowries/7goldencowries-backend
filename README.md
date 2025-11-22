@@ -61,7 +61,7 @@ npm run migrate:quests
 ## Start
 
 ```bash
-PORT=4000 node server.js
+PORT=4000 node index.js
 ```
 
 ## API
