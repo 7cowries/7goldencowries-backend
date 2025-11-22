@@ -16,9 +16,8 @@ router.get("/ref/:code", async (req, res) => {
       crossSiteCookieOptions({ maxAge: 2592000 * 1000 })
     );
     req.session.referral_code = code;
-    const redirectUrl =
-      process.env.FRONTEND_URL || "https://7goldencowries.com";
-    return res.redirect(302, redirectUrl);
+    const redirectUrl = process.env.FRONTEND_URL || "/";
+    return res.redirect(302, redirectUrl === "/" ? "/" : redirectUrl);
   } catch (e) {
     return res.status(500).json({ error: "Internal error" });
   }

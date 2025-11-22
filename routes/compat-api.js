@@ -27,7 +27,7 @@ r.get('/me', (req, res) => {
 
 // Legacy + placeholders
 r.get('/user/me', (_req, res) => res.redirect(307, '/api/me'));
-r.get('/leaderboard', (_req, res) => res.json({ ok: true, leaderboard: [] }));
-r.get('/v1/payments/status', (_req, res) => res.json({ ok: true, status: 'ready' }));
+r.get('/leaderboard', (_req, res) => res.redirect(307, '/api/leaderboard'));
+r.get('/v1/payments/status', (_req, res) => res.redirect(307, '/api/v1/subscription/status'));
 
 export default r;

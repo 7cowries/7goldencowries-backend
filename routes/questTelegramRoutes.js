@@ -106,7 +106,7 @@ router.post("/api/quests/telegram/join/verify", async (req, res) => {
   try {
     if (!BOT) return res.status(500).json({ error: "TELEGRAM_BOT_TOKEN not set" });
 
-    const wallet = req.user?.wallet;
+    const wallet = req.user?.wallet || req.session?.wallet;
     if (!wallet) return res.status(401).json({ error: "Auth required" });
 
     // Must have linked Telegram login before verifying

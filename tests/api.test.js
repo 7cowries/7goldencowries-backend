@@ -8,7 +8,7 @@ beforeAll(async () => {
   process.env.SQLITE_FILE = ':memory:';
   process.env.DATABASE_URL = process.env.SQLITE_FILE;
   process.env.NODE_ENV = 'test';
-  ({ default: app } = await import('../server.js'));
+  ({ default: app } = await import('../index.js'));
   ({ default: db } = await import('../lib/db.js'));
   try { await db.exec("ALTER TABLE quests ADD COLUMN code TEXT;"); } catch {}
   try { await db.exec("ALTER TABLE quests ADD COLUMN requirement TEXT;"); } catch {}

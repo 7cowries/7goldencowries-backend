@@ -11,7 +11,7 @@ beforeAll(async () => {
   process.env.TWITTER_CONSUMER_SECRET = "secret";
   process.env.FRONTEND_URL = "http://localhost:3000";
   process.env.SUBSCRIPTION_BONUS_XP = "120";
-  ({ default: app } = await import("../server.js"));
+  ({ default: app } = await import("../index.js"));
   ({ default: db } = await import("../lib/db.js"));
 });
 
