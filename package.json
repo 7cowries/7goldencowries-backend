@@ -16,7 +16,8 @@
     "probe:off": "node scripts/toggleProbe.js",
     "probe:on": "ACTIVE=1 node scripts/toggleProbe.js",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
-    "lint": "eslint . --ext .js,.mjs"
+    "lint": "eslint . --ext .js,.mjs",
+    "build": "npm run lint && npm test"
   },
   "engines": {
     "node": "20.x"
