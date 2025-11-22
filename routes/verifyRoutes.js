@@ -9,26 +9,27 @@ const router = express.Router();
  * including nanoton, human TON, txHash, status,
  * startDate (timestamp) and expiryDate (+30 days).
  */
-router.get('/subscriptions/:wallet', (req, res) => {
+router.get('/subscriptions/:wallet', async (req, res) => {
   const { wallet } = req.params;
   if (!wallet) return res.status(400).json({ error: 'Missing wallet param' });
 
   try {
-    const rows = db
-      .prepare(`
+    const rows = await db.all(
+      `
         SELECT
           tier,
-          ton_amount        AS nanoton,
-          ton_amount / 1e9  AS ton,         -- human TON value
-          tx_hash           AS txHash,
+          COALESCE(ton_amount, tonAmount, 0)        AS nanoton,
+          COALESCE(ton_amount, tonAmount, 0) / 1e9  AS ton,         -- human TON value
+          COALESCE(tx_hash, txHash)                 AS txHash,
           status,
           timestamp         AS startDate,
           datetime(timestamp, '+30 days') AS expiryDate
         FROM subscriptions
         WHERE wallet = ?
         ORDER BY timestamp DESC
-      `)
-      .all(wallet);
+      `,
+      wallet
+    );
 
     res.json({ subscriptions: rows });
   } catch (err) {
