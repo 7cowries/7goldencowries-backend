@@ -3,15 +3,20 @@
 
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import db from "../lib/db.js";
 import { ensureQuestsSchema } from "../lib/ensureQuestsSchema.js";
 
 const DEFAULT_DB = "/var/data/7gc.sqlite3";
-const dbPath = process.env.SQLITE_FILE || process.env.DATABASE_URL || DEFAULT_DB;
+const RUNTIME_DB_PATH = process.env.SQLITE_FILE || process.env.DATABASE_URL || DEFAULT_DB;
 
-async function runMigrations() {
+export async function migrateOnBoot(dbPath = RUNTIME_DB_PATH) {
+  const targetPath = dbPath || DEFAULT_DB;
+  process.env.DATABASE_URL ||= targetPath;
+  process.env.SQLITE_FILE ||= targetPath;
+
   try {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
   } catch {}
 
   await db.exec("PRAGMA journal_mode = WAL;");
@@ -43,7 +48,9 @@ async function runMigrations() {
   // older Render disks that pre-date the quests migration.
   await ensureQuestsSchema();
 
-  console.log(`[migrate-on-boot] database ready at ${dbPath}`);
+  console.log(`[migrate-on-boot] database ready at ${targetPath}`);
 }
 
-await runMigrations();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await migrateOnBoot();
+}

@@ -1,5 +1,3 @@
-import compatApi from "./routes/compat-api.js";
-
 console.log(
   "[PRD] v1.2 → https://github.com/7cowries/7goldencowries-backend/blob/main/README_PRD.md"
 );
@@ -18,37 +16,17 @@ import rateLimit from "express-rate-limit";
 
 import "./passport.js";
 import db from "./lib/db.js";
-
-// Core routes
-import questRoutes from "./routes/questRoutes.js";
-import authRoutes from "./routes/authRoutes.js";
-import userRoutes from "./routes/userRoutes.js";
-import verifyRoutes from "./routes/verifyRoutes.js";
-import tonWebhook from "./routes/tonWebhook.js";
-import referralRoutes from "./routes/referralRoutes.js";
-import refRedirectRoutes from "./routes/refRedirectRoutes.js";
-import subscriptionRoutes from "./routes/subscriptionRoutes.js";
-import twitterRoutes from "./routes/twitterRoutes.js";
-import telegramRoutes from "./routes/telegramRoutes.js";
-import tokenSaleRoutes from "./routes/tokenSaleRoutes.js";
-
-// New quest/social helpers
-import questLinkRoutes from "./routes/questLinkRoutes.js";
-import questTelegramRoutes from "./routes/questTelegramRoutes.js";
-import questDiscordRoutes from "./routes/questDiscordRoutes.js";
-import socialLinkRoutes from "./routes/socialLinkRoutes.js";
-import proofRoutes from "./routes/proofRoutes.js";
-
-// Health + API v1
-import healthRoutes from "./routes/healthRoutes.js";
-import apiV1Routes from "./routes/apiV1/index.js";
+import canonicalRouters from "./routes/routerList.js";
 import { startTokenSaleSession } from "./routes/apiV1/tokenSaleRoutes.js";
-
-// History + leaderboard
-import historyRoutes from "./routes/historyRoutes.js";
-import leaderboardRoutes from "./routes/leaderboardRoutes.js";
+import { migrateOnBoot } from "./scripts/migrate-on-boot.mjs";
 
 dotenv.config();
+
+const DEFAULT_DB_PATH = "/var/data/7gc.sqlite3";
+const DB_PATH = process.env.SQLITE_FILE || process.env.DATABASE_URL || DEFAULT_DB_PATH;
+process.env.DATABASE_URL ||= DB_PATH;
+process.env.SQLITE_FILE ||= DB_PATH;
+await migrateOnBoot(DB_PATH);
 
 const app = express();
 const PROD = process.env.NODE_ENV === "production";
@@ -152,45 +130,18 @@ app.post("/api/session/disconnect", (req, res) => {
   res.json({ ok: true });
 });
 
-// --- Auth routes (order matters for popups / callbacks) ---
-app.use(telegramRoutes); // /auth/telegram/*
-app.use(authRoutes); // /auth/twitter, /auth/discord, etc.
-
-// --- Secure quest + social routes ---
-app.use(questLinkRoutes); // /api/quests/:id/link/start, /r/:nonce, /finish
-app.use(questTelegramRoutes); // /api/quests/telegram/join/verify
-app.use(questDiscordRoutes); // /api/quests/discord/join/verify
-app.use(socialLinkRoutes); // /api/social/:provider/unlink|resync
-
-// --- Existing app APIs ---
-app.use(questRoutes);
-app.use(userRoutes);
-app.use(verifyRoutes);
-app.use(tonWebhook);
-app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
-app.use(referralRoutes);
-app.use(refRedirectRoutes);
-app.use("/api/proofs", proofRoutes);
-
-// Legacy mount; /api/subscribe/* used by some old flows
-app.use("/api/subscribe", subscriptionRoutes);
-
-// Twitter API wrapper under /api/*
-app.use("/api", twitterRoutes);
+// --- Route mounting (canonical list only) ---
+for (const { path, router } of canonicalRouters) {
+  if (path) {
+    app.use(path, router);
+  } else {
+    app.use(router);
+  }
+}
 
 // Token sale routes (if present)
-app.use(tokenSaleRoutes);
 app.post("/api/token-sale/start", startTokenSaleSession);
 
-// API v1 surface
-app.use("/api/v1", apiV1Routes);
-
-// History APIs (XP + quest history)
-app.use(historyRoutes);
-app.use("/api/leaderboard", leaderboardRoutes);
-
-// --- Health checks ---
-app.use(healthRoutes);
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
 
 app.get("/session-debug", (req, res) =>
@@ -228,21 +179,6 @@ cron.schedule("0 0 * * *", async () => {
     console.error("❌ Cron error:", err);
   }
 });
-
-// === Legacy compatibility routes ===
-app.get("/api/user/me", (req, res) => res.redirect(307, "/api/me"));
-app.get("/api/user/quests", (req, res) => res.redirect(307, "/api/quests"));
-app.get("/api/user/leaderboard", (req, res) =>
-  res.redirect(307, "/api/leaderboard")
-);
-
-// Old frontend payments status -> canonical /subscriptions/status
-app.get("/api/v1/payments/status", (req, res) =>
-  res.redirect(307, "/subscriptions/status")
-);
-
-// Mount compat API under /api (includes /api/me, /api/session, etc.)
-app.use("/api", compatApi);
 
 // --- Error handler (keep LAST before listen) ---
 app.use((err, _req, res, _next) => {
