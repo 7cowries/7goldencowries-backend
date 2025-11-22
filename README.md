@@ -15,6 +15,8 @@ cp .env.example .env
 # edit .env values or copy `.env.production` when preparing Render
 ```
 
+See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for Render/Vercel deployment steps, PR expectations, and the production readiness checklist.
+
 ## Environment matrices
 
 ### Render (backend)
