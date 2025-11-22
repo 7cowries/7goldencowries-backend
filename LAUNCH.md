@@ -8,7 +8,7 @@
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `PORT` | `4000` |
-| `SQLITE_FILE` | `/var/data/7gc.sqlite` |
+| `SQLITE_FILE` | `/var/data/7gc.sqlite3` |
 | `SESSION_SECRET` | _(secret)_ |
 | `SESSIONS_DIR` | `/var/data` |
 | `COOKIE_SECURE` | `true` |
@@ -32,7 +32,7 @@
 
 ## Disk
 
-1GB mounted at `/var/data`
+1GB mounted at `/var/data`; store the SQLite file at `/var/data/7gc.sqlite3` on the persistent disk.
 
 ## Migrations
 
@@ -43,17 +43,20 @@ npm run migrate:quests
 ## Start
 
 ```bash
-PORT=4000 node index.js
+PORT=4000 npm run render-start
 ```
 
 ## Render
 
-Node web service with 1GB persistent disk at `/var/data`.
+Node web service with 1GB persistent disk at `/var/data`; the SQLite file lives at `/var/data/7gc.sqlite3` and must persist betw
+een deploys.
 
 ## Deployment notes
 
 - Add production domains in Vercel and keep the repo `vercel.json` rewrites intact.
-- Render service mounts a persistent disk at `/var/data`, exports the environment matrix above, and runs `node index.js`.
+- Set `NEXT_PUBLIC_API_URL` to the production backend base so the Vercel build calls the Render API without local proxies.
+- Render service mounts a persistent disk at `/var/data`, exports the environment matrix above, and runs `npm run render-start` (o
+r `node scripts/migrate-on-boot.mjs && node index.js`) so migrations run against `/var/data/7gc.sqlite3` on every deploy.
 
 ## Smoke QA
 

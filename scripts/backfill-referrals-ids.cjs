@@ -1,6 +1,6 @@
 // scripts/backfill-referrals-ids.cjs
 // Idempotent: add referee_user_id/referrer_user_id to referrals and backfill from users(wallet)
-// Usage: DATABASE_PATH=/var/data/7gc.sqlite node scripts/backfill-referrals-ids.cjs
+// Usage: DATABASE_PATH=/var/data/7gc.sqlite3 node scripts/backfill-referrals-ids.cjs
 
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +8,7 @@ const sqlite3 = require('sqlite3').verbose();
 
 (async () => {
   try {
-    const DB_PATH = process.env.DATABASE_PATH || process.env.SQLITE_FILE || '/var/data/7gc.sqlite';
+    const DB_PATH = process.env.DATABASE_PATH || process.env.SQLITE_FILE || '/var/data/7gc.sqlite3';
     console.log('[backfill] db path:', DB_PATH);
     if (!fs.existsSync(DB_PATH)) {
       console.error('[backfill] DB file not found:', DB_PATH);
