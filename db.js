@@ -13,10 +13,12 @@ const DB_FILE =
 process.env.DATABASE_URL ||= DB_FILE;
 process.env.SQLITE_FILE ||= DB_FILE;
 
-// open once and export the promise
-const dbPromise = open({
+// Open once (resolved connection). Top-level await ensures consumers receive a live db
+// instance with the sqlite3 driver instead of a pending promise (fixes "db.exec is not a
+// function" when routes call db helpers).
+const db = await open({
   filename: DB_FILE,
   driver: sqlite3.Database,
 });
 
-export default dbPromise;
+export default db;
