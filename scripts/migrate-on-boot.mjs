@@ -4,6 +4,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import db from "../lib/db.js";
+import { ensureQuestsSchema } from "../lib/ensureQuestsSchema.js";
 
 const DEFAULT_DB = "/var/data/7gc.sqlite3";
 const dbPath = process.env.SQLITE_FILE || process.env.DATABASE_URL || DEFAULT_DB;
@@ -36,6 +37,11 @@ async function runMigrations() {
       timestamp TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Make sure the quests table has the full column set (including `code`)
+  // before any request handlers run. This is idempotent and safe against
+  // older Render disks that pre-date the quests migration.
+  await ensureQuestsSchema();
 
   console.log(`[migrate-on-boot] database ready at ${dbPath}`);
 }
