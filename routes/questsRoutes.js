@@ -1,5 +1,6 @@
 import express from "express";
 import db from "../db.js";
+import { getSessionWallet } from "../utils/session.js";
 
 const router = express.Router();
 
@@ -262,11 +263,19 @@ router.post("/quests/claim", async (req, res) => {
 router.get("/subscriptions/status", async (req, res) => {
   try {
     await ensureCoreSchema();
+    const wallet = getSessionWallet(req);
     const uid = req.session?.userId;
-    if (!uid) return res.json({ ok: true, active: false, tier: "Free" });
-    const user = await db.get(`SELECT subscriptionTier FROM users WHERE id = ?`, [uid]);
+
+    let user = null;
+    if (wallet) {
+      user = await db.get(`SELECT subscriptionTier FROM users WHERE wallet = ?`, [wallet]);
+    } else if (uid) {
+      user = await db.get(`SELECT subscriptionTier, wallet FROM users WHERE id = ?`, [uid]);
+    }
+
     const tier = user?.subscriptionTier || "Free";
-    return res.json({ ok: true, active: tier !== "Free", tier });
+    const active = tier !== "Free";
+    return res.json({ ok: true, active, tier });
   } catch (e) {
     console.error("GET /subscriptions/status error", e);
     return res.status(500).json({ ok: false, error: "internal_error" });
@@ -276,7 +285,7 @@ router.get("/subscriptions/status", async (req, res) => {
 /** POST /subscriptions/upgrade & /subscriptions/subscribe (persists to DB, never stub) */
 async function handleUpgrade(req, res) {
   const uid = req.session?.userId;
-  if (!uid) return res.status(401).json({ ok: false, error: "not_logged_in" });
+  const sessionWallet = getSessionWallet(req);
 
   let { tier = "Tier 1", txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
   try {
@@ -287,27 +296,45 @@ async function handleUpgrade(req, res) {
     const allowed = new Set(tiers.map(t => t.name));
     if (!allowed.has(tier)) tier = "Tier 1";
 
-    const user = await db.get(`SELECT wallet FROM users WHERE id = ?`, [uid]);
-    if (!user?.wallet) return res.status(404).json({ ok: false, error: "user_not_found" });
+    let wallet = sessionWallet;
+    if (!wallet && uid) {
+      wallet = (await db.get(`SELECT wallet FROM users WHERE id = ?`, [uid]))?.wallet || null;
+    }
+
+    if (!wallet) return res.status(401).json({ ok: false, error: "not_logged_in" });
+
+    await db.run(
+      `INSERT INTO users (wallet, subscriptionTier, updatedAt)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(wallet) DO UPDATE SET subscriptionTier = excluded.subscriptionTier, updatedAt = excluded.updatedAt`,
+      [wallet, tier]
+    );
 
     try {
       await db.run(
         `INSERT INTO subscriptions (wallet, tier, tonPaid, usdPaid) VALUES (?,?,?,?)`,
-        [user.wallet, tier, tonPaid, usdPaid]
+        [wallet, tier, tonPaid, usdPaid]
       );
     } catch {
       await db.run(
         `UPDATE subscriptions SET tier = ?, tonPaid = ?, usdPaid = ?, createdAt = datetime('now') WHERE wallet = ?`,
-        [tier, tonPaid, usdPaid, user.wallet]
+        [tier, tonPaid, usdPaid, wallet]
       );
     }
 
-    await db.run(`UPDATE users SET subscriptionTier = ? WHERE id = ?`, [tier, uid]);
+    if (!sessionWallet) {
+      req.session.wallet = wallet;
+    }
+
     return res.json({ ok: true, tier });
   } catch (e) {
     console.error("POST /subscriptions/upgrade error", e);
-    // still persist tier optimistically to avoid front-end dead-ends
-    try { await db.run(`UPDATE users SET subscriptionTier = ? WHERE id = ?`, [tier, uid]); } catch {}
+    try {
+      await db.run(
+        `UPDATE users SET subscriptionTier = ?, updatedAt = datetime('now') WHERE wallet = ?`,
+        [tier, sessionWallet].filter(Boolean)
+      );
+    } catch {}
     return res.json({ ok: true, tier });
   }
 }

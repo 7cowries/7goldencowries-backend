@@ -1,5 +1,6 @@
 import authRoutes from "./authRoutes.js";
 import questRoutes from "./questRoutes.js";
+import questsRoutes from "./questsRoutes.js";
 import userRoutes from "./userRoutes.js";
 import verifyRoutes from "./verifyRoutes.js";
 import tonWebhook from "./tonWebhook.js";
@@ -24,6 +25,7 @@ const canonicalRouters = [
   { router: questLinkRoutes },
   { router: questTelegramRoutes },
   { router: questDiscordRoutes },
+  { router: questsRoutes },
   { router: socialLinkRoutes },
   { router: questRoutes },
   { router: userRoutes },

@@ -198,21 +198,32 @@ router.post("/subscribe", async (req, res) => {
       req.session.wallet = wallet;
     }
 
-return jsonOk(res, "subscription_session_created", "Subscription checkout created.", {
-  sessionUrl,
-  sessionId,
-  tier,
-});
-} catch (err) {
-  console.error("subscription subscribe error", err);
-  return jsonError(res, "subscription_failed", "Subscription subscribe failed.", {
-    status: 500,
-  });
+    return jsonOk(res, "subscription_session_created", "Subscription checkout created.", {
+      sessionUrl,
+      sessionId,
+      tier,
+    });
+  } catch (err) {
+    console.error("subscription subscribe error", err);
+    return jsonError(res, "subscription_failed", "Subscription subscribe failed.", {
+      status: 500,
+    });
+  }
 }
             
 });
 
-const SUBSCRIPTION_WEBHOOK_SECRET = getRequiredEnv("SUBSCRIPTION_WEBHOOK_SECRET");
+function getSubscriptionWebhookSecret() {
+  try {
+    return getRequiredEnv("SUBSCRIPTION_WEBHOOK_SECRET");
+  } catch (err) {
+    console.warn(
+      "SUBSCRIPTION_WEBHOOK_SECRET not set (subscription webhook disabled)",
+      err?.message || err
+    );
+    return null;
+  }
+}
 const subscriptionCallbackLimiter = rateLimit({
   ...getWebhookRateLimitOptions(),
   standardHeaders: true,
@@ -260,7 +271,15 @@ router.post("/callback", subscriptionCallbackLimiter, async (req, res) => {
       ? req.rawBody
       : Buffer.from(req.rawBody || "", "utf8");
 
-    if (!verifySignature(rawBodyBuffer, signature, SUBSCRIPTION_WEBHOOK_SECRET)) {
+    const webhookSecret = getSubscriptionWebhookSecret();
+    if (!webhookSecret) {
+      return jsonError(res, "webhook_secret_missing", "Subscription webhook is not configured.", {
+        status: 503,
+        correlationId,
+      });
+    }
+
+    if (!verifySignature(rawBodyBuffer, signature, webhookSecret)) {
       console.warn(`[subscription-callback:${correlationId}] invalid signature`);
       return res.status(401).json({ error: "invalid_signature", correlationId });
     }
