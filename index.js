@@ -26,6 +26,7 @@ import userRoutes from "./routes/userRoutes.js";
 import verifyRoutes from "./routes/verifyRoutes.js";
 import tonWebhook from "./routes/tonWebhook.js";
 import referralRoutes from "./routes/referralRoutes.js";
+import refRedirectRoutes from "./routes/refRedirectRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import twitterRoutes from "./routes/twitterRoutes.js";
 import telegramRoutes from "./routes/telegramRoutes.js";
@@ -36,6 +37,12 @@ import questLinkRoutes from "./routes/questLinkRoutes.js";
 import questTelegramRoutes from "./routes/questTelegramRoutes.js";
 import questDiscordRoutes from "./routes/questDiscordRoutes.js";
 import socialLinkRoutes from "./routes/socialLinkRoutes.js";
+import proofRoutes from "./routes/proofRoutes.js";
+
+// Health + API v1
+import healthRoutes from "./routes/healthRoutes.js";
+import apiV1Routes from "./routes/apiV1/index.js";
+import { startTokenSaleSession } from "./routes/apiV1/tokenSaleRoutes.js";
 
 // History + leaderboard
 import historyRoutes from "./routes/historyRoutes.js";
@@ -78,8 +85,14 @@ app.use(
 );
 
 // --- Body parsers & cookies ---
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+const captureRawBody = (req, _res, buf) => {
+  if (buf?.length) {
+    req.rawBody = buf;
+  }
+};
+
+app.use(express.json({ verify: captureRawBody }));
+app.use(express.urlencoded({ extended: false, verify: captureRawBody }));
 app.use(cookieParser());
 
 // --- Sessions (popup-friendly cookies) ---
@@ -111,6 +124,34 @@ const questLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
 app.use("/api/quests", questLimiter);
 app.use("/api/verify", questLimiter);
 
+// --- Session helpers used by frontend + tests ---
+app.post("/api/session/bind-wallet", async (req, res) => {
+  try {
+    const wallet = String(req.body?.wallet || req.body?.address || "").trim();
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet_required" });
+
+    await db.run(
+      `INSERT OR IGNORE INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, socials, updatedAt)
+       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, '{}', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      wallet
+    );
+    req.session.wallet = wallet;
+    res.json({ ok: true, wallet });
+  } catch (err) {
+    console.error("bind-wallet error", err);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/session/disconnect", (req, res) => {
+  if (req.session) {
+    req.session.wallet = null;
+    req.session.userId = null;
+    req.session.referral_code = null;
+  }
+  res.json({ ok: true });
+});
+
 // --- Auth routes (order matters for popups / callbacks) ---
 app.use(telegramRoutes); // /auth/telegram/*
 app.use(authRoutes); // /auth/twitter, /auth/discord, etc.
@@ -128,6 +169,8 @@ app.use(verifyRoutes);
 app.use(tonWebhook);
 app.get("/quests", (_req, res) => res.redirect(307, "/api/quests"));
 app.use(referralRoutes);
+app.use(refRedirectRoutes);
+app.use("/api/proofs", proofRoutes);
 
 // Legacy mount; /api/subscribe/* used by some old flows
 app.use("/api/subscribe", subscriptionRoutes);
@@ -137,50 +180,22 @@ app.use("/api", twitterRoutes);
 
 // Token sale routes (if present)
 app.use(tokenSaleRoutes);
+app.post("/api/token-sale/start", startTokenSaleSession);
+
+// API v1 surface
+app.use("/api/v1", apiV1Routes);
 
 // History APIs (XP + quest history)
 app.use(historyRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 
 // --- Health checks ---
+app.use(healthRoutes);
 app.get("/", (_req, res) => res.send("7goldencowries backend is running"));
-
-app.get("/healthz", async (_req, res) => {
-  try {
-    await db.get("SELECT 1 AS ok");
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("/healthz db error", e);
-    res.status(500).json({ ok: false, error: "db" });
-  }
-});
 
 app.get("/session-debug", (req, res) =>
   res.json({ session: req.session || null })
 );
-
-// --- Canonical subscription status (never 500) ---
-// Frontend calls: GET https://sevengoldencowries-backend.onrender.com/subscriptions/status
-app.get("/subscriptions/status", async (req, res) => {
-  try {
-    const uid = req.session?.userId;
-    if (!uid) {
-      // Not logged in: treat as Free but NEVER error
-      return res.json({ ok: true, active: false, tier: "Free" });
-    }
-
-    const row = await db.get(
-      "SELECT COALESCE(subscriptionTier, tier, 'Free') AS tier FROM users WHERE id = ?",
-      uid
-    );
-    const tier = row?.tier || "Free";
-    return res.json({ ok: true, active: tier !== "Free", tier });
-  } catch (e) {
-    console.error("/subscriptions/status error", e);
-    // Fail SAFE: Free instead of 500
-    return res.json({ ok: true, active: false, tier: "Free" });
-  }
-});
 
 // --- Daily subscription expiry cron ---
 cron.schedule("0 0 * * *", async () => {
@@ -239,10 +254,12 @@ app.use((err, _req, res, _next) => {
 });
 
 // --- Start server ---
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log("Allowed CORS origins:", ALLOWED.join(", "));
-});
+if (process.env.NODE_ENV !== "test") {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log("Allowed CORS origins:", ALLOWED.join(", "));
+  });
+}
 
 export default app;

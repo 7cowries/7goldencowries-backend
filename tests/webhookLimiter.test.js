@@ -23,7 +23,7 @@ beforeAll(async () => {
   process.env.TWITTER_CONSUMER_KEY = 'test-key';
   process.env.TWITTER_CONSUMER_SECRET = 'test-secret';
 
-  ({ default: app } = await import('../server.js'));
+  ({ default: app } = await import('../index.js'));
   ({ default: db } = await import('../lib/db.js'));
 });
 

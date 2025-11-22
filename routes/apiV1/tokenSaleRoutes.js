@@ -83,10 +83,10 @@ function deriveStatus(eventType, paymentStatus) {
   return "pending";
 }
 
-router.post("/purchase", async (req, res) => {
+export async function startTokenSaleSession(req, res) {
   try {
     const wallet = req.body?.wallet ? String(req.body.wallet).trim() : "";
-    const amountRaw = req.body?.amount;
+    const amountRaw = req.body?.amount ?? req.body?.tonAmount;
     const amount = typeof amountRaw === "string" ? Number(amountRaw) : Number(amountRaw ?? 0);
     const referralCode = req.body?.referralCode ? String(req.body.referralCode).trim() : null;
     const usdAmountRaw = req.body?.usdAmount;
@@ -118,7 +118,10 @@ router.post("/purchase", async (req, res) => {
     console.error("token-sale purchase error", err);
     return res.status(500).json({ error: "purchase_failed" });
   }
-});
+}
+
+router.post("/purchase", startTokenSaleSession);
+router.post("/start", startTokenSaleSession);
 
 router.post("/webhook", webhookLimiter, async (req, res) => {
   const correlationId = randomUUID().slice(0, 8);

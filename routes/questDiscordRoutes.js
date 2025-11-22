@@ -19,7 +19,7 @@ router.post("/api/quests/discord/join/verify", async (req, res) => {
   try {
     if (!BOT || !GUILD_ID) return res.status(500).json({ error: "Discord env missing" });
 
-    const wallet = req.user?.wallet;
+    const wallet = req.user?.wallet || req.session?.wallet;
     if (!wallet) return res.status(401).json({ error: "Auth required" });
 
     const quest = await getJoinDiscordQuest();

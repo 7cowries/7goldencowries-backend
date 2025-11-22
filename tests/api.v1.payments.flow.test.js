@@ -20,7 +20,7 @@ beforeAll(async () => {
     default: { verifyTonPayment: verifyTonMock },
   }));
 
-  ({ default: app } = await import("../server.js"));
+  ({ default: app } = await import("../index.js"));
   ({ default: db } = await import("../lib/db.js"));
 });
 
