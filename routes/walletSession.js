@@ -10,14 +10,16 @@ router.post("/auth/wallet/session", async (req, res) => {
 
     // Ensure user exists
     await db.run("INSERT OR IGNORE INTO users(wallet) VALUES(?)", address);
-    const row = await db.get("SELECT id FROM users WHERE wallet=?", address);
-    if (!row?.id) return res.status(500).json({ ok:false, error:"user-not-materialized" });
+    const row = await db.get("SELECT wallet FROM users WHERE wallet=?", address);
+    if (!row?.wallet) {
+      return res.status(500).json({ ok: false, error: "user-not-materialized" });
+    }
 
-    // Set real session
-    req.session.userId = row.id;
-    req.session.wallet = address;
+    // Set real session (use wallet as identifier; users table has no numeric id)
+    req.session.userId = row.wallet;
+    req.session.wallet = row.wallet;
 
-    return res.json({ ok: true, address, session: "set", userId: row.id });
+    return res.json({ ok: true, address: row.wallet, session: "set", userId: row.wallet });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
   }

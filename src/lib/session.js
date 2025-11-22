@@ -23,14 +23,17 @@ export function installSession(app, db) {
           if (raw.startsWith("w:")) {
             const wallet = raw.slice(2).trim();
             if (wallet) {
-              let row = await db.get("SELECT id FROM users WHERE wallet=?", wallet);
-              let uid = row?.id;
-              if (!uid) {
+              let row = await db.get("SELECT wallet FROM users WHERE wallet=?", wallet);
+              let resolvedWallet = row?.wallet;
+              if (!resolvedWallet) {
                 await db.run("INSERT OR IGNORE INTO users(wallet) VALUES(?)", wallet);
-                row = await db.get("SELECT id FROM users WHERE wallet=?", wallet);
-                uid = row?.id;
+                row = await db.get("SELECT wallet FROM users WHERE wallet=?", wallet);
+                resolvedWallet = row?.wallet;
               }
-              if (uid) req.session.userId = uid;
+              if (resolvedWallet) {
+                req.session.userId = resolvedWallet;
+                req.session.wallet = resolvedWallet;
+              }
             }
           }
         }
