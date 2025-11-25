@@ -7,17 +7,61 @@ const router = express.Router();
 const TTL = 30_000;
 
 function parseSocials(raw, user) {
+  let parsed = {};
   try {
-    const parsed = JSON.parse(raw || "{}") || {};
-    const twitterConnected = Boolean(user?.twitterHandle || user?.twitter_username);
-    parsed.twitter = parsed.twitter || { connected: twitterConnected };
-    if (parsed.twitter && typeof parsed.twitter.connected === "undefined") {
-      parsed.twitter.connected = twitterConnected;
-    }
-    return parsed;
+    parsed = JSON.parse(raw || "{}") || {};
   } catch {
-    return { twitter: { connected: Boolean(user?.twitterHandle || user?.twitter_username) } };
+    parsed = {};
   }
+
+  const twitterHandle = user?.twitterHandle || user?.twitter_username;
+  const twitterId = user?.twitter_id || null;
+  const telegramHandle = user?.telegramHandle || user?.telegram_username;
+  const telegramId = user?.telegramId || null;
+  const discordHandle = user?.discordHandle || user?.discord_username || null;
+  const discordId = user?.discordId || user?.discord_id || null;
+  const discordGuildMember = user?.discordGuildMember;
+
+  const socials = {
+    twitter: {
+      connected:
+        (parsed.twitter && typeof parsed.twitter.connected !== "undefined"
+          ? parsed.twitter.connected
+          : Boolean(twitterHandle || twitterId)),
+      ...parsed.twitter,
+      ...(parsed.twitter?.handle ? {} : twitterHandle ? { handle: twitterHandle } : {}),
+      ...(parsed.twitter?.id ? {} : twitterId ? { id: twitterId } : {}),
+    },
+    telegram: {
+      connected:
+        (parsed.telegram && typeof parsed.telegram.connected !== "undefined"
+          ? parsed.telegram.connected
+          : Boolean(telegramHandle || telegramId)),
+      ...parsed.telegram,
+      ...(parsed.telegram?.username
+        ? {}
+        : telegramHandle
+        ? { username: telegramHandle }
+        : {}),
+      ...(parsed.telegram?.id ? {} : telegramId ? { id: telegramId } : {}),
+    },
+    discord: {
+      connected:
+        (parsed.discord && typeof parsed.discord.connected !== "undefined"
+          ? parsed.discord.connected
+          : Boolean(discordId || discordHandle)),
+      ...parsed.discord,
+      ...(parsed.discord?.handle ? {} : discordHandle ? { handle: discordHandle } : {}),
+      ...(parsed.discord?.id ? {} : discordId ? { id: discordId } : {}),
+      ...(parsed.discord?.guildMember
+        ? {}
+        : typeof discordGuildMember !== "undefined"
+        ? { guildMember: Boolean(discordGuildMember) }
+        : {}),
+    },
+  };
+
+  return socials;
 }
 
 async function fetchUser(wallet, res) {
@@ -66,19 +110,30 @@ router.get("/api/users/me", async (req, res) => {
     if (!wallet) {
       return res.json({
         wallet: null,
+        authed: false,
         totalXP: 0,
         xp: 0,
         nextXP: deriveLevel(0).nextNeed,
         levelTier: "shellborn",
+        levelName: "Shellborn",
+        levelSymbol: "🐚",
         levelProgress: 0,
+        tier: "Free",
         socials: { twitter: { connected: false } },
+        referralCount: 0,
         referral_code: null,
         questHistory: [],
+        twitterHandle: null,
+        telegramHandle: null,
+        discordId: null,
       });
     }
 
     let user = await db.get(
-      `SELECT wallet, xp, tier, referral_code, socials, twitterHandle, twitter_username, levelName, levelSymbol, levelProgress
+      `SELECT wallet, xp, tier, referral_code, socials, twitterHandle, twitter_username, twitter_id,
+              telegramHandle, telegram_username, telegramId,
+              discordId, discord_id, discordHandle, discord_username, discordGuildMember,
+              levelName, levelSymbol, levelProgress
          FROM users WHERE wallet = ?`,
       wallet
     );
@@ -90,7 +145,10 @@ router.get("/api/users/me", async (req, res) => {
         wallet
       );
       user = await db.get(
-        `SELECT wallet, xp, tier, referral_code, socials, twitterHandle, twitter_username, levelName, levelSymbol, levelProgress
+        `SELECT wallet, xp, tier, referral_code, socials, twitterHandle, twitter_username, twitter_id,
+                telegramHandle, telegram_username, telegramId,
+                discordId, discord_id, discordHandle, discord_username, discordGuildMember,
+                levelName, levelSymbol, levelProgress
            FROM users WHERE wallet = ?`,
         wallet
       );
@@ -111,8 +169,27 @@ router.get("/api/users/me", async (req, res) => {
       status: "completed",
     }));
 
+    let referralCount = 0;
+    try {
+      const row = await db.get(
+        "SELECT COUNT(*) AS c FROM referrals WHERE referrer = ?",
+        wallet
+      );
+      referralCount = Number(row?.c || 0);
+      const userReferrals = await db.get(
+        "SELECT COUNT(*) AS c FROM referrals WHERE referrer_user_id = (SELECT id FROM users WHERE wallet = ?)",
+        wallet
+      );
+      referralCount = Math.max(referralCount, Number(userReferrals?.c || 0));
+    } catch {}
+
+    const authed =
+      typeof req.session?.wallet === "string" &&
+      req.session.wallet.toLowerCase() === wallet.toLowerCase();
+
     return res.json({
       wallet,
+      authed,
       totalXP: lvl.totalXP,
       xp: lvl.xpIntoLevel,
       nextXP: lvl.nextNeed,
@@ -120,9 +197,14 @@ router.get("/api/users/me", async (req, res) => {
       levelName: lvl.levelName,
       levelSymbol: lvl.levelSymbol,
       levelProgress: lvl.progress,
+      tier: user?.tier || "Free",
       referral_code: user?.referral_code || null,
+      referralCount,
       socials,
       questHistory,
+      twitterHandle: user?.twitterHandle || user?.twitter_username || null,
+      telegramHandle: user?.telegramHandle || user?.telegram_username || null,
+      discordId: user?.discordId || user?.discord_id || null,
     });
   } catch (err) {
     console.error("/api/users/me error", err);
