@@ -1,6 +1,5 @@
 import express from "express";
 import db from "../db.js";
-import { getSessionWallet } from "../utils/session.js";
 
 const router = express.Router();
 
@@ -259,90 +258,8 @@ router.post("/quests/claim", async (req, res) => {
   }
 });
 
-/** GET /subscriptions/status (reads real user tier) */
-router.get("/subscriptions/status", async (req, res) => {
-  try {
-    await ensureCoreSchema();
-    const wallet = getSessionWallet(req);
-    const uid = req.session?.userId;
-
-    let user = null;
-    if (wallet) {
-      user = await db.get(`SELECT subscriptionTier FROM users WHERE wallet = ?`, [wallet]);
-    } else if (uid) {
-      user = await db.get(`SELECT subscriptionTier, wallet FROM users WHERE id = ?`, [uid]);
-    }
-
-    const tier = user?.subscriptionTier || "Free";
-    const active = tier !== "Free";
-    return res.json({ ok: true, active, tier });
-  } catch (e) {
-    console.error("GET /subscriptions/status error", e);
-    return res.status(500).json({ ok: false, error: "internal_error" });
-  }
-});
-
-/** POST /subscriptions/upgrade & /subscriptions/subscribe (persists to DB, never stub) */
-async function handleUpgrade(req, res) {
-  const uid = req.session?.userId;
-  const sessionWallet = getSessionWallet(req);
-
-  let { tier = "Tier 1", txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
-  try {
-    await ensureCoreSchema();
-
-    // Validate against DB tier list
-    const tiers = await db.all(`SELECT name FROM subscription_tiers`);
-    const allowed = new Set(tiers.map(t => t.name));
-    if (!allowed.has(tier)) tier = "Tier 1";
-
-    let wallet = sessionWallet;
-    if (!wallet && uid) {
-      wallet = (await db.get(`SELECT wallet FROM users WHERE id = ?`, [uid]))?.wallet || null;
-    }
-
-    if (!wallet) return res.status(401).json({ ok: false, error: "not_logged_in" });
-
-    await db.run(
-      `INSERT INTO users (wallet, subscriptionTier, updatedAt)
-       VALUES (?, ?, datetime('now'))
-       ON CONFLICT(wallet) DO UPDATE SET subscriptionTier = excluded.subscriptionTier, updatedAt = excluded.updatedAt`,
-      [wallet, tier]
-    );
-
-    try {
-      await db.run(
-        `INSERT INTO subscriptions (wallet, tier, tonPaid, usdPaid) VALUES (?,?,?,?)`,
-        [wallet, tier, tonPaid, usdPaid]
-      );
-    } catch {
-      await db.run(
-        `UPDATE subscriptions SET tier = ?, tonPaid = ?, usdPaid = ?, createdAt = datetime('now') WHERE wallet = ?`,
-        [tier, tonPaid, usdPaid, wallet]
-      );
-    }
-
-    if (!sessionWallet) {
-      req.session.wallet = wallet;
-    }
-
-    return res.json({ ok: true, tier });
-  } catch (e) {
-    console.error("POST /subscriptions/upgrade error", e);
-    try {
-      await db.run(
-        `UPDATE users SET subscriptionTier = ?, updatedAt = datetime('now') WHERE wallet = ?`,
-        [tier, sessionWallet].filter(Boolean)
-      );
-    } catch {}
-    return res.json({ ok: true, tier });
-  }
-}
-router.post("/subscriptions/upgrade", handleUpgrade);
-router.post("/subscriptions/subscribe", handleUpgrade);
-
 /** Optional: FE can read levels & tiers for UI without hardcoding */
-router.get("/meta/levels", async (_req, res) => {
+router.get("/api/meta/levels", async (_req, res) => {
   try {
     await ensureCoreSchema();
     const rows = await db.all(`SELECT name, base, size, ord FROM levels_v2 ORDER BY ord ASC, base ASC`);
@@ -353,7 +270,7 @@ router.get("/meta/levels", async (_req, res) => {
   }
 });
 
-router.get("/meta/tiers", async (_req, res) => {
+router.get("/api/meta/tiers", async (_req, res) => {
   try {
     await ensureCoreSchema();
     const rows = await db.all(`SELECT name, multiplier FROM subscription_tiers ORDER BY name ASC`);

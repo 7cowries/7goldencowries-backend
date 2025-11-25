@@ -1,94 +1,136 @@
-// routes/subscriptionRoutes.js
 import express from "express";
 import db from "../lib/db.js";
+import { getSessionWallet } from "../utils/session.js";
 
 const router = express.Router();
 
-/**
- * Helper: load the current user by session.userId
- */
-async function getAuthedUser(req) {
-  const uid = req.session?.userId;
-  if (!uid) throw new Error("not_logged_in");
-  const user = await db.get(
-    "SELECT id, wallet, subscriptionTier, tier FROM users WHERE id = ?",
-    uid
-  );
-  if (!user || !user.wallet) throw new Error("user_not_found");
-  return user;
-}
-
-/**
- * Normalize tier string to canonical labels
- */
 function normalizeTier(raw) {
   const t = String(raw || "").trim().toLowerCase();
-  if (t === "tier 3" || t === "3" || t === "t3") return "Tier 3";
-  if (t === "tier 2" || t === "2" || t === "t2") return "Tier 2";
-  if (t === "tier 1" || t === "1" || t === "t1") return "Tier 1";
-  if (t === "free" || t === "0") return "Free";
+  if (["tier3", "tier 3", "3", "t3"].includes(t)) return "Tier 3";
+  if (["tier2", "tier 2", "2", "t2"].includes(t)) return "Tier 2";
+  if (["tier1", "tier 1", "1", "t1"].includes(t)) return "Tier 1";
+  if (["free", "0"].includes(t)) return "Free";
   return "Tier 1";
 }
 
-/**
- * POST /subscriptions/subscribe
- * Mounted under /api/subscribe in index.js:
- *   → POST /api/subscribe/subscriptions/subscribe
- *
- * Body: { tier, txHash, tonPaid, usdPaid }
- */
-router.post("/subscriptions/subscribe", async (req, res) => {
+function toNumber(value) {
+  if (value === undefined || value === null || value === "") return 0;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
+
+router.get("/status", async (req, res) => {
   try {
-    const user = await getAuthedUser(req);
-    const { tier, txHash = null, tonPaid = null, usdPaid = null } = req.body || {};
-    const finalTier = normalizeTier(tier);
-
-    // Best-effort write into new subscriptions table
-    try {
-      await db.run(
-        `
-        INSERT INTO subscriptions (wallet, tier, tonAmount, usdAmount, status, tx_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'active', ?, datetime('now'), datetime('now'))
-      `,
-        user.wallet,
-        finalTier,
-        tonPaid,
-        usdPaid,
-        txHash
-      );
-    } catch (subErr) {
-      console.warn(
-        "subscriptions table write failed (non-fatal):",
-        subErr?.message || subErr
-      );
+    const wallet = getSessionWallet(req);
+    if (!wallet) {
+      return res.json({ ok: true, active: false, tier: "Free", paid: false });
     }
 
-    // Canonical: users.subscriptionTier
-    try {
-      await db.run(
-        "UPDATE users SET subscriptionTier = ?, updatedAt = datetime('now') WHERE id = ?",
-        finalTier,
-        user.id
-      );
-    } catch (userErr) {
-      console.error("Failed to update users.subscriptionTier:", userErr);
-      return res.status(500).json({ ok: false, error: "internal_error" });
-    }
+    const user = await db.get(
+      `SELECT tier, subscriptionTier, paid, lastPaymentAt, subscriptionPaidAt, subscriptionClaimedAt
+         FROM users WHERE wallet = ?`,
+      wallet
+    );
+    const latestSub = await db.get(
+      `SELECT tier, status, renewalDate, timestamp
+         FROM subscriptions WHERE wallet = ?
+         ORDER BY datetime(timestamp) DESC LIMIT 1`,
+      wallet
+    );
+
+    const tier = user?.subscriptionTier || latestSub?.tier || "Free";
+    const paid = Boolean(user?.paid) || (latestSub?.status || "").toLowerCase() === "active";
+    const active = tier !== "Free" && paid;
 
     return res.json({
       ok: true,
-      tier: finalTier,
-      wallet: user.wallet,
+      active,
+      tier,
+      subscriptionTier: tier,
+      paid,
+      renewalDate: latestSub?.renewalDate || null,
+      lastPaymentAt: user?.subscriptionPaidAt || user?.lastPaymentAt || null,
+      claimedAt: user?.subscriptionClaimedAt || null,
     });
-  } catch (e) {
-    const msg = String(e.message || "");
-    if (msg.includes("not_logged_in")) {
-      return res.status(401).json({ ok: false, error: "not_logged_in" });
+  } catch (err) {
+    console.error("GET /api/subscriptions/status error", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+router.post("/subscribe", async (req, res) => {
+  try {
+    const sessionWallet = getSessionWallet(req);
+    const wallet = sessionWallet || (req.body?.wallet ? String(req.body.wallet).trim() : "");
+    if (!wallet) {
+      return res.status(401).json({ ok: false, error: "wallet_required" });
     }
-    if (msg.includes("user_not_found")) {
-      return res.status(404).json({ ok: false, error: "user_not_found" });
+
+    const tier = normalizeTier(req.body?.tier);
+    const tonAmount = toNumber(req.body?.tonAmount ?? req.body?.tonPaid);
+    const usdAmount = toNumber(req.body?.usdAmount ?? req.body?.usdPaid);
+    const txHash = req.body?.txHash ? String(req.body.txHash).trim() : null;
+
+    await db.run(
+      `INSERT INTO users (wallet, subscriptionTier, tier, paid, lastPaymentAt, subscriptionPaidAt, updatedAt)
+         VALUES (?, ?, ?, 1, datetime('now'), datetime('now'), datetime('now'))
+         ON CONFLICT(wallet) DO UPDATE SET
+           subscriptionTier = excluded.subscriptionTier,
+           tier = excluded.tier,
+           paid = 1,
+           lastPaymentAt = excluded.lastPaymentAt,
+           subscriptionPaidAt = excluded.subscriptionPaidAt,
+           updatedAt = excluded.updatedAt`,
+      wallet,
+      tier,
+      tier
+    );
+
+    await db.run(
+      `INSERT INTO subscriptions (wallet, tier, tonAmount, usdAmount, status, tx_hash, timestamp)
+         VALUES (?, ?, ?, ?, 'active', ?, datetime('now'))`,
+      wallet,
+      tier,
+      tonAmount,
+      usdAmount,
+      txHash
+    );
+
+    if (!sessionWallet) {
+      req.session.wallet = wallet;
     }
-    console.error("POST /subscriptions/subscribe error", e);
+
+    return res.json({ ok: true, tier, wallet });
+  } catch (err) {
+    console.error("POST /api/subscriptions/subscribe error", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+router.get("/:wallet", async (req, res) => {
+  const { wallet } = req.params;
+  if (!wallet) return res.status(400).json({ ok: false, error: "wallet_required" });
+
+  try {
+    const rows = await db.all(
+      `SELECT
+          tier,
+          COALESCE(ton_amount, tonAmount, 0)          AS tonAmount,
+          COALESCE(usdAmount, 0)                      AS usdAmount,
+          COALESCE(tx_hash, txHash, tx_id)            AS txHash,
+          status,
+          timestamp                                   AS startDate,
+          datetime(timestamp, '+30 days')             AS expiryDate,
+          renewalDate
+        FROM subscriptions
+        WHERE wallet = ?
+        ORDER BY datetime(timestamp) DESC`,
+      wallet
+    );
+
+    return res.json({ ok: true, subscriptions: rows });
+  } catch (err) {
+    console.error("GET /api/subscriptions/:wallet error", err);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });

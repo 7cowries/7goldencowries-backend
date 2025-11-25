@@ -229,13 +229,9 @@ router.get("/api/quests", listQuestsHandler);   // ✅ modern (frontend hits thi
 
 /** Completed IDs for a wallet */
 router.get("/api/quests/completed/:wallet", completedHandler); // modern
-router.get("/quest/completed/:wallet", completedHandler);      // legacy
-router.get("/completed/:wallet", completedHandler);            // extra alias
 
 /** Journal for a wallet */
 router.get("/api/quests/journal/:wallet", journalHandler); // modern
-router.get("/quest/journal/:wallet", journalHandler);      // legacy
-router.get("/journal/:wallet", journalHandler);            // extra alias
 
 /** Submit a Twitter/X proof URL */
 router.post("/api/quests/submit-proof", async (req, res) => {

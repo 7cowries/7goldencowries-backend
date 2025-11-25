@@ -2,7 +2,6 @@ import authRoutes from "./authRoutes.js";
 import questRoutes from "./questRoutes.js";
 import questsRoutes from "./questsRoutes.js";
 import userRoutes from "./userRoutes.js";
-import verifyRoutes from "./verifyRoutes.js";
 import tonWebhook from "./tonWebhook.js";
 import referralRoutes from "./referralRoutes.js";
 import refRedirectRoutes from "./refRedirectRoutes.js";
@@ -18,6 +17,7 @@ import apiV1Routes from "./apiV1/index.js";
 import historyRoutes from "./historyRoutes.js";
 import leaderboardRoutes from "./leaderboardRoutes.js";
 import telegramRoutes from "./telegramRoutes.js";
+import subscriptionRoutes from "./subscriptionRoutes.js";
 
 const canonicalRouters = [
   { router: telegramRoutes },
@@ -29,13 +29,13 @@ const canonicalRouters = [
   { router: socialLinkRoutes },
   { router: questRoutes },
   { router: userRoutes },
-  { router: verifyRoutes },
   { router: tonWebhook },
   { router: referralRoutes },
   { router: refRedirectRoutes },
   { path: "/api/proofs", router: proofRoutes },
   { path: "/api", router: twitterRoutes },
   { router: tokenSaleRoutes },
+  { path: "/api/subscriptions", router: subscriptionRoutes },
   { path: "/api/v1", router: apiV1Routes },
   { router: historyRoutes },
   { path: "/api/leaderboard", router: leaderboardRoutes },
