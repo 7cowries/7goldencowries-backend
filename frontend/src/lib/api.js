@@ -8,7 +8,7 @@ function normalizeBase(base) {
   return trimmed.replace(/\/?$/, "");
 }
 
-export const API_BASE = normalizeBase(process.env.API_BASE);
+export const API_BASE = normalizeBase(process.env.API_BASE || process.env.REACT_APP_API_URL);
 
 const inflight = new Map();
 

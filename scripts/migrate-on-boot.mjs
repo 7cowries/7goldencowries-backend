@@ -10,6 +10,18 @@ import { ensureQuestsSchema } from "../lib/ensureQuestsSchema.js";
 const DEFAULT_DB = "/var/data/7gc.sqlite3";
 const RUNTIME_DB_PATH = process.env.SQLITE_FILE || process.env.DATABASE_URL || DEFAULT_DB;
 
+async function ensureColumn(table, column, type) {
+  const cols = await db.all(`PRAGMA table_info(${table})`);
+  const has = cols.some((c) => c.name === column);
+  if (!has) {
+    let t = String(type || "");
+    if (t.toUpperCase().startsWith(column.toUpperCase())) t = t.slice(column.length).trim();
+    t = t.replace(/DEFAULT.+$/i, "").trim();
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${t}`);
+    console.log(`[migrate-on-boot] added ${table}.${column}`);
+  }
+}
+
 export async function migrateOnBoot(dbPath = RUNTIME_DB_PATH) {
   const targetPath = dbPath || DEFAULT_DB;
   process.env.DATABASE_URL ||= targetPath;
@@ -47,6 +59,10 @@ export async function migrateOnBoot(dbPath = RUNTIME_DB_PATH) {
   // before any request handlers run. This is idempotent and safe against
   // older Render disks that pre-date the quests migration.
   await ensureQuestsSchema();
+
+  // Critical columns used by the API (Render disks may lag migrations)
+  await ensureColumn("referrals", "code", "TEXT");
+  await ensureColumn("quests", "code", "TEXT");
 
   console.log(`[migrate-on-boot] database ready at ${targetPath}`);
 }
