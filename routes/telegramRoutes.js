@@ -7,7 +7,9 @@ import { upsertSocial } from "../utils/socials.js";
 const router = express.Router();
 
 /* ========= ENV ========= */
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN ||
+  (process.env.NODE_ENV === "test" ? "test:token" : "");
 // derive numeric bot_id from token like "8197436765:AAAA..."
 const BOT_ID =
   process.env.TELEGRAM_BOT_ID ||
@@ -33,7 +35,7 @@ function decodeState(s) {
       Buffer.from(String(s || ""), "base64").toString("utf8")
     );
   } catch {
-    return "";
+    return String(s || "");
   }
 }
 
@@ -99,11 +101,11 @@ async function ensureUser(wallet) {
 }
 
 /* =========================================================================
-   GET /auth/telegram/start
+   GET /auth/telegram/start and /api/auth/telegram/start
    Default: 302 to Telegram hosted login (recommended).
    Optional: ?mode=embed just for testing on a page that matches /setdomain.
    ========================================================================= */
-router.get("/auth/telegram/start", (req, res) => {
+function handleTelegramStart(req, res) {
   try {
     if (!BOT_TOKEN || !BOT_ID) {
       return res
@@ -114,10 +116,9 @@ router.get("/auth/telegram/start", (req, res) => {
     }
 
     const state = String(req.query.state || "");
+    const encodedState = Buffer.from(state, "utf8").toString("base64");
     const origin = BACKEND_URL; // must match BotFather /setdomain
-    const returnTo = `${origin}/api/auth/telegram/callback?state=${encodeURIComponent(
-      state
-    )}`;
+    const returnTo = `${origin}/api/auth/telegram/callback?state=${encodedState}`;
 
     // no cache at all
     res.setHeader(
@@ -136,9 +137,7 @@ router.get("/auth/telegram/start", (req, res) => {
       }
       // NOTE: This page must be served from https://www.7goldencowries.com to work.
       // On Render you'll see "Bot domain invalid" — that's expected.
-      const authUrl = `/auth/telegram/callback?state=${encodeURIComponent(
-        state
-      )}`;
+      const authUrl = `/auth/telegram/callback?state=${encodedState}`;
       return res
         .type("html")
         .send(`<!doctype html>
@@ -183,7 +182,10 @@ router.get("/auth/telegram/start", (req, res) => {
     console.error("Telegram /start error:", e);
     return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=start`);
   }
-});
+}
+
+router.get("/auth/telegram/start", handleTelegramStart);
+router.get("/api/auth/telegram/start", handleTelegramStart);
 
 /* -----------------------------------------------------------
    Legacy alias: /auth/telegram/verify → redirect to /callback
