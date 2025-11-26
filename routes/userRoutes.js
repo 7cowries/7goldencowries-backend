@@ -6,6 +6,44 @@ import { getCache, setCache } from "../utils/cache.js";
 const router = express.Router();
 const TTL = 30_000;
 
+async function referralsTableHasColumn(name) {
+  try {
+    const cols = await db.all("PRAGMA table_info(referrals)");
+    return Array.isArray(cols) && cols.some((c) => c.name === name);
+  } catch {
+    return false;
+  }
+}
+
+async function countReferralsForWallet(wallet) {
+  let count = 0;
+  if (!wallet) return count;
+
+  try {
+    const hasReferrerUserId = await referralsTableHasColumn("referrer_user_id");
+    if (hasReferrerUserId) {
+      const row = await db.get(
+        "SELECT COUNT(*) AS c FROM referrals WHERE referrer_user_id = (SELECT id FROM users WHERE wallet = ?)",
+        wallet
+      );
+      count = Math.max(count, Number(row?.c || 0));
+    }
+  } catch {}
+
+  try {
+    const hasLegacyReferrer = await referralsTableHasColumn("referrer");
+    if (hasLegacyReferrer) {
+      const row = await db.get(
+        "SELECT COUNT(*) AS c FROM referrals WHERE referrer = ?",
+        wallet
+      );
+      count = Math.max(count, Number(row?.c || 0));
+    }
+  } catch {}
+
+  return count;
+}
+
 function parseSocials(raw, user) {
   let parsed = {};
   try {
@@ -169,19 +207,7 @@ router.get("/api/users/me", async (req, res) => {
       status: "completed",
     }));
 
-    let referralCount = 0;
-    try {
-      const row = await db.get(
-        "SELECT COUNT(*) AS c FROM referrals WHERE referrer = ?",
-        wallet
-      );
-      referralCount = Number(row?.c || 0);
-      const userReferrals = await db.get(
-        "SELECT COUNT(*) AS c FROM referrals WHERE referrer_user_id = (SELECT id FROM users WHERE wallet = ?)",
-        wallet
-      );
-      referralCount = Math.max(referralCount, Number(userReferrals?.c || 0));
-    } catch {}
+    const referralCount = await countReferralsForWallet(wallet);
 
     const authed =
       typeof req.session?.wallet === "string" &&
