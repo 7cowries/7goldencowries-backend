@@ -526,10 +526,15 @@ async function handleTwitterVerification(req, res, { questKey, check }) {
     const handle = providedHandle || row?.twitterHandle;
     if (!handle) return res.status(400).json({ ok: false, error: "twitter-handle-missing" });
 
-    const userId = req.body?.user_id || (await fetchTwitterUserId(handle));
-    if (!userId) return res.status(404).json({ ok: false, error: "twitter-user-not-found" });
+    const derivedUserId = await fetchTwitterUserId(handle);
+    if (!derivedUserId) return res.status(404).json({ ok: false, error: "twitter-user-not-found" });
 
-    const verified = await check(userId);
+    const providedUserId = req.body?.user_id;
+    if (providedUserId && String(providedUserId) !== String(derivedUserId)) {
+      return res.status(400).json({ ok: false, error: "twitter-user-mismatch" });
+    }
+
+    const verified = await check(derivedUserId);
     if (!verified) {
       return res.json({ ok: true, verified: false });
     }
@@ -538,10 +543,10 @@ async function handleTwitterVerification(req, res, { questKey, check }) {
       `UPDATE users SET twitterHandle=?, twitter_username=?, twitter_id=?, updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
       handle,
       handle,
-      String(userId),
+      String(derivedUserId),
       wallet
     );
-    await upsertSocial(wallet, "twitter", { handle, id: String(userId) });
+    await upsertSocial(wallet, "twitter", { handle, id: String(derivedUserId) });
 
 
     const questId = (await questIdFromIdentifier(questKey)) ?? questKey;
