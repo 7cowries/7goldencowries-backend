@@ -24,16 +24,19 @@ export function deriveLevel(totalXPInput) {
   const next = LEVELS[i + 1] || null;
   const span = next ? next.min - cur.min : 1;
   const into = total - cur.min;
-  const progress = next ? Math.min(1, Math.max(0, into / span)) : 1;
+  const rawProgress = next ? Math.min(1, Math.max(0, into / span)) : 1;
+  const nextXP = next ? Math.max(0, next.min - total) : 0;
 
   return {
     totalXP: total,
     levelName: cur.name,
     levelSymbol: cur.symbol,
     levelTier: cur.key,
-    progress,
+    progress: rawProgress,
+    progressPercent: Math.round(rawProgress * 10000) / 100, // two decimal places
     xpIntoLevel: into,
-    nextNeed: next ? span : into || 1,
+    nextNeed: nextXP,
+    nextXP,
   };
 }
 
