@@ -19,6 +19,7 @@ router.get("/", async (_req, res) => {
       return {
         rank: i + 1,
         wallet: r.wallet,
+        xp: lvl.totalXP,
         totalXP: lvl.totalXP,
         progress: lvl.progress,
         levelTier: lvl.levelTier,

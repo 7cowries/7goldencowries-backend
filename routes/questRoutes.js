@@ -9,6 +9,7 @@ import { normalizeTweetUrl, verifyProofRow } from "../lib/proof.js";
 import { verifyQuestRequirement } from "../lib/proofVerifier.js";
 import inferVendor from "../utils/vendor.js";
 import { bump } from "../utils/limits.js";
+import { upsertSocial } from "../utils/socials.js";
 
 // Map quest ids to categories without relying on a DB column
 function categoryFor(id) {
@@ -512,7 +513,11 @@ async function hasReferencedTweet(userId, type) {
 async function handleTwitterVerification(req, res, { questKey, check }) {
   try {
     const wallet = req.session?.wallet || req.body?.wallet || req.body?.address;
+ codex/fix-and-complete-all-backend-issues-jqqial
+    const providedHandle = (req.body?.twitterHandle || req.body?.handle || "").replace(/^@+/, "");
+
     const providedHandle = req.body?.twitterHandle || req.body?.handle;
+
     if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
     if (!TWITTER_BEARER) return res.status(503).json({ ok: false, error: "twitter-disabled" });
 
@@ -528,6 +533,16 @@ async function handleTwitterVerification(req, res, { questKey, check }) {
     if (!verified) {
       return res.json({ ok: true, verified: false });
     }
+
+    await db.run(
+      `UPDATE users SET twitterHandle=?, twitter_username=?, twitter_id=?, updatedAt=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet=?`,
+      handle,
+      handle,
+      String(userId),
+      wallet
+    );
+    await upsertSocial(wallet, "twitter", { handle, id: String(userId) });
+
 
     const questId = (await questIdFromIdentifier(questKey)) ?? questKey;
     if (questId) {
@@ -550,9 +565,14 @@ async function handleTwitterVerification(req, res, { questKey, check }) {
       levelTier: lvl.levelTier,
       levelName: lvl.levelName,
       levelSymbol: lvl.levelSymbol,
+ codex/fix-and-complete-all-backend-issues-jqqial
+      nextXP: lvl.nextNeed,
+      progress: lvl.progress,
+
       nextXP: lvl.nextXP,
       progress: lvl.progress,
       progressPercent: lvl.progressPercent,
+
       twitterHandle: handle,
     });
   } catch (err) {
@@ -721,9 +741,14 @@ router.post("/api/quests/claim", async (req, res) => {
       levelTier: lvl.levelTier,
       levelName: lvl.levelName,
       levelSymbol: lvl.levelSymbol,
+
+      nextXP: lvl.nextNeed,
+      progress: lvl.progress,
+
       nextXP: lvl.nextXP,
       progress: lvl.progress,
       progressPercent: lvl.progressPercent,
+
     });
   } catch (err) {
     console.error("Quest claim error:", err);
