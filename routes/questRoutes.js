@@ -28,6 +28,9 @@ const TG_CHANNEL_UN = process.env.TELEGRAM_CHANNEL_USERNAME;     // e.g. GOLDENC
 const TG_GROUP_UN   = process.env.TELEGRAM_GROUP_USERNAME;       // e.g. sevengoldencowries (no @)
 const TG_GROUP_ID   = process.env.TELEGRAM_GROUP_ID || null;     // optional numeric -100...
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;           // e.g. 1410268433857122448
+const TWITTER_BEARER = process.env.TWITTER_BEARER || process.env.TWITTER_BEARER_TOKEN || "";
+const TWITTER_TARGET_ID = process.env.TWITTER_TARGET_ID || "1749440852192760064"; // @7goldencowries
+const TWITTER_PINNED_TWEET_ID = process.env.TWITTER_PINNED_TWEET_ID || "1947595024117502145";
 
 /* ========= Helpers ========= */
 
@@ -413,6 +416,172 @@ router.post("/api/quests/:questId/proofs", async (req, res) => {
     res.status(500).json({ error: "server-error" });
   }
 });
+
+/* ---------------------- Twitter verification ---------------------- */
+async function ensureUserRow(wallet) {
+  await db.run(
+    `INSERT OR IGNORE INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, updatedAt)
+     VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+    wallet
+  );
+}
+
+async function questIdFromIdentifier(identifier) {
+  if (!identifier && identifier !== 0) return null;
+  const direct = await db.get(`SELECT id FROM quests WHERE id = ?`, identifier);
+  if (direct?.id) return direct.id;
+  if (typeof identifier === "string") {
+    try {
+      const byCode = await db.get(`SELECT id FROM quests WHERE code = ?`, identifier);
+      if (byCode?.id) return byCode.id;
+    } catch {}
+  }
+  return null;
+}
+
+async function upsertQuestProof(wallet, questId, vendor, status, tweetId = null) {
+  try {
+    const existing = await db.get(
+      `SELECT id FROM quest_proofs WHERE wallet = ? AND quest_id = ? ORDER BY updatedAt DESC LIMIT 1`,
+      wallet,
+      questId
+    );
+    if (existing?.id) {
+      await db.run(
+        `UPDATE quest_proofs SET status=?, vendor=?, tweet_id=?, updatedAt=datetime('now') WHERE id=?`,
+        status,
+        vendor,
+        tweetId,
+        existing.id
+      );
+    } else {
+      await db.run(
+        `INSERT INTO quest_proofs (quest_id, wallet, vendor, status, tweet_id, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        questId,
+        wallet,
+        vendor,
+        status,
+        tweetId
+      );
+    }
+  } catch (err) {
+    console.error("quest proof upsert failed", err);
+  }
+}
+
+async function fetchTwitterUserId(handle) {
+  if (!TWITTER_BEARER || !handle) return null;
+  const res = await fetch(`https://api.twitter.com/2/users/by/username/${encodeURIComponent(handle)}` || "", {
+    headers: { Authorization: `Bearer ${TWITTER_BEARER}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data?.data?.id || null;
+}
+
+async function isFollowingTarget(userId) {
+  if (!userId || !TWITTER_BEARER) return false;
+  const res = await fetch(
+    `https://api.twitter.com/2/users/${userId}/following?max_results=1000`,
+    { headers: { Authorization: `Bearer ${TWITTER_BEARER}` } }
+  );
+  if (!res.ok) return false;
+  const data = await res.json();
+  return Array.isArray(data?.data) && data.data.some((u) => String(u.id) === String(TWITTER_TARGET_ID));
+}
+
+async function hasReferencedTweet(userId, type) {
+  if (!userId || !TWITTER_BEARER) return false;
+  const res = await fetch(
+    `https://api.twitter.com/2/users/${userId}/tweets?tweet.fields=referenced_tweets&max_results=100`,
+    { headers: { Authorization: `Bearer ${TWITTER_BEARER}` } }
+  );
+  if (!res.ok) return false;
+  const data = await res.json();
+  return Array.isArray(data?.data)
+    ? data.data.some((tweet) =>
+        Array.isArray(tweet?.referenced_tweets) &&
+        tweet.referenced_tweets.some(
+          (ref) => ref.type === type && String(ref.id) === String(TWITTER_PINNED_TWEET_ID)
+        )
+      )
+    : false;
+}
+
+async function handleTwitterVerification(req, res, { questKey, check }) {
+  try {
+    const wallet = req.session?.wallet || req.body?.wallet || req.body?.address;
+    const providedHandle = req.body?.twitterHandle || req.body?.handle;
+    if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
+    if (!TWITTER_BEARER) return res.status(503).json({ ok: false, error: "twitter-disabled" });
+
+    await ensureUserRow(wallet);
+    const row = await db.get(`SELECT twitterHandle FROM users WHERE wallet = ?`, wallet);
+    const handle = providedHandle || row?.twitterHandle;
+    if (!handle) return res.status(400).json({ ok: false, error: "twitter-handle-missing" });
+
+    const userId = req.body?.user_id || (await fetchTwitterUserId(handle));
+    if (!userId) return res.status(404).json({ ok: false, error: "twitter-user-not-found" });
+
+    const verified = await check(userId);
+    if (!verified) {
+      return res.json({ ok: true, verified: false });
+    }
+
+    const questId = (await questIdFromIdentifier(questKey)) ?? questKey;
+    if (questId) {
+      await upsertQuestProof(wallet, questId, "twitter", "approved", TWITTER_PINNED_TWEET_ID);
+    }
+
+    const award = await awardQuest(wallet, questId);
+    delCache(`user:${wallet}`);
+    delCache("leaderboard");
+
+    const userRow = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
+    const lvl = deriveLevel(userRow?.xp ?? 0);
+
+    return res.json({
+      ok: true,
+      verified: true,
+      xpGain: award.xpGain,
+      already: award.already || undefined,
+      totalXP: lvl.totalXP,
+      levelTier: lvl.levelTier,
+      levelName: lvl.levelName,
+      levelSymbol: lvl.levelSymbol,
+      nextXP: lvl.nextXP,
+      progress: lvl.progress,
+      progressPercent: lvl.progressPercent,
+      twitterHandle: handle,
+    });
+  } catch (err) {
+    console.error("twitter verification error", err);
+    return res.status(500).json({ ok: false, error: "server-error" });
+  }
+}
+
+router.post("/api/quests/verify/twitter/follow", async (req, res) =>
+  handleTwitterVerification(req, res, {
+    questKey: req.body?.questId || req.body?.quest_id || "follow_x",
+    check: (userId) => isFollowingTarget(userId),
+  })
+);
+
+router.post("/api/quests/verify/twitter/retweet", async (req, res) =>
+  handleTwitterVerification(req, res, {
+    questKey: req.body?.questId || req.body?.quest_id || "retweet_pinned",
+    check: (userId) => hasReferencedTweet(userId, "retweeted"),
+  })
+);
+
+router.post("/api/quests/verify/twitter/quote", async (req, res) =>
+  handleTwitterVerification(req, res, {
+    questKey: req.body?.questId || req.body?.quest_id || "quote_pinned",
+    check: (userId) => hasReferencedTweet(userId, "quoted"),
+  })
+);
+
 router.post("/api/quests/:questId/claim", async (req, res) => {
   try {
     const wallet = req.session?.wallet;
@@ -481,8 +650,8 @@ router.post("/api/quests/:questId/claim", async (req, res) => {
 router.post("/api/quests/claim", async (req, res) => {
   try {
     const wallet =
-      req.session.wallet || (req.query.wallet ? String(req.query.wallet) : null);
-    const questIdentifier = req.body?.questId ?? req.body?.quest_id;
+      req.session.wallet || req.body?.wallet || (req.query.wallet ? String(req.query.wallet) : null);
+    const questIdentifier = req.body?.questId ?? req.body?.quest_id ?? req.query.questId;
     if (!wallet) {
       return res
         .status(400)
@@ -517,13 +686,19 @@ router.post("/api/quests/claim", async (req, res) => {
           reason: verification.reason,
         });
       }
-      const proof = await db.get(
-        `SELECT status FROM proofs WHERE wallet = ? AND quest_id = ?`,
-        wallet,
-        qrow.id
-      );
-      if (!proof || proof.status !== "verified") {
-        return res.status(403).json({ ok: false, error: "proof-required", message: "Submit a valid proof first." });
+      const proof =
+        (await db.get(
+          `SELECT status FROM quest_proofs WHERE wallet = ? AND quest_id = ? ORDER BY updatedAt DESC LIMIT 1`,
+          wallet,
+          qrow.id
+        )) ||
+        (await db.get(
+          `SELECT status FROM proofs WHERE wallet = ? AND quest_id = ? ORDER BY updatedAt DESC LIMIT 1`,
+          wallet,
+          qrow.id
+        ));
+      if (!proof || !["approved", "verified"].includes(String(proof.status))) {
+        return res.status(403).json({ ok: false, error: "proof-required" });
       }
     }
 
@@ -535,16 +710,20 @@ router.post("/api/quests/claim", async (req, res) => {
     console.log("quest_claimed", { wallet, questId: qrow.id, xpGain: result.xpGain, ts: Date.now() });
 
     const row = await db.get(`SELECT xp FROM users WHERE wallet = ?`, wallet);
-    const newTotalXp = row?.xp ?? 0;
-    const lvl = deriveLevel(newTotalXp);
+    const lvl = deriveLevel(row?.xp ?? 0);
 
     return res.json({
       ok: true,
       xpGain: result.xpGain,
-      newTotalXp,
-      level: lvl.levelName,
-      levelProgress: lvl.progress,
       already: result.already || undefined,
+      newTotalXp: lvl.totalXP,
+      totalXP: lvl.totalXP,
+      levelTier: lvl.levelTier,
+      levelName: lvl.levelName,
+      levelSymbol: lvl.levelSymbol,
+      nextXP: lvl.nextXP,
+      progress: lvl.progress,
+      progressPercent: lvl.progressPercent,
     });
   } catch (err) {
     console.error("Quest claim error:", err);
