@@ -513,7 +513,11 @@ async function hasReferencedTweet(userId, type) {
 async function handleTwitterVerification(req, res, { questKey, check }) {
   try {
     const wallet = req.session?.wallet || req.body?.wallet || req.body?.address;
+ codex/fix-and-complete-all-backend-issues-jqqial
     const providedHandle = (req.body?.twitterHandle || req.body?.handle || "").replace(/^@+/, "");
+
+    const providedHandle = req.body?.twitterHandle || req.body?.handle;
+
     if (!wallet) return res.status(400).json({ ok: false, error: "wallet-required" });
     if (!TWITTER_BEARER) return res.status(503).json({ ok: false, error: "twitter-disabled" });
 
@@ -539,6 +543,7 @@ async function handleTwitterVerification(req, res, { questKey, check }) {
     );
     await upsertSocial(wallet, "twitter", { handle, id: String(userId) });
 
+
     const questId = (await questIdFromIdentifier(questKey)) ?? questKey;
     if (questId) {
       await upsertQuestProof(wallet, questId, "twitter", "approved", TWITTER_PINNED_TWEET_ID);
@@ -560,8 +565,14 @@ async function handleTwitterVerification(req, res, { questKey, check }) {
       levelTier: lvl.levelTier,
       levelName: lvl.levelName,
       levelSymbol: lvl.levelSymbol,
+ codex/fix-and-complete-all-backend-issues-jqqial
       nextXP: lvl.nextNeed,
       progress: lvl.progress,
+
+      nextXP: lvl.nextXP,
+      progress: lvl.progress,
+      progressPercent: lvl.progressPercent,
+
       twitterHandle: handle,
     });
   } catch (err) {
@@ -730,8 +741,14 @@ router.post("/api/quests/claim", async (req, res) => {
       levelTier: lvl.levelTier,
       levelName: lvl.levelName,
       levelSymbol: lvl.levelSymbol,
+
       nextXP: lvl.nextNeed,
       progress: lvl.progress,
+
+      nextXP: lvl.nextXP,
+      progress: lvl.progress,
+      progressPercent: lvl.progressPercent,
+
     });
   } catch (err) {
     console.error("Quest claim error:", err);

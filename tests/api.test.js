@@ -34,7 +34,7 @@ describe('API routes', () => {
     const res = await request(app).get('/api/users/w1');
     expect(res.body.totalXP).toBe(105);
     expect(res.body.xp).toBe(105);
-    expect(res.body.nextXP).toBe(10000);
+    expect(res.body.nextXP).toBe(9895);
     expect(res.body.levelTier).toBe('shellborn');
   });
 

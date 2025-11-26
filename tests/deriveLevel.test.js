@@ -8,6 +8,7 @@ describe('deriveLevel', () => {
     expect(lvl.progress).toBe(0);
     expect(lvl.xpIntoLevel).toBe(0);
     expect(lvl.nextNeed).toBe(10000);
+    expect(lvl.progressPercent).toBe(0);
   });
 
   test('transitions tiers at defined thresholds', () => {
@@ -31,7 +32,7 @@ describe('deriveLevel', () => {
     const lvl = deriveLevel(300000);
     expect(lvl.levelName).toBe('Cowrie Ascendant');
     expect(lvl.progress).toBe(1);
-    expect(lvl.nextNeed).toBeGreaterThan(0);
+    expect(lvl.nextNeed).toBe(0);
     expect(lvl.totalXP).toBe(300000);
   });
 });
