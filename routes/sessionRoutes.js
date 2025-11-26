@@ -69,4 +69,21 @@ router.get("/api/me", async (req, res, next) => {
   }
 });
 
+// Alias for frontend compatibility
+router.get("/api/auth/me", async (req, res, next) => {
+  try {
+    const wallet = req.session?.userId || req.session?.wallet;
+    if (!wallet) {
+      return res.json({ ok: true, authed: false, user: null });
+    }
+    const profile = await getProfile(wallet);
+    if (!profile) {
+      return res.status(404).json({ ok: false, error: "user_not_found" });
+    }
+    res.json({ ok: true, authed: true, user: profile });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
