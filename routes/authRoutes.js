@@ -107,8 +107,10 @@ const handleTwitterCallback = (req, res, next) => {
 
           await ensureUser(wallet, { twitterHandle });
           await db.run(
-            `UPDATE users SET twitterHandle = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+            `UPDATE users SET twitterHandle = ?, twitter_username = ?, twitter_id = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
             twitterHandle,
+            twitterHandle,
+            String(user.id),
             wallet
           );
           await db.run(
@@ -116,7 +118,7 @@ const handleTwitterCallback = (req, res, next) => {
              ON CONFLICT(wallet) DO UPDATE SET twitter = excluded.twitter`,
             [wallet, twitterHandle]
           );
-          await upsertSocial(wallet, 'twitter', { handle: twitterHandle, id: String(user.id) });
+          await upsertSocial(wallet, 'twitter', { handle: twitterHandle, username: twitterHandle, id: String(user.id) });
 
           req.session.state = null;
           if (req.session.save) req.session.save(() => {});
@@ -169,13 +171,23 @@ router.get("/auth/telegram", (req, res) => {
 
 /* ------------------------- DISCORD ------------------------- */
 
-const DISCORD_SCOPES = process.env.DISCORD_SCOPES || "identify guilds";
+const DISCORD_SCOPES = "identify guilds";
 const DISCORD_REDIRECT =
   process.env.DISCORD_REDIRECT_URI ||
   process.env.DISCORD_REDIRECT ||
-  `${
-    process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com"
-  }/api/auth/discord/callback`;
+  "https://sevengoldencowries-backend.onrender.com/api/auth/discord/callback";
+
+function buildDiscordAuthUrl(state) {
+  const cid = process.env.DISCORD_CLIENT_ID;
+  if (!cid || !DISCORD_REDIRECT) return null;
+  return (
+    `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(cid)}` +
+    `&response_type=code` +
+    `&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT)}` +
+    `&scope=${encodeURIComponent(DISCORD_SCOPES)}` +
+    (state ? `&state=${encodeURIComponent(state)}` : "")
+  );
+}
 
 // Frontend helper: return OAuth URL
 router.get("/api/discord/login", (req, res) => {
@@ -184,14 +196,8 @@ router.get("/api/discord/login", (req, res) => {
     return res.status(500).json({ error: "Discord env vars not set" });
   }
   const state = String(req.query.state || "");
-  const url =
-    `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(
-      cid
-    )}` +
-    `&response_type=code` +
-    `&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT)}` +
-    `&scope=${encodeURIComponent(DISCORD_SCOPES)}` +
-    (state ? `&state=${encodeURIComponent(state)}` : "");
+  const url = buildDiscordAuthUrl(state);
+  if (!url) return res.status(500).json({ error: "Discord env vars not set" });
   res.json({ url });
 });
 
@@ -199,19 +205,11 @@ router.get("/auth/discord", (req, res) => {
   const incoming = req.query.state;
   if (!incoming) return res.status(400).send("Missing wallet state");
   req.session.state = incoming;
-
-  const cid = process.env.DISCORD_CLIENT_ID;
-  if (!cid || !DISCORD_REDIRECT)
-    return res.status(500).send("Discord env vars not set");
-
-  const url =
-    `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(
-      cid
-    )}` +
-    `&response_type=code` +
-    `&redirect_uri=${encodeURIComponent(DISCORD_REDIRECT)}` +
-    `&scope=${encodeURIComponent(DISCORD_SCOPES)}` +
-    `&state=${encodeURIComponent(incoming)}`;
+  const url = buildDiscordAuthUrl(incoming);
+  if (!url) return res.status(500).send("Discord env vars not set");
+  if (req.session.save) {
+    return req.session.save(() => res.redirect(url));
+  }
   res.redirect(url);
 });
 
@@ -308,9 +306,11 @@ const handleDiscordCallback = async (req, res) => {
     });
     await db.run(
       `UPDATE users
-         SET discordId = ?, discordHandle = ?, discordAccessToken = ?, discordRefreshToken = ?, discordTokenExpiresAt = ?, discordGuildMember = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         SET discordId = ?, discord_id = ?, discordHandle = ?, discord_username = ?, discordAccessToken = ?, discordRefreshToken = ?, discordTokenExpiresAt = ?, discordGuildMember = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE wallet = ?`,
       discordId,
+      discordId,
+      display,
       display,
       accessToken,
       refreshToken,
@@ -323,7 +323,7 @@ const handleDiscordCallback = async (req, res) => {
        ON CONFLICT(wallet) DO UPDATE SET discord = excluded.discord`,
       [wallet, display]
     );
-    await upsertSocial(wallet, 'discord', { id: discordId, handle: display, guildMember: isMember });
+    await upsertSocial(wallet, 'discord', { id: discordId, username: display, handle: display, guildMember: isMember });
 
     req.session.state = null;
     if (req.session.save) req.session.save(() => {});
@@ -439,8 +439,15 @@ router.get("/api/auth/twitter/start", (req, res) => {
 });
 
 router.get("/api/auth/discord/start", (req, res) => {
-  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  res.redirect(302, `/auth/discord${qs}`);
+  const state = req.query.state;
+  if (!state) return res.status(400).send("Missing wallet state");
+  req.session.state = state;
+  const url = buildDiscordAuthUrl(state);
+  if (!url) return res.status(500).send("Discord env vars not set");
+  if (req.session.save) {
+    return req.session.save(() => res.redirect(302, url));
+  }
+  res.redirect(302, url);
 });
 
 router.get("/api/auth/telegram/start", (req, res) => {

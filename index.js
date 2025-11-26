@@ -31,14 +31,13 @@ await migrateOnBoot(DB_PATH);
 const app = express();
 const PROD = process.env.NODE_ENV === "production";
 const IS_TEST = process.env.NODE_ENV === "test";
-const DEFAULT_FRONTEND = "http://localhost:3000";
+const DEFAULT_FRONTEND = "https://7goldencowries.com";
 const STATIC_ALLOWED = ["https://7goldencowries.com"];
-const SESSION_DOMAIN =
-  process.env.SESSION_DOMAIN || (PROD ? "7goldencowries.com" : undefined);
-const SESSION_SECURE =
-  process.env.SESSION_SECURE?.toLowerCase() === "true"
-    ? true
-    : !IS_TEST;
+const SESSION_DOMAIN = process.env.SESSION_DOMAIN || (PROD ? "7goldencowries.com" : undefined);
+const SESSION_SECURE = process.env.SESSION_SECURE
+  ? String(process.env.SESSION_SECURE).toLowerCase() === "true"
+  : PROD && !IS_TEST;
+const SESSION_SAMESITE = PROD && !IS_TEST ? "none" : "lax";
 
 // FRONTEND_URL can be comma-separated (Vercel prod + previews)
 const ALLOWED = Array.from(
@@ -101,7 +100,7 @@ app.use(
     cookie: {
       httpOnly: true,
       secure: SESSION_SECURE,
-      sameSite: "none",
+      sameSite: SESSION_SAMESITE,
       domain: SESSION_DOMAIN,
       maxAge: 1000 * 60 * 60, // 1h
     },
