@@ -8,16 +8,23 @@ const router = express.Router();
 router.get("/", async (_req, res) => {
   try {
     const rows = await db.all(
-      "SELECT wallet, xp, twitterHandle FROM users ORDER BY xp DESC LIMIT 100"
+      `SELECT wallet, xp, twitterHandle, levelName, levelSymbol
+         FROM users
+        WHERE wallet IS NOT NULL
+        ORDER BY xp DESC, datetime(updatedAt) DESC
+        LIMIT 100`
     );
     const entries = rows.map((r, i) => {
-      const lvl = deriveLevel(r.xp || 0);
+      const lvl = deriveLevel(r?.xp || 0);
       return {
         rank: i + 1,
         wallet: r.wallet,
         totalXP: lvl.totalXP,
         progress: lvl.progress,
         levelTier: lvl.levelTier,
+        levelName: r.levelName || lvl.levelName,
+        levelSymbol: r.levelSymbol || lvl.levelSymbol,
+        nextXP: lvl.nextNeed,
         twitterHandle: r.twitterHandle || null,
       };
     });

@@ -2,6 +2,7 @@ import authRoutes from "./authRoutes.js";
 import questRoutes from "./questRoutes.js";
 import questsRoutes from "./questsRoutes.js";
 import userRoutes from "./userRoutes.js";
+import sessionRoutes from "./sessionRoutes.js";
 import tonWebhook from "./tonWebhook.js";
 import referralRoutes from "./referralRoutes.js";
 import refRedirectRoutes from "./refRedirectRoutes.js";
@@ -21,6 +22,7 @@ import subscriptionRoutes from "./subscriptionRoutes.js";
 
 const canonicalRouters = [
   { router: telegramRoutes },
+  { router: sessionRoutes },
   { router: authRoutes },
   { router: questLinkRoutes },
   { router: questTelegramRoutes },

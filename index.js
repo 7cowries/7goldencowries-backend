@@ -85,8 +85,8 @@ app.use(
     store: new Store({ checkPeriod: 86400000 }), // 24h
     cookie: {
       httpOnly: true,
-      secure: PROD,
-      sameSite: PROD ? "none" : "lax",
+      secure: !IS_TEST,
+      sameSite: "none",
       maxAge: 1000 * 60 * 60, // 1h
     },
   })
