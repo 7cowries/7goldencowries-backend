@@ -32,12 +32,25 @@ const app = express();
 const PROD = process.env.NODE_ENV === "production";
 const IS_TEST = process.env.NODE_ENV === "test";
 const DEFAULT_FRONTEND = "http://localhost:3000";
+const STATIC_ALLOWED = ["https://7goldencowries.com"];
+const SESSION_DOMAIN =
+  process.env.SESSION_DOMAIN || (PROD ? "7goldencowries.com" : undefined);
+const SESSION_SECURE =
+  process.env.SESSION_SECURE?.toLowerCase() === "true"
+    ? true
+    : !IS_TEST;
 
 // FRONTEND_URL can be comma-separated (Vercel prod + previews)
-const ALLOWED = (process.env.FRONTEND_URL || DEFAULT_FRONTEND)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+const ALLOWED = Array.from(
+  new Set(
+    (process.env.FRONTEND_URL || DEFAULT_FRONTEND)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .concat(STATIC_ALLOWED)
+  )
+);
+const ALLOWED_PATTERNS = [/^https:\/\/[a-z0-9-]+\.vercel\.app$/i];
 
 // Trust Render / proxies so secure cookies & req.protocol work
 app.set("trust proxy", 1);
@@ -56,6 +69,8 @@ app.use(
       // Allow same-origin / curl / server-to-server with no Origin header
       if (!origin) return callback(null, true);
       if (ALLOWED.includes(origin)) return callback(null, true);
+      if (ALLOWED_PATTERNS.some((re) => re.test(origin)))
+        return callback(null, true);
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);
     },
     credentials: true,
@@ -85,8 +100,9 @@ app.use(
     store: new Store({ checkPeriod: 86400000 }), // 24h
     cookie: {
       httpOnly: true,
-      secure: !IS_TEST,
+      secure: SESSION_SECURE,
       sameSite: "none",
+      domain: SESSION_DOMAIN,
       maxAge: 1000 * 60 * 60, // 1h
     },
   })

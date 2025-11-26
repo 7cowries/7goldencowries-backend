@@ -2,7 +2,9 @@
 import passport from "passport";
 import { Strategy as TwitterStrategy } from "passport-twitter";
 
-const cb = process.env.TWITTER_CALLBACK || "http://localhost:5000/auth/twitter/callback";
+const cb =
+  process.env.TWITTER_CALLBACK ||
+  `${process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com"}/api/auth/twitter/callback`;
 
 passport.use(
   new TwitterStrategy(

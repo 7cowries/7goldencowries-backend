@@ -11,7 +11,13 @@ const router = express.Router();
 const CLIENT_URL =
   process.env.CLIENT_URL ||
   process.env.FRONTEND_URL ||
-  "https://www.7goldencowries.com"; // production default
+  "https://7goldencowries.com"; // production default
+const PROFILE_URL = process.env.PROFILE_URL || "https://7goldencowries.com/profile";
+
+function redirectToProfile(res, query) {
+  if (query) return res.redirect(`${PROFILE_URL}?${query}`);
+  return res.redirect(PROFILE_URL);
+}
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -69,53 +75,64 @@ router.get("/auth/twitter", (req, res, next) => {
 });
 
 // Twitter callback — link wallet → twitter handle
-router.get("/auth/twitter/callback", (req, res, next) => {
-  passport.authenticate("twitter", { failureRedirect: "/" }, (err, user) => {
-    if (err || !user) {
-      console.error("❌ Twitter Auth Failed:", err);
-      return res.redirect("/");
-    }
-    req.logIn(user, async (err2) => {
-      if (err2) {
-        console.error("❌ Login error after Twitter auth:", err2);
-        return res.redirect("/");
-      }
-      try {
-        const twitterHandle = req.user?.username;
-        const wallet =
-          parseWalletFromState(req.query.state) ||
-          parseWalletFromState(req.session?.state) ||
-          parseWalletFromState(req.query.wallet);
+const twitterCallbackPaths = [
+  "/auth/twitter/callback",
+  "/api/auth/twitter/callback",
+];
 
-        if (!wallet || !twitterHandle) {
-          return res.status(400).send("Missing wallet or Twitter handle");
+const handleTwitterCallback = (req, res, next) => {
+  passport.authenticate(
+    "twitter",
+    { failureRedirect: PROFILE_URL },
+    (err, user) => {
+      if (err || !user) {
+        console.error("❌ Twitter Auth Failed:", err);
+        return redirectToProfile(res, "error=twitter");
+      }
+      req.logIn(user, async (err2) => {
+        if (err2) {
+          console.error("❌ Login error after Twitter auth:", err2);
+          return redirectToProfile(res, "error=twitter");
         }
+        try {
+          const twitterHandle = req.user?.username;
+          const wallet =
+            parseWalletFromState(req.query.state) ||
+            parseWalletFromState(req.session?.state) ||
+            parseWalletFromState(req.query.wallet);
 
-        await ensureUser(wallet, { twitterHandle });
-        await db.run(
-          `UPDATE users SET twitterHandle = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
-          twitterHandle,
-          wallet
-        );
-        await db.run(
-          `INSERT INTO social_links (wallet, twitter) VALUES (?, ?)
-           ON CONFLICT(wallet) DO UPDATE SET twitter = excluded.twitter`,
-          [wallet, twitterHandle]
-        );
-        await upsertSocial(wallet, 'twitter', { handle: twitterHandle, id: String(user.id) });
+          if (!wallet || !twitterHandle) {
+            return redirectToProfile(res, "error=twitter_missing_wallet");
+          }
 
-        req.session.state = null;
-        if (req.session.save) req.session.save(() => {});
-        return res.redirect(`${CLIENT_URL}/profile?connected=twitter`);
-      } catch (e) {
-        console.error("❌ Twitter callback error:", e);
-        return res
-          .status(500)
-          .send("Internal server error during Twitter linking");
-      }
-    });
-  })(req, res, next);
-});
+          await ensureUser(wallet, { twitterHandle });
+          await db.run(
+            `UPDATE users SET twitterHandle = ?, updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+            twitterHandle,
+            wallet
+          );
+          await db.run(
+            `INSERT INTO social_links (wallet, twitter) VALUES (?, ?)
+             ON CONFLICT(wallet) DO UPDATE SET twitter = excluded.twitter`,
+            [wallet, twitterHandle]
+          );
+          await upsertSocial(wallet, 'twitter', { handle: twitterHandle, id: String(user.id) });
+
+          req.session.state = null;
+          if (req.session.save) req.session.save(() => {});
+          return redirectToProfile(res, "connected=twitter");
+        } catch (e) {
+          console.error("❌ Twitter callback error:", e);
+          return redirectToProfile(res, "error=twitter");
+        }
+      });
+    }
+  )(req, res, next);
+};
+
+twitterCallbackPaths.forEach((path) =>
+  router.get(path, handleTwitterCallback)
+);
 
 // Manual twitter linking fallback
 router.post("/link-twitter", async (req, res) => {
@@ -156,7 +173,9 @@ const DISCORD_SCOPES = process.env.DISCORD_SCOPES || "identify guilds";
 const DISCORD_REDIRECT =
   process.env.DISCORD_REDIRECT_URI ||
   process.env.DISCORD_REDIRECT ||
-  "https://sevengoldencowries-backend.onrender.com/auth/discord/callback";
+  `${
+    process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com"
+  }/api/auth/discord/callback`;
 
 // Frontend helper: return OAuth URL
 router.get("/api/discord/login", (req, res) => {
@@ -196,21 +215,26 @@ router.get("/auth/discord", (req, res) => {
   res.redirect(url);
 });
 
-router.get("/auth/discord/callback", async (req, res) => {
+const discordCallbackPaths = [
+  "/auth/discord/callback",
+  "/api/auth/discord/callback",
+];
+
+const handleDiscordCallback = async (req, res) => {
   try {
     const code = req.query.code;
-    if (!code) return res.status(400).send("Missing code");
+    if (!code) return redirectToProfile(res, "error=discord_missing_code");
 
     const wallet =
       parseWalletFromState(req.query.state) ||
       parseWalletFromState(req.session?.state) ||
       parseWalletFromState(req.query.wallet);
-    if (!wallet) return res.status(400).send("Missing wallet state");
+    if (!wallet) return redirectToProfile(res, "error=discord_missing_wallet");
 
     const cid = process.env.DISCORD_CLIENT_ID;
     const secret = process.env.DISCORD_CLIENT_SECRET;
     if (!cid || !secret || !DISCORD_REDIRECT) {
-      return res.status(500).send("Discord env vars not set");
+      return redirectToProfile(res, "error=discord_env");
     }
 
     // 1) token
@@ -228,7 +252,7 @@ router.get("/auth/discord/callback", async (req, res) => {
     if (!tokenRes.ok) {
       const body = await tokenRes.text();
       console.error("Discord token error:", body);
-      return res.status(502).send("Discord token exchange failed");
+      return redirectToProfile(res, "error=discord_token");
     }
     const tokenJson = await tokenRes.json();
     const accessToken = tokenJson.access_token;
@@ -245,7 +269,7 @@ router.get("/auth/discord/callback", async (req, res) => {
     if (!meRes.ok) {
       const body = await meRes.text();
       console.error("Discord /@me error:", body);
-      return res.status(502).send("Discord user fetch failed");
+      return redirectToProfile(res, "error=discord_profile");
     }
     const me = await meRes.json();
     const discordId = me.id ? String(me.id) : null;
@@ -303,13 +327,19 @@ router.get("/auth/discord/callback", async (req, res) => {
 
     req.session.state = null;
     if (req.session.save) req.session.save(() => {});
-    const redirectUrl = `${CLIENT_URL}/profile?connected=discord&guildMember=${isMember ? 'true' : 'false'}`;
-    return res.redirect(redirectUrl);
+    return redirectToProfile(
+      res,
+      `connected=discord&guildMember=${isMember ? "true" : "false"}`
+    );
   } catch (e) {
     console.error("❌ Discord callback error:", e);
-    res.status(500).send("Discord link failed");
+    redirectToProfile(res, "error=discord");
   }
-});
+};
+
+discordCallbackPaths.forEach((path) =>
+  router.get(path, handleDiscordCallback)
+);
 
 /* ------------------------- DEV QUEST HELPER ------------------------- */
 // Disable on prod unless you explicitly enable it

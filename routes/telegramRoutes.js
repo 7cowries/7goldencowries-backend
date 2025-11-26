@@ -15,11 +15,13 @@ const BOT_ID =
 
 const BOT_NAME = (process.env.TELEGRAM_BOT_NAME || "").replace(/^@/, ""); // used for embed ONLY
 
-// Force the frontend origin that Telegram should trust/redirect back to
+const BACKEND_URL =
+  process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com";
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   process.env.CLIENT_URL ||
-  "https://www.7goldencowries.com";
+  "https://7goldencowries.com";
+const PROFILE_URL = process.env.PROFILE_URL || "https://7goldencowries.com/profile";
 
 // Optional: max age for auth_date (0 disables)
 const AUTH_MAX_AGE = Number(process.env.TELEGRAM_AUTH_MAX_AGE ?? 0); // disabled by default
@@ -33,6 +35,11 @@ function decodeState(s) {
   } catch {
     return "";
   }
+}
+
+function redirectToProfile(res, query) {
+  if (query) return res.redirect(`${PROFILE_URL}?${query}`);
+  return res.redirect(PROFILE_URL);
 }
 
 /** Check signature per official docs:
@@ -107,8 +114,8 @@ router.get("/auth/telegram/start", (req, res) => {
     }
 
     const state = String(req.query.state || "");
-    const origin = "https://www.7goldencowries.com"; // must match BotFather /setdomain
-    const returnTo = `${origin}/auth/telegram/callback?state=${encodeURIComponent(
+    const origin = BACKEND_URL; // must match BotFather /setdomain
+    const returnTo = `${origin}/api/auth/telegram/callback?state=${encodeURIComponent(
       state
     )}`;
 
@@ -181,30 +188,31 @@ router.get("/auth/telegram/start", (req, res) => {
 /* -----------------------------------------------------------
    Legacy alias: /auth/telegram/verify → redirect to /callback
    ----------------------------------------------------------- */
+const TELEGRAM_CALLBACK_PATHS = [
+  "/auth/telegram/callback",
+  "/api/auth/telegram/callback",
+];
+
 router.get("/auth/telegram/verify", (req, res) => {
   const qs = new URLSearchParams(req.query).toString();
-  res.redirect(302, `/auth/telegram/callback${qs ? `?${qs}` : ""}`);
+  res.redirect(302, `${TELEGRAM_CALLBACK_PATHS[1]}${qs ? `?${qs}` : ""}`);
 });
 
 /* =========================================================================
    GET /auth/telegram/callback — verify payload, save, go to profile
    ========================================================================= */
-router.get("/auth/telegram/callback", async (req, res) => {
+const handleTelegramCallback = async (req, res) => {
   try {
     if (!BOT_TOKEN) throw new Error("Missing bot token");
 
     const wallet = decodeState(req.query.state || "");
     if (!wallet) {
-      return res.redirect(
-        `${FRONTEND_URL}/profile?linked=telegram&err=nostate`
-      );
+      return redirectToProfile(res, "linked=telegram&err=nostate");
     }
 
     if (!verifyTelegram(req.query, BOT_TOKEN)) {
       console.error("[TG] HMAC mismatch (exclude non-telegram params like state)");
-      return res.redirect(
-        `${FRONTEND_URL}/profile?linked=telegram&err=bad_sig`
-      );
+      return redirectToProfile(res, "linked=telegram&err=bad_sig");
     }
 
     const tgId = String(req.query.id || "");
@@ -232,13 +240,15 @@ router.get("/auth/telegram/callback", async (req, res) => {
     );
     await upsertSocial(wallet, 'telegram', { username: tgUsername, id: tgId });
 
-    return res.redirect(`${FRONTEND_URL}/profile?connected=telegram`);
+    return redirectToProfile(res, "connected=telegram");
   } catch (e) {
     console.error("Telegram callback error:", e);
-    return res.redirect(
-      `${FRONTEND_URL}/profile?linked=telegram&err=server`
-    );
+    return redirectToProfile(res, "linked=telegram&err=server");
   }
-});
+};
+
+TELEGRAM_CALLBACK_PATHS.forEach((path) =>
+  router.get(path, handleTelegramCallback)
+);
 
 export default router;
