@@ -22,10 +22,13 @@ const router = express.Router();
 router.use(passport.initialize());
 router.use(passport.session());
 
+const BACKEND_URL =
+  process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com";
 const FRONTEND_URL =
   process.env.CLIENT_URL ||
   process.env.FRONTEND_URL ||
   "https://7goldencowries.com";
+const PROFILE_URL = process.env.PROFILE_URL || "https://7goldencowries.com/profile";
 
 function safelyDecodeBase64(value) {
   if (!value) return null;
@@ -107,7 +110,7 @@ router.get("/twitter/callback", (req, res, next) => {
     } catch (e) {
       console.error("twitter db error", e);
     }
-    return res.redirect(FRONTEND_URL + "/profile?connected=twitter");
+    return res.redirect(`${PROFILE_URL}?connected=twitter`);
   })(req, res, next);
 });
 
@@ -120,7 +123,7 @@ router.get("/discord", (req, res) => {
   const cid = process.env.DISCORD_CLIENT_ID;
   const redirectUri =
     process.env.DISCORD_REDIRECT_URI ||
-    "https://sevengoldencowries-backend.onrender.com/auth/discord/callback";
+    `${BACKEND_URL}/api/auth/discord/callback`;
   const url =
     `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(cid)}` +
     `&response_type=code` +
@@ -144,7 +147,7 @@ router.get("/discord/callback", async (req, res) => {
     const secret = process.env.DISCORD_CLIENT_SECRET;
     const redirectUri =
       process.env.DISCORD_REDIRECT_URI ||
-      "https://sevengoldencowries-backend.onrender.com/auth/discord/callback";
+      `${BACKEND_URL}/api/auth/discord/callback`;
     const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -159,7 +162,7 @@ router.get("/discord/callback", async (req, res) => {
     if (!tokenRes.ok) {
       const body = await tokenRes.text();
       console.error("discord token error", body);
-      return res.redirect(FRONTEND_URL + "/profile?error=discord");
+      return res.redirect(`${PROFILE_URL}?error=discord`);
     }
     const tokenJson = await tokenRes.json();
     const access = tokenJson.access_token;
@@ -169,7 +172,7 @@ router.get("/discord/callback", async (req, res) => {
     if (!meRes.ok) {
       const body = await meRes.text();
       console.error("discord user error", body);
-      return res.redirect(FRONTEND_URL + "/profile?error=discord");
+      return res.redirect(`${PROFILE_URL}?error=discord`);
     }
     const me = await meRes.json();
     const username =
@@ -205,11 +208,11 @@ router.get("/discord/callback", async (req, res) => {
     req.session.discord_state = null;
     if (req.session.save) req.session.save(() => {});
     return res.redirect(
-      `${FRONTEND_URL}/profile?connected=discord&guildMember=${guildMember ? "true" : "false"}`
+      `${PROFILE_URL}?connected=discord&guildMember=${guildMember ? "true" : "false"}`
     );
   } catch (e) {
     console.error("discord callback error", e);
-    return res.redirect(FRONTEND_URL + "/profile?error=discord");
+    return res.redirect(`${PROFILE_URL}?error=discord`);
   }
 });
 
@@ -245,10 +248,10 @@ router.get("/telegram/callback", async (req, res) => {
       );
       await upsertSocial(wallet, "telegram", { username, id: tid });
     }
-    return res.redirect(FRONTEND_URL + "/profile?connected=telegram");
+    return res.redirect(`${PROFILE_URL}?connected=telegram`);
   } catch (e) {
     console.error("telegram/callback error", e);
-    return res.redirect(FRONTEND_URL + "/profile?error=telegram");
+    return res.redirect(`${PROFILE_URL}?error=telegram`);
   }
 });
 

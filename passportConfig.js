@@ -7,7 +7,9 @@ const TWITTER_CONSUMER_KEY = process.env.TWITTER_CONSUMER_KEY;
 const TWITTER_CONSUMER_SECRET = process.env.TWITTER_CONSUMER_SECRET;
 const TWITTER_CALLBACK =
   process.env.TWITTER_CALLBACK ||
-  `${process.env.BACKEND_URL || ""}/auth/twitter/callback`;
+  `${
+    process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com"
+  }/api/auth/twitter/callback`;
 
 if (!TWITTER_CONSUMER_KEY || !TWITTER_CONSUMER_SECRET) {
   console.warn("⚠️ Twitter keys missing — Twitter auth disabled");
