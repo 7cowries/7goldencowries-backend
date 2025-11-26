@@ -15,6 +15,7 @@
     "smoke": "node scripts/smoke.mjs",
     "probe:off": "node scripts/toggleProbe.js",
     "probe:on": "ACTIVE=1 node scripts/toggleProbe.js",
+    "check:conflicts": "scripts/check-conflicts.sh",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "lint": "eslint . --ext .js,.mjs",
     "build": "npm run lint && npm test"
