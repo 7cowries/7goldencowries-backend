@@ -99,11 +99,11 @@ async function ensureUser(wallet) {
 }
 
 /* =========================================================================
-   GET /auth/telegram/start
+   GET /auth/telegram/start and /api/auth/telegram/start
    Default: 302 to Telegram hosted login (recommended).
    Optional: ?mode=embed just for testing on a page that matches /setdomain.
    ========================================================================= */
-router.get("/auth/telegram/start", (req, res) => {
+function handleTelegramStart(req, res) {
   try {
     if (!BOT_TOKEN || !BOT_ID) {
       return res
@@ -183,7 +183,10 @@ router.get("/auth/telegram/start", (req, res) => {
     console.error("Telegram /start error:", e);
     return res.redirect(`${FRONTEND_URL}/profile?linked=telegram&err=start`);
   }
-});
+}
+
+router.get("/auth/telegram/start", handleTelegramStart);
+router.get("/api/auth/telegram/start", handleTelegramStart);
 
 /* -----------------------------------------------------------
    Legacy alias: /auth/telegram/verify → redirect to /callback
