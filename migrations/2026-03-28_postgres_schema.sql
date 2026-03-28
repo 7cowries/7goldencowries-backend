@@ -327,6 +327,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+
+CREATE TABLE IF NOT EXISTS xp_ledger (
+  id BIGSERIAL PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT,
+  xp_delta INTEGER NOT NULL,
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  period_key TEXT NOT NULL,
+  wallet TEXT NOT NULL,
+  xp_total INTEGER NOT NULL,
+  rank INTEGER NOT NULL,
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(period_key, wallet)
+);
+
 CREATE INDEX IF NOT EXISTS idx_quests_active ON quests(active);
 CREATE INDEX IF NOT EXISTS idx_completed_wallet_qid_time ON completed_quests(wallet, quest_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_wallet_time ON subscriptions(wallet, timestamp);
