@@ -46,7 +46,9 @@
     "passport-twitter": "^1.0.4",
     "passport-twitter-oauth2": "^2.1.1",
     "winston": "^3.10.0",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "eslint": "^8.57.1",
