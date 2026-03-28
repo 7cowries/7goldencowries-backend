@@ -16,8 +16,10 @@ function bool(value) {
 
 function getAdminToken(req) {
   const hdr = String(req.get("authorization") || "");
-  if (!hdr.toLowerCase().startsWith("bearer ")) return "";
-  return hdr.slice(7).trim();
+  if (hdr.toLowerCase().startsWith("bearer ")) return hdr.slice(7).trim();
+  const alt = String(req.get("x-admin-token") || "").trim();
+  if (alt) return alt;
+  return "";
 }
 
 function requireAdmin(req, res, next) {
@@ -217,7 +219,7 @@ router.get("/api/payments/state", async (req, res) => {
       return res.json({ ok: true, wallet: null, subscription: null, tokenSale: null, arena: null });
     }
 
-    const [user, latestSub, tokenSaleRows, pendingArenaPayment] = await Promise.all([
+    const [user, latestSub, tokenSaleRows, tokenSaleSummary, pendingArenaPayment] = await Promise.all([
       db
         .get(
           `SELECT paid, tier, subscriptionTier, lastPaymentAt, subscriptionPaidAt, subscriptionClaimedAt
@@ -244,6 +246,15 @@ router.get("/api/payments/state", async (req, res) => {
         .catch(() => []),
       db
         .get(
+          `SELECT COUNT(*) AS total,
+                  COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('paid','success','succeeded','recorded') THEN 1 ELSE 0 END), 0) AS completed,
+                  COALESCE(SUM(ton_amount), 0) AS ton_total
+             FROM token_sale_contributions WHERE wallet = ?`,
+          wallet
+        )
+        .catch(() => null),
+      db
+        .get(
           `SELECT id, arena_id, status, amount, currency, checkout_url
              FROM payments
             WHERE user_wallet = ? AND status IN ('pending', 'requires_action')
@@ -268,7 +279,9 @@ router.get("/api/payments/state", async (req, res) => {
         claimedAt: user?.subscriptionClaimedAt || null,
       },
       tokenSale: {
-        totalContributions: tokenSaleRows.length,
+        totalContributions: Number(tokenSaleSummary?.total ?? tokenSaleRows.length ?? 0),
+        completedContributions: Number(tokenSaleSummary?.completed ?? 0),
+        totalTonAmount: Number(tokenSaleSummary?.ton_total ?? 0),
         latest: tokenSaleRows[0] || null,
       },
       arena: {
