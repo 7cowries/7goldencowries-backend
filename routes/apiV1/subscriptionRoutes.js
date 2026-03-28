@@ -209,9 +209,7 @@ router.post("/subscribe", async (req, res) => {
       status: 500,
     });
   }
-  }
-
-);
+});
 
 function getSubscriptionWebhookSecret() {
   try {
