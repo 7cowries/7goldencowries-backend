@@ -652,6 +652,7 @@ router.post("/api/quests/claim", async (req, res) => {
     const wallet =
       req.session.wallet || req.body?.wallet || (req.query.wallet ? String(req.query.wallet) : null);
     const questIdentifier = req.body?.questId ?? req.body?.quest_id ?? req.query.questId;
+    const arenaId = Number(req.body?.arenaId || req.query?.arenaId || 0);
     if (!wallet) {
       return res
         .status(400)
@@ -672,6 +673,32 @@ router.post("/api/quests/claim", async (req, res) => {
     }
     if (!qrow) {
       return res.status(404).json({ ok: false, error: "quest-not-found" });
+    }
+
+    if (arenaId) {
+      const arena = await db.get(`SELECT id, status FROM arenas WHERE id = ?`, arenaId);
+      if (!arena || String(arena.status) !== "live") {
+        return res.status(409).json({ ok: false, error: "arena-not-live" });
+      }
+      const participant = await db.get(
+        `SELECT id FROM arena_participants WHERE arena_id = ? AND user_wallet = ?`,
+        arenaId,
+        wallet
+      );
+      if (!participant) return res.status(403).json({ ok: false, error: "not-participant" });
+      const aq = await db.get(
+        `SELECT weight FROM arena_quests WHERE arena_id = ? AND quest_id = ? AND active = 1`,
+        arenaId,
+        String(qrow.id)
+      );
+      if (!aq) return res.status(404).json({ ok: false, error: "quest-not-in-arena" });
+      const existingArenaClaim = await db.get(
+        `SELECT id FROM arena_claims WHERE arena_id = ? AND user_wallet = ? AND quest_id = ?`,
+        arenaId,
+        wallet,
+        String(qrow.id)
+      );
+      if (existingArenaClaim) return res.status(409).json({ ok: false, error: "already-claimed-in-arena" });
     }
     if (qrow.requirement && qrow.requirement !== "none") {
       const verification = await verifyQuestRequirement(qrow.requirement, {
@@ -706,6 +733,38 @@ router.post("/api/quests/claim", async (req, res) => {
     if (!result.ok) {
       return res.status(404).json({ ok: false, error: result.error });
     }
+
+    let arenaXpGain = 0;
+    if (arenaId) {
+      const aq = await db.get(
+        `SELECT weight FROM arena_quests WHERE arena_id = ? AND quest_id = ? AND active = 1`,
+        arenaId,
+        String(qrow.id)
+      );
+      arenaXpGain = Math.round(Number((await db.get(`SELECT xp FROM quests WHERE id = ?`, qrow.id))?.xp || 0) * Number(aq?.weight || 1));
+      await db.exec("BEGIN IMMEDIATE TRANSACTION");
+      try {
+        await db.run(
+          `INSERT INTO arena_claims (arena_id, quest_id, user_wallet, awarded_xp, verification_status, source)
+           VALUES (?, ?, ?, ?, 'approved', 'quests_claim')`,
+          arenaId,
+          String(qrow.id),
+          wallet,
+          arenaXpGain
+        );
+        await db.run(
+          `UPDATE arena_participants SET arena_xp = COALESCE(arena_xp, 0) + ?, updated_at = datetime('now')
+           WHERE arena_id = ? AND user_wallet = ?`,
+          arenaXpGain,
+          arenaId,
+          wallet
+        );
+        await db.exec("COMMIT");
+      } catch (e) {
+        await db.exec("ROLLBACK");
+        throw e;
+      }
+    }
     delCache(`user:${wallet}`);
     console.log("quest_claimed", { wallet, questId: qrow.id, xpGain: result.xpGain, ts: Date.now() });
 
@@ -724,6 +783,7 @@ router.post("/api/quests/claim", async (req, res) => {
       nextXP: lvl.nextXP,
       progress: lvl.progress,
       progressPercent: lvl.progressPercent,
+      arenaXpGain,
     });
   } catch (err) {
     console.error("Quest claim error:", err);
