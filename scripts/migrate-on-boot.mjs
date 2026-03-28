@@ -24,7 +24,7 @@ const REQUIRED_TABLES = [
   "audit_logs",
 ];
 
-const IS_SQLITE = String(process.env.DATABASE_URL || "").trim() === ":memory:";
+const IS_SQLITE = db.dialect === "sqlite";
 
 const SQLITE_BOOTSTRAP_SQL = `
 CREATE TABLE IF NOT EXISTS users (
@@ -430,8 +430,8 @@ async function verifyRequiredTablesExist() {
 }
 
 export async function migrateOnBoot() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is missing. Startup aborted.");
+  if (!IS_SQLITE && !process.env.DATABASE_URL && !process.env.PGHOST) {
+    throw new Error("DATABASE_URL is missing for Postgres runtime. Startup aborted.");
   }
 
   try {
