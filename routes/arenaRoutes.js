@@ -657,6 +657,7 @@ router.post("/api/admin/arenas/:id/settle", async (req, res) => {
     );
     const rules = await db.all(`SELECT * FROM reward_rules WHERE arena_id = ? ORDER BY rank_from ASC`, req.params.id);
 
+    let generatedPayouts = 0;
     for (let i = 0; i < participants.length; i += 1) {
       const rank = i + 1;
       const p = participants[i];
@@ -671,11 +672,12 @@ router.post("/api/admin/arenas/:id/settle", async (req, res) => {
         Number(rule.reward_amount || 0),
         rule.reward_currency || arena.prize_pool_currency || 'TON'
       );
+      generatedPayouts += 1;
     }
 
     await db.run(`UPDATE arenas SET status='settled', settled_at=datetime('now'), updated_at=datetime('now') WHERE id = ?`, req.params.id);
     await logAudit("admin", String(req.headers["x-admin-id"] || "admin"), "arena_settled", "arena", req.params.id, { participants: participants.length });
-    return res.json({ ok: true, generatedPayouts: participants.length });
+    return res.json({ ok: true, generatedPayouts });
   } catch (err) {
     console.error("arena settle error", err);
     return res.status(500).json({ ok: false, error: "server_error" });
