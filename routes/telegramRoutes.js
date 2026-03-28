@@ -18,7 +18,7 @@ const BOT_ID =
 const BOT_NAME = (process.env.TELEGRAM_BOT_NAME || "").replace(/^@/, ""); // used for embed ONLY
 
 const BACKEND_URL =
-  process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com";
+  process.env.BACKEND_URL || "https://sevengoldencowries-backend-vw37.onrender.com";
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   process.env.CLIENT_URL ||

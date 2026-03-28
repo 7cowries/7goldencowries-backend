@@ -175,7 +175,7 @@ const DISCORD_SCOPES = "identify guilds";
 const DISCORD_REDIRECT =
   process.env.DISCORD_REDIRECT_URI ||
   process.env.DISCORD_REDIRECT ||
-  "https://sevengoldencowries-backend.onrender.com/api/auth/discord/callback";
+  "https://sevengoldencowries-backend-vw37.onrender.com/api/auth/discord/callback";
 
 function buildDiscordAuthUrl(state) {
   const cid = process.env.DISCORD_CLIENT_ID;
