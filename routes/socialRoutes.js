@@ -23,7 +23,7 @@ router.use(passport.initialize());
 router.use(passport.session());
 
 const BACKEND_URL =
-  process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com";
+  process.env.BACKEND_URL || "https://sevengoldencowries-backend-vw37.onrender.com";
 const FRONTEND_URL =
   process.env.CLIENT_URL ||
   process.env.FRONTEND_URL ||

@@ -29,7 +29,7 @@ This document captures the end-to-end steps required to deploy the backend to Re
 ## Frontend: Vercel deployment
 
 1. **Environment**
-   - Set `NEXT_PUBLIC_API_URL` to the Render backend (`https://sevengoldencowries-backend.onrender.com`).
+   - Set `NEXT_PUBLIC_API_URL` to the Render backend (`https://sevengoldencowries-backend-vw37.onrender.com`).
    - Mirror backend TON settings for UI display: `REACT_APP_TON_RECEIVE_ADDRESS`, `REACT_APP_TON_MIN_PAYMENT_TON`.
    - `REACT_APP_SUBSCRIPTION_CALLBACK` should remain `https://7goldencowries.com/subscription/callback`.
 2. **Rewrites**

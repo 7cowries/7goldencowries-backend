@@ -8,7 +8,7 @@ const TWITTER_CONSUMER_SECRET = process.env.TWITTER_CONSUMER_SECRET;
 const TWITTER_CALLBACK =
   process.env.TWITTER_CALLBACK ||
   `${
-    process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com"
+    process.env.BACKEND_URL || "https://sevengoldencowries-backend-vw37.onrender.com"
   }/api/auth/twitter/callback`;
 
 if (!TWITTER_CONSUMER_KEY || !TWITTER_CONSUMER_SECRET) {
