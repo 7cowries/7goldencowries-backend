@@ -11,12 +11,12 @@ const MAX_TON = Number(process.env.TOKEN_SALE_MAX_TON ?? 10_000);
 // --- Schema bootstrap
 await db.exec(`
   CREATE TABLE IF NOT EXISTS contributions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     wallet TEXT,                 -- optional: user's wallet (string)
-    amountTON REAL NOT NULL,     -- TON contributed
+    amountTON DOUBLE PRECISION NOT NULL, -- TON contributed
     referral TEXT,               -- optional referral code or wallet
     memo TEXT,                   -- optional note from user
-    createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    createdAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_contrib_createdAt ON contributions(createdAt);
   CREATE INDEX IF NOT EXISTS idx_contrib_referral ON contributions(referral);
@@ -80,7 +80,7 @@ router.get('/token-sale/stats', async (_req, res) => {
     const recent = await db.all(
       `SELECT id, wallet, amountTON, referral, memo, createdAt
        FROM contributions
-       ORDER BY datetime(createdAt) DESC
+       ORDER BY createdAt DESC
        LIMIT 10`
     );
 
@@ -98,7 +98,7 @@ router.get('/token-sale/contributions', async (req, res) => {
     const rows = await db.all(
       `SELECT id, wallet, amountTON, referral, memo, createdAt
        FROM contributions
-       ORDER BY datetime(createdAt) DESC
+       ORDER BY createdAt DESC
        LIMIT ?`,
       limit
     );
