@@ -28,12 +28,12 @@ const IS_TEST = process.env.NODE_ENV === "test";
 
 function hasPostgresRuntimeEnv() {
   const databaseUrl = String(process.env.DATABASE_URL || "").trim();
-  return /^postgres(ql)?:\/\//i.test(databaseUrl) || Boolean(process.env.PGHOST);
+  return /^postgres(ql)?:\/\//i.test(databaseUrl);
 }
 
 if (!IS_TEST && !hasPostgresRuntimeEnv()) {
   throw new Error(
-    "Postgres runtime configuration is required. Set DATABASE_URL=postgres://... (or PGHOST/PGUSER/PGPASSWORD/PGDATABASE)."
+    "Postgres runtime configuration is required. Set DATABASE_URL=postgres://..."
   );
 }
 
