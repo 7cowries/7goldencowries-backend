@@ -25,7 +25,7 @@
 
 | Variable | Value |
 | --- | --- |
-| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend.onrender.com` |
+| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend-vw37.onrender.com` |
 | `REACT_APP_TON_RECEIVE_ADDRESS` | `EQ…` |
 | `REACT_APP_TON_MIN_PAYMENT_TON` | `10` |
 | `REACT_APP_SUBSCRIPTION_CALLBACK` | `https://7goldencowries.com/subscription/callback` |
@@ -65,7 +65,7 @@ Use a Node web service with managed Postgres. Disk mounts such as `/var/data` ar
 ## Smoke tests
 
 ```bash
-BACKEND=https://sevengoldencowries-backend.onrender.com
+BACKEND=https://sevengoldencowries-backend-vw37.onrender.com
 curl -s $BACKEND/healthz
 curl -s $BACKEND/api/meta/progression | jq
 curl -s -H "x-wallet: UQTestWallet123" $BACKEND/api/quests | jq

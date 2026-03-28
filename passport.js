@@ -4,7 +4,7 @@ import { Strategy as TwitterStrategy } from "passport-twitter";
 
 const cb =
   process.env.TWITTER_CALLBACK ||
-  `${process.env.BACKEND_URL || "https://sevengoldencowries-backend.onrender.com"}/api/auth/twitter/callback`;
+  `${process.env.BACKEND_URL || "https://sevengoldencowries-backend-vw37.onrender.com"}/api/auth/twitter/callback`;
 
 passport.use(
   new TwitterStrategy(

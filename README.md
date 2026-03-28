@@ -42,7 +42,7 @@ See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for Render/Vercel deployment step
 
 | Variable | Value | Notes |
 | --- | --- | --- |
-| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend.onrender.com` | Production API base for Vercel deployments (points at the Render backend). |
+| `NEXT_PUBLIC_API_URL` | `https://sevengoldencowries-backend-vw37.onrender.com` | Production API base for Vercel deployments (points at the Render backend). |
 | `REACT_APP_TON_RECEIVE_ADDRESS` | Mirrors backend `TON_RECEIVE_ADDRESS` | Displayed in UI and used for TonConnect transfer. |
 | `REACT_APP_TON_MIN_PAYMENT_TON` | Mirrors backend minimum | Used to set TonConnect transfer amount. |
 | `REACT_APP_SUBSCRIPTION_CALLBACK` | `https://7goldencowries.com/subscription/callback` | Redirect URL after hosted checkout. |
