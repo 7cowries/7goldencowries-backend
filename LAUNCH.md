@@ -8,9 +8,9 @@
 | --- | --- |
 | `NODE_ENV` | `production` |
 | `PORT` | `4000` |
-| `SQLITE_FILE` | `/var/data/7gc.sqlite3` |
+| `DATABASE_URL` | `postgresql://USER:PASSWORD@HOST:5432/DBNAME` |
+| `PGSSLMODE` | `require` |
 | `SESSION_SECRET` | _(secret)_ |
-| `SESSIONS_DIR` | `/var/data` |
 | `COOKIE_SECURE` | `true` |
 | `SUBSCRIPTION_WEBHOOK_SECRET` | _(secret)_ |
 | `TOKEN_SALE_WEBHOOK_SECRET` | _(secret)_ |
@@ -30,15 +30,13 @@
 | `REACT_APP_TON_MIN_PAYMENT_TON` | `10` |
 | `REACT_APP_SUBSCRIPTION_CALLBACK` | `https://7goldencowries.com/subscription/callback` |
 
-## Disk
+## Storage
 
-1GB mounted at `/var/data`; store the SQLite file at `/var/data/7gc.sqlite3` on the persistent disk.
+No persistent filesystem mount is required for runtime DB state. The backend uses managed Postgres via `DATABASE_URL` only.
 
 ## Migrations
 
-```bash
-npm run migrate:quests
-```
+No manual SQL CLI step is required. `npm run render-start` (or `npm start`) boots the app and runs startup migrations automatically.
 
 ## Start
 
@@ -48,15 +46,13 @@ PORT=4000 npm run render-start
 
 ## Render
 
-Node web service with 1GB persistent disk at `/var/data`; the SQLite file lives at `/var/data/7gc.sqlite3` and must persist betw
-een deploys.
+Use a Node web service with managed Postgres. Disk mounts such as `/var/data` are optional and not used for database runtime.
 
 ## Deployment notes
 
 - Add production domains in Vercel and keep the repo `vercel.json` rewrites intact.
 - Set `NEXT_PUBLIC_API_URL` to the production backend base so the Vercel build calls the Render API without local proxies.
-- Render service mounts a persistent disk at `/var/data`, exports the environment matrix above, and runs `npm run render-start` (o
-r `node scripts/migrate-on-boot.mjs && node index.js`) so migrations run against `/var/data/7gc.sqlite3` on every deploy.
+- Render service must export `DATABASE_URL`; startup runs `node index.js`, which validates Postgres connectivity and applies schema migrations before serving traffic.
 
 ## Smoke QA
 
