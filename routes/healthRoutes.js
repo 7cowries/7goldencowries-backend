@@ -15,6 +15,7 @@ async function healthHandler(_req, res) {
 }
 
 router.get("/api/health", healthHandler);
+router.get("/api/healthz", healthHandler);
 router.get("/health", healthHandler);
 router.get("/healthz", healthHandler);
 
