@@ -73,7 +73,35 @@ test('arena join + claim + leaderboard + settlement', async () => {
     .set('Authorization', 'Bearer admin-token')
     .send({});
   expect(settleRes.status).toBe(200);
+  expect(settleRes.body.generatedPayouts).toBe(1);
 
   const payouts = await db.all(`SELECT * FROM reward_payouts WHERE arena_id = ?`, arenaId);
   expect(payouts.length).toBe(1);
+});
+
+test('settlement returns generated payout count (not participant count)', async () => {
+  await db.run(`INSERT INTO users (wallet, xp, tier, updatedAt) VALUES ('wallet-b', 0, 'Free', CURRENT_TIMESTAMP)`);
+
+  const createArena = await request(app)
+    .post('/api/admin/arenas')
+    .set('Authorization', 'Bearer admin-token')
+    .send({ code: 'arena-2', title: 'Arena 2', status: 'ended', entry_fee_amount: 0 });
+  expect(createArena.status).toBe(201);
+  const arenaId = createArena.body.arenaId;
+
+  await db.run(
+    `INSERT INTO arena_participants (arena_id, user_wallet, wallet, joined_via, arena_xp, status)
+     VALUES (?, 'wallet-b', 'wallet-b', 'free', 250, 'active')`,
+    arenaId
+  );
+
+  const settleRes = await request(app)
+    .post(`/api/admin/arenas/${arenaId}/settle`)
+    .set('Authorization', 'Bearer admin-token')
+    .send({});
+  expect(settleRes.status).toBe(200);
+  expect(settleRes.body.generatedPayouts).toBe(0);
+
+  const payouts = await db.all(`SELECT * FROM reward_payouts WHERE arena_id = ?`, arenaId);
+  expect(payouts.length).toBe(0);
 });
