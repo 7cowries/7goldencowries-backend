@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This document captures the end-to-end steps required to deploy the backend to Render with a persistent disk and the frontend to Vercel while keeping pull requests consistent with PRD v1.2 expectations.
+This document captures the end-to-end steps required to deploy the backend to Render on managed Postgres and the frontend to Vercel while keeping pull requests consistent with PRD v1.2 expectations.
 
 ## Branch and pull request workflow
 
@@ -15,11 +15,11 @@ This document captures the end-to-end steps required to deploy the backend to Re
    - Build command: `npm install` (Render will cache node modules).
    - Start command: `npm run render-start`.
 2. **Environment**
-   - Mount a **persistent disk** at `/var/data` with the database file stored at `/var/data/7gc.sqlite3` (`SQLITE_FILE` should point here).
-   - Recommended variables: `NODE_ENV=production`, `PORT=4000`, `SESSION_SECRET`, `SESSIONS_DIR=/var/data`, `COOKIE_SECURE=true`, `SUBSCRIPTION_WEBHOOK_SECRET`, `TOKEN_SALE_WEBHOOK_SECRET`, `SUBSCRIPTION_BONUS_XP`, `TON_RECEIVE_ADDRESS`, `TON_MIN_PAYMENT_TON`, `TON_VERIFIER`, `TONCENTER_API_KEY`, `FRONTEND_URL`.
+   - Configure managed Postgres and set `DATABASE_URL` (required).
+   - Recommended variables: `NODE_ENV=production`, `PORT=4000`, `DATABASE_URL`, `PGSSLMODE=require`, `SESSION_SECRET`, `COOKIE_SECURE=true`, `SUBSCRIPTION_WEBHOOK_SECRET`, `TOKEN_SALE_WEBHOOK_SECRET`, `SUBSCRIPTION_BONUS_XP`, `TON_RECEIVE_ADDRESS`, `TON_MIN_PAYMENT_TON`, `TON_VERIFIER`, `TONCENTER_API_KEY`, `FRONTEND_URL`.
 3. **Bootstrapping the database**
-   - `npm start`/`npm run render-start` automatically runs `scripts/migrate-on-boot.mjs` to migrate `/var/data/7gc.sqlite3` in place.
-   - For manual runs (one-off debugging), set `DATABASE_URL=/var/data/7gc.sqlite3` and run `npm run migrate:quests` or other migration scripts.
+   - `npm start`/`npm run render-start` automatically runs `scripts/migrate-on-boot.mjs` to validate Postgres and ensure boot schema exists.
+   - For manual runs, execute `npm run migrate:postgres:schema`.
 4. **Health checks**
    - Probes: `/healthz` and `/api/health` return JSON health responses; the root `/` route advertises service metadata and key payment routes.
 5. **Deployment verification**
@@ -40,7 +40,7 @@ This document captures the end-to-end steps required to deploy the backend to Re
 
 ## Production readiness checklist
 
-- Database lives on the Render disk at `/var/data/7gc.sqlite3` with automatic migrations on boot.
+- Database lives in managed Postgres (`DATABASE_URL`) with automatic schema checks on boot.
 - Webhooks and paywall flows adhere to PRD v1.2 contract (see `README_PRD.md` for canonical details).
 - PR descriptions capture fixes, tests, DB notes, and deployment status for both backend and frontend branches.
 - Render and Vercel environments mirror each other for TON addresses and subscription callback URLs.
