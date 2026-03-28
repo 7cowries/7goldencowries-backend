@@ -22,14 +22,22 @@ import { migrateOnBoot } from "./scripts/migrate-on-boot.mjs";
 
 dotenv.config();
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL must be set for Postgres runtime.");
-}
-await migrateOnBoot();
-
 const app = express();
 const PROD = process.env.NODE_ENV === "production";
 const IS_TEST = process.env.NODE_ENV === "test";
+
+function hasPostgresRuntimeEnv() {
+  const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+  return /^postgres(ql)?:\/\//i.test(databaseUrl) || Boolean(process.env.PGHOST);
+}
+
+if (!IS_TEST && !hasPostgresRuntimeEnv()) {
+  throw new Error(
+    "Postgres runtime configuration is required. Set DATABASE_URL=postgres://... (or PGHOST/PGUSER/PGPASSWORD/PGDATABASE)."
+  );
+}
+
+await migrateOnBoot();
 const DEFAULT_FRONTEND = "https://7goldencowries.com";
 const STATIC_ALLOWED = ["https://7goldencowries.com"];
 const SESSION_DOMAIN = process.env.SESSION_DOMAIN || (PROD ? "7goldencowries.com" : undefined);
