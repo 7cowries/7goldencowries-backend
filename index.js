@@ -22,11 +22,10 @@ import { migrateOnBoot } from "./scripts/migrate-on-boot.mjs";
 
 dotenv.config();
 
-const DEFAULT_DB_PATH = "/var/data/7gc.sqlite3";
-const DB_PATH = process.env.SQLITE_FILE || process.env.DATABASE_URL || DEFAULT_DB_PATH;
-process.env.DATABASE_URL ||= DB_PATH;
-process.env.SQLITE_FILE ||= DB_PATH;
-await migrateOnBoot(DB_PATH);
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL must be set for Postgres runtime.");
+}
+await migrateOnBoot();
 
 const app = express();
 const PROD = process.env.NODE_ENV === "production";
@@ -125,8 +124,9 @@ app.post("/api/session/bind-wallet", async (req, res) => {
     if (!wallet) return res.status(400).json({ ok: false, error: "wallet_required" });
 
     await db.run(
-      `INSERT OR IGNORE INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, socials, updatedAt)
-       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, '{}', strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      `INSERT INTO users (wallet, xp, tier, levelName, levelSymbol, levelProgress, nextXP, socials, updatedAt)
+       VALUES (?, 0, 'Free', 'Shellborn', '🐚', 0, 10000, '{}', CURRENT_TIMESTAMP)
+       ON CONFLICT(wallet) DO NOTHING`,
       wallet
     );
     req.session.wallet = wallet;
@@ -176,14 +176,14 @@ if (!IS_TEST) {
         SELECT id, wallet
         FROM subscriptions
         WHERE status = 'active'
-          AND datetime(timestamp, '+30 days') <= ?
+          AND (timestamp + INTERVAL '30 days') <= ?
       `,
         now
       );
 
       for (const { id, wallet } of expired) {
         await db.run(
-          `UPDATE users SET tier = 'Free', updatedAt = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE wallet = ?`,
+          `UPDATE users SET tier = 'Free', updatedAt = CURRENT_TIMESTAMP WHERE wallet = ?`,
           wallet
         );
         await db.run(

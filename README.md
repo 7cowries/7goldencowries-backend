@@ -25,9 +25,9 @@ See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for Render/Vercel deployment step
 | --- | --- | --- |
 | `NODE_ENV` | `production` | Enables production logging/helmet defaults. |
 | `PORT` | `4000` | Render service port. |
-| `SQLITE_FILE` | `/var/data/7gc.sqlite3` | SQLite database file stored on the Render persistent disk; `npm start` runs migrations against this file on boot. |
+| `DATABASE_URL` | `postgresql://...` | Required Postgres connection string. Production boot uses this value only. |
 | `SESSION_SECRET` | _(secret)_ | Session signing secret. |
-| `SESSIONS_DIR` | `/var/data` | Persistent directory for Memorystore. |
+| `PGSSLMODE` | `require` | Keep TLS enabled for managed Postgres providers (Render default). |
 | `COOKIE_SECURE` | `true` | Forces `Secure`/`SameSite=None` cookies in production. |
 | `SUBSCRIPTION_WEBHOOK_SECRET` | _(secret)_ | HMAC key for `/api/v1/subscription/callback`. |
 | `TOKEN_SALE_WEBHOOK_SECRET` | _(secret)_ | HMAC key for `/api/v1/token-sale/webhook`. |
@@ -56,11 +56,10 @@ See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for Render/Vercel deployment step
 
 ## Migrations
 
-`npm start` and `npm run render-start` execute `scripts/migrate-on-boot.mjs` automatically, bootstrapping `/var/data/7gc.sqlite3`
-on the Render persistent disk. When running migrations manually, point `DATABASE_URL` or `SQLITE_FILE` at that same path.
+`npm start` and `npm run render-start` execute `scripts/migrate-on-boot.mjs` automatically and validate/initialize the Postgres schema using `DATABASE_URL`.
 
 ```bash
-npm run migrate:quests
+npm run migrate:postgres:schema
 ```
 
 ## Start
@@ -122,14 +121,9 @@ Webhook endpoints are also rate-limited to guard against bursts or replay storms
 
 Incoming bodies are rejected with `401` when the signature is missing or invalid. Subscription callbacks are idempotent by `sessionId` and safe to retry; token-sale events are stored once per `eventId` (falling back to `txHash`) and repeated deliveries respond with `{ ok: true, idempotent: true }`. The checkout and redirect URLs used in the subscription flow are restricted to allow-listed origins via `SUBSCRIPTION_CHECKOUT_URL` / `SUBSCRIPTION_CALLBACK_REDIRECT` and their respective `*_ALLOWLIST` overrides to prevent untrusted redirects.
 
-## Disk
+## Database
 
-Provision a 1GB disk mounted at `/var/data`. The SQLite database file lives at `/var/data/7gc.sqlite3`; Render services should
-mount the disk at that path so migrations can run in place on boot.
-
-## Database roadmap
-
-- SQLite powers development/staging today. A migration to a managed Postgres cluster is planned once connection details are available; `lib/db.js` contains the bootstrap logic that will be swapped for a pooled Postgres client.
+The backend now runs on managed Postgres only. Set `DATABASE_URL` (and optionally `PGSSLMODE=require`) in every environment. No Render disk mount or SQLite runtime path is used.
 
 ## Health
 
