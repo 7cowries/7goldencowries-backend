@@ -33,3 +33,10 @@ test('/api/health reports db status', async () => {
   expect(res.status).toBe(200);
   expect(res.body).toEqual({ ok: true, db: 'ok' });
 });
+
+
+test('/api/healthz reports db status', async () => {
+  const res = await request(app).get('/api/healthz');
+  expect(res.status).toBe(200);
+  expect(res.body).toEqual({ ok: true, db: 'ok' });
+});
