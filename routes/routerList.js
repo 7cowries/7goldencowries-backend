@@ -19,6 +19,7 @@ import historyRoutes from "./historyRoutes.js";
 import leaderboardRoutes from "./leaderboardRoutes.js";
 import telegramRoutes from "./telegramRoutes.js";
 import subscriptionRoutes from "./subscriptionRoutes.js";
+import arenaRoutes from "./arenaRoutes.js";
 
 const canonicalRouters = [
   { router: telegramRoutes },
@@ -39,6 +40,7 @@ const canonicalRouters = [
   { router: tokenSaleRoutes },
   { path: "/api/subscriptions", router: subscriptionRoutes },
   { path: "/api/v1", router: apiV1Routes },
+  { router: arenaRoutes },
   { router: historyRoutes },
   { path: "/api/leaderboard", router: leaderboardRoutes },
   { router: healthRoutes },
